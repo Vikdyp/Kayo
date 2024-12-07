@@ -1,0 +1,19 @@
+# Environnements virtuels
+venv/
+env/
+.env
+
+# Fichiers de logs
+logs/
+*.log
+
+# Fichiers Python compilés
+__pycache__/
+*.pyc
+
+# Fichiers de données
+data/*.json
+
+# IDEs
+.vscode/
+*.swp
