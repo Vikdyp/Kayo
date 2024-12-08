@@ -2,18 +2,19 @@
 
 import discord
 from discord.ext import commands
-from discord import app_commands
+from discord import app_commands  # Correction ici
 import logging
 from typing import Optional, Dict, Any
 from datetime import datetime, timezone
 
-from ..utilities.utils import load_json, save_json
+from cogs.utilities.utils import load_json, save_json
 
 logger = logging.getLogger('discord.voice_management.five_stack')
 
-
 class FiveStack(commands.Cog):
     """Cog pour la commande de création de salons vocaux temporaires pour 5 personnes maximum."""
+    
+    dependencies = ["cogs.voice_management.cleanup"]
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -154,7 +155,7 @@ class FiveStack(commands.Cog):
                 )
                 logger.error(f"Erreur HTTP lors de la création du salon vocal: {e}")
 
-    async def setup(bot: commands.Bot) -> None:
-        """Ajoute le Cog FiveStack au bot."""
-        await bot.add_cog(FiveStack(bot))
-        logger.info("FiveStack Cog chargé avec succès.")
+async def setup(bot: commands.Bot) -> None:
+    """Ajoute le Cog FiveStack au bot."""
+    await bot.add_cog(FiveStack(bot))
+    logger.info("FiveStack Cog chargé avec succès.")

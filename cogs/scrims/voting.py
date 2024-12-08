@@ -1,13 +1,14 @@
 # cogs/scrims/voting.py
 
+import asyncio
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 import logging
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 from datetime import datetime, timezone
 
-from ..utilities.utils import load_json, save_json
+from cogs.utilities.utils import load_json, save_json, save_json_atomic
 
 logger = logging.getLogger('discord.scrims.voting')
 
@@ -17,6 +18,8 @@ def make_scrims_key(rank: str, list_index: int) -> str:
 
 class ScrimVoting(commands.Cog):
     """Cog pour gérer les votes sur l'heure des scrims."""
+
+    dependencies = []
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -102,7 +105,7 @@ class ScrimVoting(commands.Cog):
             else:
                 logger.warning(f"Salon avec l'ID {channel_id} non trouvé dans la guild {guild_obj.name}.")
 
-    async def setup(self, bot: commands.Bot) -> None:
-        """Ajoute le Cog ScrimVoting au bot."""
-        await bot.add_cog(ScrimVoting(bot))
-        logger.info("ScrimVoting Cog chargé avec succès.")
+async def setup(bot: commands.Bot) -> None:
+    """Ajoute le Cog ScrimVoting au bot."""
+    await bot.add_cog(ScrimVoting(bot))
+    logger.info("ScrimVoting Cog chargé avec succès.")

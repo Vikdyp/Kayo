@@ -6,13 +6,15 @@ import aiohttp
 import logging
 from typing import Optional
 
-from ..utilities.utils import load_json, save_json
+from cogs.utilities.utils import load_json, save_json
 
 logger = logging.getLogger('discord.ranking.assign_rank_role')
 
 
 class AssignRankRole(commands.Cog):
     """Cog pour attribuer des rôles basés sur le rang Valorant."""
+
+    dependencies = []
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot

@@ -4,13 +4,15 @@ import discord
 from discord.ext import commands
 import logging
 
-from ..utilities.utils import load_json, save_json
+from cogs.utilities.utils import load_json, save_json
 
 logger = logging.getLogger('discord.ranking.voice_state_update_listener')
 
 
 class VoiceStateUpdateListener(commands.Cog):
     """Cog pour écouter les mises à jour d'état vocal et attribuer des rôles de rang."""
+
+    dependencies = []
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot

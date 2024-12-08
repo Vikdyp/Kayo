@@ -4,13 +4,15 @@ import discord
 from discord.ext import commands
 import logging
 
-from ..utilities.utils import load_json, save_json
+from cogs.utilities.utils import load_json, save_json
 
 logger = logging.getLogger('discord.ranking.member_join_listener')
 
 
 class MemberJoinListener(commands.Cog):
     """Cog pour écouter l'événement de l'arrivée d'un membre et initier la liaison de compte."""
+
+    dependencies = []
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot

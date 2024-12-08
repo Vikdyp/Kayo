@@ -6,7 +6,8 @@ from discord.ui import View, Button
 import logging
 from typing import Optional
 
-from .utils import load_json, save_json
+# Suppression des importations inutilisées
+# from .utils import load_json, save_json
 
 logger = logging.getLogger('discord.utilities.confirmation_view')
 
@@ -41,9 +42,10 @@ class ConfirmationView(discord.ui.View):
             # Nettoyage complet du salon
             try:
                 deleted = await self.target_channel.purge(limit=None)
-                await interaction.response.send_message(
-                    f"Tous les messages dans {self.target_channel.mention} ont été supprimés.",
-                    ephemeral=True
+                await interaction.response.edit_message(
+                    content=f"Tous les messages dans {self.target_channel.mention} ont été supprimés.",
+                    embed=None,
+                    view=None
                 )
                 logger.info(f"{interaction.user} a nettoyé tous les messages dans {self.target_channel.name}.")
             except discord.Forbidden:
@@ -62,9 +64,10 @@ class ConfirmationView(discord.ui.View):
             # Nettoyage d'un nombre spécifique de messages
             try:
                 deleted = await self.target_channel.purge(limit=self.count + 1)  # +1 pour inclure la commande de nettoyage
-                await interaction.response.send_message(
-                    f"{len(deleted) - 1} messages dans {self.target_channel.mention} ont été supprimés.",
-                    ephemeral=True
+                await interaction.response.edit_message(
+                    content=f"{len(deleted) - 1} messages dans {self.target_channel.mention} ont été supprimés.",
+                    embed=None,
+                    view=None
                 )
                 logger.info(f"{interaction.user} a nettoyé {len(deleted) - 1} messages dans {self.target_channel.name}.")
             except discord.Forbidden:
@@ -95,11 +98,14 @@ class ConfirmationView(discord.ui.View):
     ) -> None:
         """Annule l'action de nettoyage."""
         try:
-            await interaction.response.send_message("Action annulée.", ephemeral=True)
-            await interaction.message.delete()
+            await interaction.response.edit_message(
+                content="Action annulée.",
+                embed=None,
+                view=None
+            )
             logger.info(f"{interaction.user} a annulé l'action de nettoyage dans {self.target_channel.name}.")
         except discord.Forbidden:
-            logger.warning(f"Impossible de supprimer le message de confirmation dans {self.target_channel.name}.")
+            logger.warning(f"Impossible de modifier le message de confirmation dans {self.target_channel.name}.")
         except Exception as e:
             logger.exception(f"Erreur lors de l'annulation de l'action de nettoyage dans {self.target_channel.name}: {e}")
         self.stop()
@@ -107,10 +113,14 @@ class ConfirmationView(discord.ui.View):
     async def on_timeout(self) -> None:
         """Gère le délai d'attente de la vue."""
         try:
-            await self.interaction.delete_original_response()
+            await self.interaction.edit_original_response(
+                content="La confirmation a expiré.",
+                embed=None,
+                view=None
+            )
             logger.info(f"Vue de confirmation expirée pour {self.target_channel.name}.")
         except discord.Forbidden:
-            logger.warning(f"Impossible de supprimer le message de confirmation dans {self.target_channel.name}.")
+            logger.warning(f"Impossible de modifier le message de confirmation dans {self.target_channel.name}.")
         except Exception as e:
-            logger.exception(f"Erreur lors de la suppression du message de confirmation dans {self.target_channel.name}: {e}")
+            logger.exception(f"Erreur lors de la modification du message de confirmation dans {self.target_channel.name}: {e}")
         self.stop()

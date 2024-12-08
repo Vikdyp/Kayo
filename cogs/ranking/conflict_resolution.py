@@ -5,13 +5,15 @@ from discord.ext import commands
 from discord import app_commands
 import logging
 
-from ..utilities.utils import load_json, save_json
+from cogs.utilities.utils import load_json, save_json
 
 logger = logging.getLogger('discord.ranking.conflict_resolution')
 
 
 class ConflictResolution(commands.Cog):
     """Cog pour gérer la résolution des conflits de liaison de compte Valorant."""
+
+    dependencies = []
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot

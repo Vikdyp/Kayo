@@ -4,8 +4,9 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import logging
+from typing import Dict, Any
 
-from ..utilities.utils import load_json, save_json
+from cogs.utilities.utils import load_json, save_json
 
 logger = logging.getLogger('discord.configuration.set_channel')
 
@@ -13,10 +14,12 @@ logger = logging.getLogger('discord.configuration.set_channel')
 class SetChannel(commands.Cog):
     """Cog pour la commande de configuration de salon pour une action spécifique."""
 
+    dependencies = []
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.config_file = 'data/config.json'
-        self.config = {}
+        self.config: Dict[str, Any] = {}
         self.bot.loop.create_task(self.load_config())
 
     async def load_config(self) -> None:
@@ -55,7 +58,7 @@ class SetChannel(commands.Cog):
         )
         logger.info(f"Salon configuré: Action `{action}` -> Salon `{channel.name}` ({channel.id})")
 
-    @SetChannel.error
+    @set_channel.error
     async def set_channel_error(self, interaction: discord.Interaction, error: Exception) -> None:
         """Gère les erreurs liées à la commande set_channel."""
         if isinstance(error, app_commands.MissingPermissions):

@@ -6,13 +6,14 @@ from datetime import datetime, timezone, timedelta
 import logging
 from typing import Dict, Any, Optional
 
-from ..utilities.utils import load_json, save_json
+from cogs.utilities.utils import load_json, save_json
 
 logger = logging.getLogger('discord.voice_management.cleanup')
 
-
 class VoiceChannelCleanup(commands.Cog):
     """Cog pour gérer le nettoyage des salons vocaux inactifs."""
+
+    dependencies = []
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -90,15 +91,7 @@ class VoiceChannelCleanup(commands.Cog):
             # Ajoutez ici la logique pour suivre de nouveaux salons si nécessaire
             pass  # Placeholder
 
-    async def setup_cog(self):
-        """Méthode pour configurer le cog, à appeler après l'ajout des salons suivis."""
-        pass  # Placeholder pour toute configuration supplémentaire
-
-    async def setup_voice_cleanup_cog(self):
-        """Méthode d'initialisation supplémentaire si nécessaire."""
-        pass  # Placeholder pour toute configuration supplémentaire
-
-    async def setup(self, bot: commands.Bot) -> None:
-        """Ajoute le Cog VoiceChannelCleanup au bot."""
-        await bot.add_cog(self)
-        logger.info("VoiceChannelCleanup Cog chargé avec succès.")
+async def setup(bot: commands.Bot) -> None:
+    """Ajoute le Cog VoiceChannelCleanup au bot."""
+    await bot.add_cog(VoiceChannelCleanup(bot))
+    logger.info("VoiceChannelCleanup Cog chargé avec succès.")

@@ -1,13 +1,13 @@
 # cogs/scrims/cleanup.py
 
+import asyncio
 import discord
 from discord.ext import commands, tasks
-from discord import app_commands
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from datetime import datetime, timezone, timedelta
 
-from ..utilities.utils import load_json, save_json
+from cogs.utilities.utils import load_json, save_json, save_json_atomic
 
 logger = logging.getLogger('discord.scrims.cleanup')
 
@@ -17,6 +17,8 @@ def make_scrims_key(rank: str, list_index: int) -> str:
 
 class ScrimCleanup(commands.Cog):
     """Cog pour nettoyer les salons vocaux après les scrims."""
+
+    dependencies = []
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -49,7 +51,11 @@ class ScrimCleanup(commands.Cog):
             for scrims_key, scrim in self.scrims_data.items():
                 end_time_str = scrim.get("end_time")
                 if end_time_str:
-                    end_time = datetime.fromisoformat(end_time_str)
+                    try:
+                        end_time = datetime.fromisoformat(end_time_str)
+                    except ValueError:
+                        logger.error(f"Scrim {scrims_key} a un end_time invalide: {end_time_str}")
+                        continue
                     if now > end_time + timedelta(minutes=30):  # 30 minutes après la fin
                         to_delete.append(scrims_key)
 
@@ -76,7 +82,7 @@ class ScrimCleanup(commands.Cog):
         await self.bot.wait_until_ready()
         logger.info("Tâche de nettoyage des scrims démarrée.")
 
-    async def setup(self, bot: commands.Bot) -> None:
-        """Ajoute le Cog ScrimCleanup au bot."""
-        await bot.add_cog(ScrimCleanup(bot))
-        logger.info("ScrimCleanup Cog chargé avec succès.")
+async def setup(bot: commands.Bot) -> None:
+    """Ajoute le Cog ScrimCleanup au bot."""
+    await bot.add_cog(ScrimCleanup(bot))
+    logger.info("ScrimCleanup Cog chargé avec succès.")

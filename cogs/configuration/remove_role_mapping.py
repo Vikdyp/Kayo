@@ -4,8 +4,9 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import logging
+from typing import Dict, Any
 
-from ..utilities.utils import load_json, save_json
+from cogs.utilities.utils import load_json, save_json
 
 logger = logging.getLogger('discord.configuration.remove_role_mapping')
 
@@ -13,10 +14,12 @@ logger = logging.getLogger('discord.configuration.remove_role_mapping')
 class RemoveRoleMapping(commands.Cog):
     """Cog pour la commande de suppression de mapping de rôle."""
 
+    dependencies = []
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.config_file = 'data/config.json'
-        self.config = {}
+        self.config: Dict[str, Any] = {}
         self.bot.loop.create_task(self.load_config())
 
     async def load_config(self) -> None:
@@ -61,7 +64,7 @@ class RemoveRoleMapping(commands.Cog):
         )
         logger.info(f"Mapping de rôle supprimé: {script_role}")
 
-    @RemoveRoleMapping.error
+    @remove_role_mapping.error
     async def remove_role_mapping_error(self, interaction: discord.Interaction, error: Exception) -> None:
         """Gère les erreurs liées à la commande remove_role_mapping."""
         if isinstance(error, app_commands.MissingPermissions):

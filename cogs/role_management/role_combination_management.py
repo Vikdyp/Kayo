@@ -6,13 +6,15 @@ from discord import app_commands
 import logging
 from typing import List, Dict, Any, Optional
 
-from ..utilities.utils import load_json, save_json
+from cogs.utilities.utils import load_json, save_json
 
 logger = logging.getLogger('discord.role_management.role_combination_management')
 
 
 class RoleCombinationManagement(commands.Cog):
     """Cog pour gérer l'ajout et la suppression des combinaisons de rôles."""
+
+    dependencies = []
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot

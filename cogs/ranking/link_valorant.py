@@ -8,13 +8,15 @@ import re
 from urllib.parse import unquote
 from typing import Optional
 
-from ..utilities.utils import load_json, save_json
+from cogs.utilities.utils import load_json, save_json
 
 logger = logging.getLogger('discord.ranking.link_valorant')
 
 
 class LinkValorant(commands.Cog):
     """Cog pour la commande de liaison de compte Valorant."""
+
+    dependencies = []
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot

@@ -5,13 +5,15 @@ from discord.ext import commands
 import logging
 from typing import List, Dict, Any
 
-from ..utilities.utils import load_json, save_json
+from cogs.utilities.utils import load_json, save_json
 
 logger = logging.getLogger('discord.role_management.role_backup')
 
 
 class RoleBackup(commands.Cog):
     """Cog pour sauvegarder et restaurer les rôles des membres."""
+
+    dependencies = []
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot

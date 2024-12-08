@@ -5,13 +5,15 @@ from discord.ext import commands
 from discord import app_commands
 import logging
 
-from ..utilities.utils import load_json, save_json  # Assurez-vous que ces fonctions sont asynchrones
+from cogs.utilities.utils import load_json, save_json  # Assurez-vous que ces fonctions sont asynchrones
 
 logger = logging.getLogger('discord.voice_management.list_channels')
 
 
 class ListChannels(commands.Cog):
     """Cog pour la commande de listage des salons vocaux."""
+
+    dependencies = []
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot

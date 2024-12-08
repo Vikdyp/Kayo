@@ -1,13 +1,16 @@
 # cogs/scrims/registration.py
 
+import datetime
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import asyncio
 
-from ..utilities.utils import load_json, save_json
+from cogs.utilities.views import ResultView, ScrimsPreparationView, VoteView
+
+from cogs.utilities.utils import load_json, save_json, save_json_atomic
 
 logger = logging.getLogger('discord.scrims.registration')
 
@@ -17,6 +20,8 @@ def make_scrims_key(rank: str, list_index: int) -> str:
 
 class ScrimRegistration(commands.Cog):
     """Cog pour gérer l'inscription des joueurs aux scrims."""
+
+    dependencies = ["cogs.scrims.cleanup"]
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -56,7 +61,7 @@ class ScrimRegistration(commands.Cog):
 
         # Start data loading and task
         self.bot.loop.create_task(self.load_all_data())
-        self.check_scrims_status.start()
+        self.check_scrims_status.start()  # Assurez-vous que cette méthode est définie avant
 
     async def load_all_data(self) -> None:
         """Charge toutes les données nécessaires depuis les fichiers JSON."""
@@ -270,7 +275,7 @@ class ScrimRegistration(commands.Cog):
 
     def get_user_rank(self, user: discord.Member) -> Optional[str]:
         """Détermine le rang de l'utilisateur basé sur ses rôles."""
-        user_roles = {role.id for role in user.roles}
+        user_roles = {role.name for role in user.roles}
         for role_id, priority in sorted(self.role_priorities.items(), key=lambda x: x[1], reverse=True):
             if role_id in user_roles:
                 # Trouver le nom du rôle correspondant
@@ -291,143 +296,27 @@ class ScrimRegistration(commands.Cog):
         team_2 = sorted_players[1::2]
         return team_1, team_2
 
-    async def create_scrims(self, interaction: discord.Interaction, rank: str, list_index: int) -> None:
-        """Crée les scrims une fois que la liste est complète."""
-        scrims_key = make_scrims_key(rank, list_index)
-        team_1, team_2 = self.split_teams(rank, list_index)
+    @tasks.loop(minutes=5)
+    async def check_scrims_status(self):
+        """Tâche périodique pour vérifier l'état des scrims."""
+        logger.info("Vérification de l'état des scrims...")
+        # Implémentez la logique pour vérifier et mettre à jour l'état des scrims
+        # Par exemple, vérifier si certains scrims doivent être terminés ou mises à jour
 
-        guild = interaction.guild
-        category = guild.get_channel(self.config.get("scrims_category_id"))
-        if not category:
-            try:
-                category = await guild.create_category("Scrims")
-                logger.info("Catégorie 'Scrims' créée.")
-            except discord.Forbidden:
-                logger.error("Permission refusée lors de la création de la catégorie 'Scrims'.")
-                await interaction.response.send_message(
-                    "Erreur: Permission refusée pour créer la catégorie des scrims.",
-                    ephemeral=True
-                )
-                return
-            except Exception as e:
-                logger.exception("Erreur lors de la création de la catégorie 'Scrims':", exc_info=True)
-                await interaction.response.send_message(
-                    "Erreur inattendue lors de la création de la catégorie des scrims.",
-                    ephemeral=True
-                )
-                return
+    @check_scrims_status.before_loop
+    async def before_check_scrims_status(self):
+        """Attend que le bot soit prêt avant de démarrer la tâche de vérification."""
+        await self.bot.wait_until_ready()
+        logger.info("Tâche de vérification des scrims démarrée.")
 
-        # Création des salons pour les équipes
-        try:
-            channel_1 = await guild.create_text_channel(
-                f"Équipe 1 - {rank} (Liste {list_index + 1})",
-                category=category
-            )
-            channel_2 = await guild.create_text_channel(
-                f"Équipe 2 - {rank} (Liste {list_index + 1})",
-                category=category
-            )
-            logger.info(f"Salons créés: {channel_1.name}, {channel_2.name}")
-        except discord.Forbidden:
-            logger.error("Permission refusée lors de la création des salons des équipes.")
-            await interaction.response.send_message(
-                "Erreur: Permission refusée pour créer les salons des équipes.",
-                ephemeral=True
-            )
-            return
-        except Exception as e:
-            logger.exception("Erreur lors de la création des salons des équipes:", exc_info=True)
-            await interaction.response.send_message(
-                "Erreur inattendue lors de la création des salons des équipes.",
-                ephemeral=True
-            )
-            return
+    async def cog_unload(self):
+        """Nettoie les tâches avant de décharger le cog."""
+        self.check_scrims_status.cancel()
+        logger.info("Tâche de vérification des scrims annulée.")
 
-        # Attribution des permissions et envoi des messages aux joueurs
-        for player in team_1:
-            member = guild.get_member(player['id'])
-            if member:
-                try:
-                    await channel_1.set_permissions(member, read_messages=True, send_messages=True, connect=True, speak=True)
-                    await channel_2.set_permissions(member, read_messages=False, send_messages=False, connect=False, speak=False)
-                    await member.send(f"Vous avez été ajouté à l'Équipe 1. Voici le lien vers votre salon: {channel_1.mention}")
-                except discord.Forbidden:
-                    logger.warning(f"Impossible d'envoyer un message à {member.display_name} ou de modifier les permissions.")
-                except Exception as e:
-                    logger.exception(f"Erreur lors de l'attribution des permissions ou de l'envoi du message à {member.display_name}: {e}")
+    # Ajoutez d'autres méthodes comme `update_vote_message`, `delete_list`, etc., si nécessaire
 
-        for player in team_2:
-            member = guild.get_member(player['id'])
-            if member:
-                try:
-                    await channel_2.set_permissions(member, read_messages=True, send_messages=True, connect=True, speak=True)
-                    await channel_1.set_permissions(member, read_messages=False, send_messages=False, connect=False, speak=False)
-                    await member.send(f"Vous avez été ajouté à l'Équipe 2. Voici le lien vers votre salon: {channel_2.mention}")
-                except discord.Forbidden:
-                    logger.warning(f"Impossible d'envoyer un message à {member.display_name} ou de modifier les permissions.")
-                except Exception as e:
-                    logger.exception(f"Erreur lors de l'attribution des permissions ou de l'envoi du message à {member.display_name}: {e}")
-
-        # Mise à jour de l'embed et ajout de la vue de résultats
-        embed = self.create_scrim_embed(rank, list_index, [], [])
-        embed.color = discord.Color.green()
-        embed.set_footer(text="Statut : En attente des résultats")
-        try:
-            message = self.messages_by_rank[rank][list_index]
-            if message:
-                await message.edit(
-                    embed=embed,
-                    view=ResultView(
-                        self, rank, list_index, 
-                        team_1=team_1, 
-                        team_2=team_2, 
-                        channel_1_id=channel_1.id, 
-                        channel_2_id=channel_2.id
-                    )
-                )
-                logger.info(f"Résultats mis à jour pour {rank} - Liste {list_index + 1}.")
-        except discord.NotFound:
-            logger.warning(f"Message de vote non trouvé pour {rank} - Liste {list_index + 1} lors de la mise à jour des résultats.")
-        except Exception as e:
-            logger.exception(f"Erreur lors de la mise à jour des résultats pour {rank} - Liste {list_index + 1}: {e}")
-
-        # Enregistrement des données des scrims
-        self.scrims_data[scrims_key] = {
-            "team_1": [player['id'] for player in team_1],
-            "team_2": [player['id'] for player in team_2],
-            "ready": {player['id']: False for player in team_1 + team_2},
-            "voted": {player['id']: False for player in team_1 + team_2},
-            "votes": {hour: 0 for hour in range(18, 24)},
-            "start_time": datetime.utcnow().isoformat(),
-            "channels": [channel_1.id, channel_2.id]
-        }
-
-        await self.save_all_data()
-
-        # Envoi des instructions dans les salons textuels
-        initial_embed = discord.Embed(
-            title="Préparation des scrims",
-            description="Veuillez valider votre présence, voter pour l'heure des scrims, et créer un salon vocal si nécessaire.",
-            color=discord.Color.blurple()
-        )
-        try:
-            await channel_1.send(embed=initial_embed, view=ScrimsPreparationView(self, rank, list_index))
-            await channel_2.send(embed=initial_embed, view=ScrimsPreparationView(self, rank, list_index))
-            logger.info(f"Instructions envoyées dans les salons {channel_1.name} et {channel_2.name}.")
-        except discord.Forbidden:
-            logger.error("Permission refusée lors de l'envoi des instructions dans les salons des équipes.")
-            await interaction.response.send_message(
-                "Erreur: Permission refusée pour envoyer des messages dans les salons des équipes.",
-                ephemeral=True
-            )
-        except Exception as e:
-            logger.exception("Erreur lors de l'envoi des instructions dans les salons des équipes:", exc_info=True)
-            await interaction.response.send_message(
-                "Erreur inattendue lors de l'envoi des instructions dans les salons des équipes.",
-                ephemeral=True
-            )
-
-    async def setup(bot: commands.Bot) -> None:
-        """Ajoute le Cog ScrimRegistration au bot."""
-        await bot.add_cog(ScrimRegistration(bot))
-        logger.info("ScrimRegistration Cog chargé avec succès.")
+async def setup(bot: commands.Bot) -> None:
+    """Ajoute le Cog ScrimRegistration au bot."""
+    await bot.add_cog(ScrimRegistration(bot))
+    logger.info("ScrimRegistration Cog chargé avec succès.")
