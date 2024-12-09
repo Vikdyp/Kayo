@@ -3,62 +3,48 @@
 import discord
 from discord.ext import commands
 import logging
-
-from cogs.utilities.utils import load_json, save_json
+from cogs.utilities.data_manager import DataManager
 
 logger = logging.getLogger('discord.ranking.member_join_listener')
 
-
 class MemberJoinListener(commands.Cog):
-    """Cog pour écouter l'événement de l'arrivée d'un membre et initier la liaison de compte."""
+    """Invite les nouveaux membres à lier leur compte Valorant."""
 
     dependencies = []
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.user_data_file = 'data/user_data.json'
-        self.config_file = 'data/config.json'
+        self.data = DataManager()
         self.config = {}
         self.user_data = {}
         self.bot.loop.create_task(self.load_all_data())
 
-    async def load_all_data(self) -> None:
-        """Charge la configuration et les données utilisateur depuis les fichiers JSON."""
-        self.config = await load_json(self.config_file)
-        self.user_data = await load_json(self.user_data_file)
-        logger.info("MemberJoinListener: Configuration et données utilisateur chargées avec succès.")
+    async def load_all_data(self):
+        self.config = await self.data.get_config()
+        self.user_data = await self.data.load_json_file('data/user_data.json')
+        logger.info("MemberJoinListener: Config et user_data chargées.")
 
-    async def save_all_data(self) -> None:
-        """Sauvegarde les données utilisateur dans le fichier JSON."""
-        await save_json(self.user_data, self.user_data_file)
-        logger.info("MemberJoinListener: Données utilisateur sauvegardées avec succès.")
+    async def save_all_data(self):
+        await self.data.save_json_file('data/user_data.json', self.user_data)
+        logger.info("MemberJoinListener: user_data sauvegardées.")
 
     @commands.Cog.listener()
-    async def on_member_join(self, member: discord.Member) -> None:
-        """Listener pour l'événement on_member_join."""
+    async def on_member_join(self, member: discord.Member):
         logger.info(f'Nouveau membre: {member.name}')
         if str(member.id) not in self.user_data:
             await self.prompt_link_valorant(member)
 
-    async def prompt_link_valorant(self, member: discord.Member) -> None:
-        """
-        Invite le membre à lier son compte Valorant via un message privé.
-
-        Parameters:
-            member (discord.Member): Membre Discord.
-        """
+    async def prompt_link_valorant(self, member: discord.Member):
         try:
             await member.send(
-                "Bienvenue ! Pour accéder à ce serveur, veuillez lier votre compte Valorant en utilisant la commande `/link_valorant <valorant_tracker_url>`."
+                "Bienvenue ! Pour accéder à ce serveur, veuillez lier votre compte Valorant avec `/link_valorant <url>`."
             )
-            logger.info(f"Message envoyé à {member.name} pour lier le compte Valorant.")
+            logger.info(f"DM envoyé à {member.name} pour lien Valorant.")
         except discord.Forbidden:
-            logger.warning(f"Impossible d'envoyer un message à {member.name}.")
+            logger.warning(f"Impossible d'envoyer un DM à {member.name}.")
         except Exception as e:
-            logger.exception(f"Erreur lors de l'envoi du message à {member.name}: {e}")
+            logger.exception(f"Erreur envoi DM {member.name}: {e}")
 
-
-async def setup(bot: commands.Bot) -> None:
-    """Ajoute le Cog MemberJoinListener au bot."""
+async def setup(bot: commands.Bot):
     await bot.add_cog(MemberJoinListener(bot))
     logger.info("MemberJoinListener Cog chargé avec succès.")

@@ -124,3 +124,27 @@ class ConfirmationView(discord.ui.View):
         except Exception as e:
             logger.exception(f"Erreur lors de la modification du message de confirmation dans {self.target_channel.name}: {e}")
         self.stop()
+
+
+class ConfirmationView(discord.ui.View):
+    def __init__(self, interaction: discord.Interaction, callback):
+        super().__init__(timeout=30)
+        self.interaction = interaction
+        self.callback = callback
+        self.value = None
+
+    @discord.ui.button(label="Confirmer", style=discord.ButtonStyle.green)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.interaction.user.id:
+            return await interaction.response.send_message("Vous n'êtes pas l'auteur de cette commande.", ephemeral=True)
+        self.value = True
+        await interaction.response.defer()
+        self.stop()
+
+    @discord.ui.button(label="Annuler", style=discord.ButtonStyle.grey)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.interaction.user.id:
+            return await interaction.response.send_message("Vous n'êtes pas l'auteur de cette commande.", ephemeral=True)
+        self.value = False
+        await interaction.response.defer()
+        self.stop()

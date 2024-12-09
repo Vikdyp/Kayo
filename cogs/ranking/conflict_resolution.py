@@ -2,13 +2,10 @@
 
 import discord
 from discord.ext import commands
-from discord import app_commands
 import logging
-
-from cogs.utilities.utils import load_json, save_json
+from cogs.utilities.data_manager import DataManager
 
 logger = logging.getLogger('discord.ranking.conflict_resolution')
-
 
 class ConflictResolution(commands.Cog):
     """Cog pour gérer la résolution des conflits de liaison de compte Valorant."""
@@ -17,32 +14,20 @@ class ConflictResolution(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.config_file = 'data/config.json'
+        self.data = DataManager()
         self.config = {}
         self.bot.loop.create_task(self.load_config())
 
     async def load_config(self) -> None:
-        """Charge la configuration depuis le fichier JSON."""
-        self.config = await load_json(self.config_file)
+        self.config = await self.data.get_config()
         logger.info("ConflictResolution: Configuration chargée avec succès.")
 
     async def save_config(self) -> None:
-        """Sauvegarde la configuration dans le fichier JSON."""
-        await save_json(self.config, self.config_file)
+        await self.data.save_config(self.config)
         logger.info("ConflictResolution: Configuration sauvegardée avec succès.")
 
     async def handle_conflict(self, selected_user_id: str, other_user_id: str, valorant_username: str) -> None:
-        """
-        Crée un message dans le canal de conflit avec des réactions pour la résolution.
-
-        Parameters:
-            selected_user_id (str): ID du premier utilisateur Discord.
-            other_user_id (str): ID du second utilisateur Discord.
-            valorant_username (str): Nom d'utilisateur Valorant en conflit.
-        """
-        logger.info(
-            f"Résolution de conflit pour le pseudo Valorant {valorant_username} entre {selected_user_id} et {other_user_id}."
-        )
+        logger.info(f"Résolution de conflit pour {valorant_username} entre {selected_user_id} et {other_user_id}.")
         guild = self.bot.guilds[0] if self.bot.guilds else None
         if not guild:
             logger.error("Guild non trouvée lors de la résolution de conflit.")
@@ -71,13 +56,6 @@ class ConflictResolution(commands.Cog):
 
     @commands.Cog.listener()
     async def on_reaction_add(self, reaction: discord.Reaction, user: discord.User) -> None:
-        """
-        Gère les réactions pour la résolution des conflits.
-
-        Parameters:
-            reaction (discord.Reaction): Réaction ajoutée.
-            user (discord.User): Utilisateur ayant ajouté la réaction.
-        """
         if user.bot:
             return
 
@@ -97,48 +75,36 @@ class ConflictResolution(commands.Cog):
         valorant_username = reaction.message.channel.name.replace("conflit-", "").replace("-", "#")
 
         if reaction.emoji == "✅":
-            # Choisir user1
             await self.handle_conflict_resolution(user1_id, user2_id, valorant_username)
         elif reaction.emoji == "❌":
-            # Choisir user2
             await self.handle_conflict_resolution(user2_id, user1_id, valorant_username)
 
-        # Supprimer les réactions après la résolution
         try:
             await reaction.message.clear_reactions()
             logger.info("Réactions supprimées après résolution de conflit.")
         except Exception as e:
             logger.exception(f"Erreur lors de la suppression des réactions: {e}")
 
-    async def handle_conflict_resolution(
-        self,
-        selected_user_id: str,
-        other_user_id: str,
-        valorant_username: str
-    ) -> None:
-        """
-        Attribue le pseudo Valorant à l'utilisateur sélectionné et enlève les données des autres.
-
-        Parameters:
-            selected_user_id (str): ID de l'utilisateur sélectionné.
-            other_user_id (str): ID de l'utilisateur non sélectionné.
-            valorant_username (str): Nom d'utilisateur Valorant en conflit.
-        """
+    async def handle_conflict_resolution(self, selected_user_id: str, other_user_id: str, valorant_username: str) -> None:
         try:
-            # Attribuer le pseudo à l'utilisateur sélectionné
-            selected_member = guild.get_member(int(selected_user_id)) if (guild := self.bot.guilds[0] if self.bot.guilds else None) else None
-            if selected_member:
-                await self.bot.get_cog("AssignRankRole").assign_rank_role(selected_member, valorant_username)
+            guild = self.bot.guilds[0] if self.bot.guilds else None
+            if not guild:
+                logger.error("Aucune guild disponible pour la résolution du conflit.")
+                return
+
+            assign_role_cog = self.bot.get_cog("AssignRankRole")
+            link_cog = self.bot.get_cog("LinkValorant")
+
+            selected_member = guild.get_member(int(selected_user_id)) if guild else None
+            if selected_member and assign_role_cog:
+                await assign_role_cog.assign_rank_role(selected_member, valorant_username)
                 logger.info(f"Pseudo Valorant `{valorant_username}` attribué à {selected_member.name}.")
 
-            # Enlever le lien pour l'autre utilisateur
-            link_cog = self.bot.get_cog("LinkValorant")
             if link_cog and other_user_id in link_cog.user_data:
                 del link_cog.user_data[other_user_id]
                 await link_cog.save_all_data()
                 logger.info(f"Liaison de compte Valorant supprimée pour l'utilisateur ID {other_user_id}.")
 
-            # Optionnel : Informer les utilisateurs
             if selected_member:
                 try:
                     await selected_member.send(
@@ -148,7 +114,7 @@ class ConflictResolution(commands.Cog):
                 except Exception as e:
                     logger.exception(f"Erreur lors de l'envoi du message de confirmation à {selected_member.name}: {e}")
 
-            other_member = guild.get_member(int(other_user_id)) if (guild := self.bot.guilds[0] if self.bot.guilds else None) else None
+            other_member = guild.get_member(int(other_user_id)) if guild else None
             if other_member:
                 try:
                     await other_member.send(
@@ -161,8 +127,6 @@ class ConflictResolution(commands.Cog):
         except Exception as e:
             logger.exception(f"Erreur lors de la résolution du conflit pour {valorant_username}: {e}")
 
-
 async def setup(bot: commands.Bot) -> None:
-    """Ajoute le Cog ConflictResolution au bot."""
     await bot.add_cog(ConflictResolution(bot))
     logger.info("ConflictResolution Cog chargé avec succès.")

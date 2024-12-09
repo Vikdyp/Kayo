@@ -5,11 +5,12 @@ from discord.ext import commands
 import aiohttp
 import logging
 from typing import Optional
-
-from cogs.utilities.utils import load_json, save_json
+from cogs.utilities.data_manager import DataManager
+from cogs.utilities.request_manager import enqueue_request
+from cogs.utilities.permission_manager import is_admin
+from cogs.utilities.confirmation_view import ConfirmationView
 
 logger = logging.getLogger('discord.ranking.assign_rank_role')
-
 
 class AssignRankRole(commands.Cog):
     """Cog pour attribuer des rôles basés sur le rang Valorant."""
@@ -21,26 +22,18 @@ class AssignRankRole(commands.Cog):
         self.valorant_api_key = bot.valorant_api_key
         self.config_file = 'data/config.json'
         self.config = {}
+        self.data = DataManager()
         self.bot.loop.create_task(self.load_config())
 
     async def load_config(self) -> None:
-        """Charge la configuration depuis le fichier JSON."""
-        self.config = await load_json(self.config_file)
+        self.config = await self.data.get_config()
         logger.info("AssignRankRole: Configuration chargée avec succès.")
 
     async def save_config(self) -> None:
-        """Sauvegarde la configuration dans le fichier JSON."""
-        await save_json(self.config, self.config_file)
+        await self.data.save_config(self.config)
         logger.info("AssignRankRole: Configuration sauvegardée avec succès.")
 
     async def assign_rank_role(self, member: discord.Member, valorant_username: str) -> None:
-        """
-        Attribue un rôle basé sur le rang Valorant de l'utilisateur.
-
-        Parameters:
-            member (discord.Member): Membre Discord.
-            valorant_username (str): Nom d'utilisateur Valorant.
-        """
         url = f"https://public-api.tracker.gg/v2/valorant/standard/profile/riot/{valorant_username}"
         headers = {
             'TRN-Api-Key': self.valorant_api_key,
@@ -53,7 +46,7 @@ class AssignRankRole(commands.Cog):
                 async with session.get(url, headers=headers) as response:
                     logger.info(f"API response status: {response.status}")
                     if response.status != 200:
-                        logger.error(f"Erreur lors de la récupération du rang pour {valorant_username}: Status Code {response.status}")
+                        logger.error(f"Erreur lors de la récupération du rang pour {valorant_username}: Status {response.status}")
                         return
                     data = await response.json()
                     rank = data['data']['segments'][0]['stats']['rank']['metadata']['tierName']
@@ -63,10 +56,7 @@ class AssignRankRole(commands.Cog):
                     if role_id:
                         role = guild.get_role(role_id)
                         if role:
-                            # Retirer tous les autres rôles Valorant
-                            valorant_roles = [
-                                r for r in guild.roles if r.name.startswith("Valorant ")
-                            ]
+                            valorant_roles = [r for r in guild.roles if r.name.startswith("Valorant ")]
                             if valorant_roles:
                                 await member.remove_roles(*valorant_roles, reason="Mise à jour du rang Valorant.")
                                 logger.info(f"Rôles Valorant précédents retirés pour {member.name}.")
@@ -83,8 +73,32 @@ class AssignRankRole(commands.Cog):
             except Exception as e:
                 logger.exception(f"Erreur inattendue lors de l'attribution du rôle: {e}")
 
+    async def ask_confirmation(self, interaction: discord.Interaction, message: str):
+        view = ConfirmationView(interaction, None)
+        await interaction.followup.send(message, view=view, ephemeral=True)
+        await view.wait()
+        return view.value
+
+    @app_commands.command(name="refresh_rank", description="Forcer la mise à jour du rôle Valorant d'un utilisateur.")
+    @app_commands.describe(user="Utilisateur à mettre à jour.")
+    @is_admin()
+    @enqueue_request()
+    async def refresh_rank(self, interaction: discord.Interaction, user: discord.Member):
+        if not await self.ask_confirmation(interaction, f"Confirmez-vous la mise à jour du rôle Valorant pour {user.mention} ?"):
+            return await interaction.followup.send("Action annulée.", ephemeral=True)
+        # Ici on suppose que vous avez un link valorant
+        link_cog = self.bot.get_cog("LinkValorant")
+        if link_cog:
+            discord_user_id = str(user.id)
+            valorant_username = link_cog.user_data.get(discord_user_id)
+            if valorant_username:
+                await self.assign_rank_role(user, valorant_username)
+                await interaction.followup.send(f"Rôle Valorant mis à jour pour {user.mention}.", ephemeral=True)
+            else:
+                await interaction.followup.send(f"{user.mention} n'a pas de compte Valorant lié.", ephemeral=True)
+        else:
+            await interaction.followup.send("Le cog LinkValorant est introuvable.", ephemeral=True)
 
 async def setup(bot: commands.Bot) -> None:
-    """Ajoute le Cog AssignRankRole au bot."""
     await bot.add_cog(AssignRankRole(bot))
     logger.info("AssignRankRole Cog chargé avec succès.")
