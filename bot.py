@@ -36,8 +36,8 @@ if not DISCORD_BOT_TOKEN:
     exit(1)
 
 async def load_all_cogs():
-    # Charge tous les cogs
-    for folder in ["utilities", "reputation", "economy", "tournaments", "scrims", "voice_management", "moderation", "role_management", "configuration"]:
+    # Charge tous les cogs (sauf ceux du dossier 'utilities')
+    for folder in ["configuration", "economy", "moderation", "ranking", "reputation", "role_management", "scrims", "tournaments", "voice_management"]:
         cogs_dir = f"./cogs/{folder}"
         if os.path.exists(cogs_dir):
             for filename in os.listdir(cogs_dir):
@@ -61,9 +61,6 @@ async def on_error(event, *args, **kwargs):
 async def main():
     async with bot:
         await load_all_cogs()
-        # Si vous avez un request_manager:
-        # from cogs.utilities.request_manager import setup_request_manager
-        # setup_request_manager(bot)
         await bot.start(DISCORD_BOT_TOKEN)
 
 if __name__ == "__main__":
