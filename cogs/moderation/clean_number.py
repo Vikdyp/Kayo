@@ -1,5 +1,3 @@
-# cogs/moderation/clean_number.py
-
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -10,7 +8,6 @@ from cogs.utilities.utils import load_json, save_json
 from cogs.utilities.confirmation_view import ConfirmationView
 
 logger = logging.getLogger('discord.moderation.clean_number')
-
 
 class CleanNumber(commands.Cog):
     """Cog pour la commande de nettoyage d'un nombre spécifique de messages dans un salon."""
@@ -30,7 +27,7 @@ class CleanNumber(commands.Cog):
 
     @app_commands.command(name="clean_number", description="Supprime un nombre spécifié de messages")
     @app_commands.describe(count="Le nombre de messages à supprimer", channel="Le salon à nettoyer (optionnel)")
-    @app_commands.checks.has_role("Admin")  # Utiliser le nom du rôle au lieu de l'ID
+    @app_commands.default_permissions(administrator=True)
     async def clean_number(self, interaction: discord.Interaction, count: int, channel: Optional[discord.TextChannel] = None) -> None:
         """Supprime un nombre spécifié de messages dans un salon après confirmation."""
         if count < 1 or count > 100:
@@ -48,7 +45,7 @@ class CleanNumber(commands.Cog):
     @clean_number.error
     async def clean_number_error(self, interaction: discord.Interaction, error: Exception) -> None:
         """Gère les erreurs liées à la commande clean_number."""
-        if isinstance(error, app_commands.MissingRole):
+        if isinstance(error, app_commands.MissingPermissions):
             await interaction.response.send_message(
                 "Vous n'avez pas la permission d'utiliser cette commande.",
                 ephemeral=True
@@ -67,8 +64,10 @@ class CleanNumber(commands.Cog):
             )
             logger.exception(f"Erreur lors de l'exécution de la commande clean_number par {interaction.user}: {error}")
 
-
 async def setup(bot: commands.Bot) -> None:
     """Ajoute le Cog CleanNumber au bot."""
+    if bot.get_cog("CleanNumber"):
+        logger.warning("CleanNumber Cog déjà chargé. Ignoré.")
+        return
     await bot.add_cog(CleanNumber(bot))
     logger.info("CleanNumber Cog chargé avec succès.")

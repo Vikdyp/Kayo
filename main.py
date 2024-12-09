@@ -4,9 +4,8 @@ import asyncio
 import os
 import logging
 from dotenv import load_dotenv
-from typing import Optional, List, Dict, Set
+from typing import Optional, List
 from pathlib import Path
-import importlib.util
 
 # Charger les variables d'environnement depuis le fichier .env
 load_dotenv()
@@ -17,7 +16,7 @@ if not os.path.exists('logs'):
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s:%(levelname)s:%(name)s: %(message)s",
+    format="\n%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
     handlers=[
         logging.FileHandler(filename='logs/bot.log', encoding='utf-8', mode='a'),
         logging.StreamHandler()
@@ -25,6 +24,11 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger('discord.Main')
+
+# Ligne de séparation pour démarquer les sections
+def log_separator(title: str):
+    separator = "=" * 50
+    logger.info(f"\n{separator}\n{title}\n{separator}")
 
 # Définition des intents nécessaires
 intents = discord.Intents.default()
@@ -35,8 +39,8 @@ intents.message_content = True  # Assurez-vous que ceci est activé
 
 # Initialisation du bot avec les intents et une description
 bot = commands.Bot(
-    command_prefix="!", 
-    description="Bot de gestion des salons vocaux, des rapports et des rôles", 
+    command_prefix="!",
+    description="Bot de gestion des salons vocaux, des rapports et des rôles",
     intents=intents
 )
 
@@ -68,6 +72,7 @@ async def notify_users_on_ready():
         logger.warning("Aucun serveur trouvé pour envoyer les notifications.")
         return
 
+    log_separator("Envoi des notifications")
     for user_id in NOTIFY_USERS:
         user: Optional[discord.Member] = guild.get_member(user_id)
         if user:
@@ -83,7 +88,7 @@ async def notify_users_on_ready():
 
 async def sync_all_commands(interaction: Optional[discord.Interaction] = None):
     """Synchronise toutes les commandes du bot avec Discord."""
-    logger.info("Début de la synchronisation de toutes les commandes...")
+    log_separator("Synchronisation des commandes")
     try:
         synced = await bot.tree.sync()
         if interaction:
@@ -99,114 +104,30 @@ def find_cogs(cogs_directory: Path) -> List[Path]:
     """Trouve tous les fichiers de cogs dans le répertoire spécifié."""
     return list(cogs_directory.rglob("*.py"))
 
-def load_cog_module(cog_path: Path) -> Optional[importlib.util.module_from_spec]:
-    """Charge un module de cog sans l'exécuter."""
-    spec = importlib.util.spec_from_file_location(cog_path.stem, cog_path)
-    if spec and spec.loader:
-        module = importlib.util.module_from_spec(spec)
-        try:
-            spec.loader.exec_module(module)
-            return module
-        except Exception as e:
-            logger.exception(f"Erreur lors de l'importation du module {cog_path}: {e}")
-            return None
-    return None
-
-def build_dependency_graph(cog_modules: Dict[str, importlib.util.module_from_spec]) -> Dict[str, Set[str]]:
-    """
-    Construire un graphe de dépendances où chaque clé est un cog et les valeurs sont les cogs dont il dépend.
-    """
-    dependency_graph = {}
-    for cog_name, module in cog_modules.items():
-        dependencies = getattr(module, 'dependencies', [])
-        # Filtrer les dépendances vides
-        dependencies = [dep for dep in dependencies if dep]
-        dependency_graph[cog_name] = set(dependencies)
-    return dependency_graph
-
-def topological_sort(dependency_graph: Dict[str, Set[str]]) -> List[str]:
-    """
-    Effectue un tri topologique sur le graphe de dépendances.
-    Retourne une liste ordonnée de cogs à charger.
-    """
-    from collections import defaultdict, deque
-
-    in_degree = defaultdict(int)
-    graph = defaultdict(list)
-
-    # Construire le graphe et compter les degrés entrants
-    for cog, deps in dependency_graph.items():
-        for dep in deps:
-            graph[dep].append(cog)
-            in_degree[cog] += 1
-
-    # Trouver tous les cogs avec un degré entrant de 0
-    queue = deque([cog for cog in dependency_graph if in_degree[cog] == 0])
-    sorted_order = []
-
-    while queue:
-        current = queue.popleft()
-        sorted_order.append(current)
-
-        for neighbor in graph[current]:
-            in_degree[neighbor] -= 1
-            if in_degree[neighbor] == 0:
-                queue.append(neighbor)
-
-    if len(sorted_order) != len(dependency_graph):
-        # Il y a un cycle ou des dépendances manquantes
-        unresolved = set(dependency_graph.keys()) - set(sorted_order)
-        raise Exception(f"Il y a des cycles de dépendances ou des dépendances manquantes parmi les cogs : {unresolved}")
-
-    return sorted_order
-
-async def load_and_sync_all_cogs():
-    """Charge tous les cogs depuis le répertoire 'cogs' en respectant les dépendances et synchronise les commandes."""
-    logger.info("Chargement de tous les cogs avec gestion des dépendances...")
+async def load_all_cogs():
+    """Charge tous les cogs depuis le répertoire 'cogs'."""
+    log_separator("Chargement des cogs")
     cogs_dir = Path("./cogs")
     cog_files = find_cogs(cogs_dir)
 
-    # Charger les modules de cogs et collecter leurs dépendances
-    cog_modules = {}
-    cog_paths = {}
     for cog_file in cog_files:
-        if cog_file.name.startswith("__"):
+        if cog_file.name.startswith("__") or cog_file.parent.name == "utilities":
             continue
-        # Ignorer les modules utilitaires
-        if cog_file.parent.name == "utilities":
+
+        cog_name = f"cogs.{cog_file.relative_to(cogs_dir).with_suffix('').as_posix().replace('/', '.')}"
+        if cog_name in bot.extensions:  # Vérifier si déjà chargé
+            logger.warning(f"{cog_name} est déjà chargé.")
             continue
-        module = load_cog_module(cog_file)
-        if module:
-            # Correction ici
-            cog_name = f"cogs.{cog_file.relative_to(cogs_dir).with_suffix('').as_posix().replace('/', '.')}"
-            cog_modules[cog_name] = module
-            cog_paths[cog_name] = cog_file
 
-    # Construire le graphe de dépendances
-    dependency_graph = build_dependency_graph(cog_modules)
-
-    try:
-        load_order = topological_sort(dependency_graph)
-        logger.info(f"Ordre de chargement des cogs: {load_order}")
-    except Exception as e:
-        logger.critical(f"Erreur lors du tri des cogs: {e}")
-        return
-
-    # Charger les cogs dans l'ordre déterminé
-    for cog_name in load_order:
-        cog_file = cog_paths.get(cog_name)
-        if cog_file:
-            try:
-                await bot.load_extension(cog_name)
-                logger.info(f"{cog_name} chargé avec succès.")
-            except commands.errors.ExtensionAlreadyLoaded:
-                logger.warning(f"{cog_name} est déjà chargé.")
-            except commands.errors.NoEntryPointError:
-                logger.error(f"{cog_name} n'a pas de fonction 'setup'.")
-            except commands.errors.ExtensionFailed as e:
-                logger.error(f"Erreur lors du chargement de {cog_name}: {e}")
-        else:
-            logger.warning(f"Chemin du fichier pour {cog_name} non trouvé.")
+        try:
+            await bot.load_extension(cog_name)
+            logger.info(f"{cog_name} chargé avec succès.")
+        except commands.errors.ExtensionAlreadyLoaded:
+            logger.warning(f"{cog_name} est déjà chargé.")
+        except commands.errors.NoEntryPointError:
+            logger.error(f"{cog_name} n'a pas de fonction 'setup'.")
+        except commands.errors.ExtensionFailed as e:
+            logger.error(f"Erreur lors du chargement de {cog_name}: {e}")
 
     logger.info("Tous les cogs sont chargés avec succès.")
     await sync_all_commands()
@@ -214,21 +135,22 @@ async def load_and_sync_all_cogs():
 @bot.event
 async def on_ready():
     """Événement déclenché lorsque le bot est prêt."""
+    log_separator("Bot prêt")
     logger.info(f"{bot.user} est connecté avec succès.")
-    await load_and_sync_all_cogs()
+    await load_all_cogs()
     await notify_users_on_ready()
 
 @bot.tree.command(name="sync_all", description="Synchroniser toutes les commandes")
 async def sync_all_command(interaction: discord.Interaction):
     """
     Commande pour synchroniser toutes les commandes du bot avec Discord.
-    
+
     Parameters:
         interaction (discord.Interaction): L'interaction de l'utilisateur.
     """
     if interaction.user.id == AUTHORIZED_USER_ID:
         await interaction.response.defer(ephemeral=True)
-        await load_and_sync_all_cogs()
+        await load_all_cogs()
         await interaction.followup.send("Toutes les commandes ont été synchronisées avec succès.", ephemeral=True)
         logger.info(f"Commande /sync_all utilisée par {interaction.user}.")
     else:
@@ -247,8 +169,7 @@ async def main():
 
 if __name__ == "__main__":
     try:
+        log_separator("Démarrage du bot")
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Bot arrêté manuellement.")
-    except Exception as e:
-        logger.critical(f"Erreur critique lors du démarrage du bot: {e}") 
