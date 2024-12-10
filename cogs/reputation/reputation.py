@@ -7,6 +7,7 @@ import logging
 from datetime import datetime
 from cogs.utilities.data_manager import DataManager
 from cogs.utilities.request_manager import enqueue_request
+from typing import Any
 
 logger = logging.getLogger('discord.reputation')
 
@@ -69,7 +70,7 @@ class Reputation(commands.Cog):
     @app_commands.command(name="recommend", description="Recommande un utilisateur (max 1/jour par cible, max 5 fois par cible au total)")
     @app_commands.describe(user="Utilisateur à recommander")
     @enqueue_request()
-    async def recommend(self, interaction: discord.Interaction, user: discord.Member):
+    async def recommend(self, interaction: Any, user: discord.Member):
         await interaction.response.defer(ephemeral=True)
         if user.id == interaction.user.id:
             return await interaction.followup.send("Vous ne pouvez pas vous recommander vous-même.", ephemeral=True)
@@ -105,7 +106,7 @@ class Reputation(commands.Cog):
     @app_commands.command(name="report", description="Report un utilisateur (max 1/jour par cible, max 5 fois par cible au total)")
     @app_commands.describe(user="Utilisateur à reporter", reason="Raison du report")
     @enqueue_request()
-    async def report(self, interaction: discord.Interaction, user: discord.Member, reason: str):
+    async def report(self, interaction: Any, user: discord.Member, reason: str):
         await interaction.response.defer(ephemeral=True)
         if user.id == interaction.user.id:
             return await interaction.followup.send("Vous ne pouvez pas vous report vous-même.", ephemeral=True)
@@ -141,7 +142,7 @@ class Reputation(commands.Cog):
     @app_commands.command(name="reputation", description="Affiche la réputation d'un utilisateur")
     @app_commands.describe(user="Utilisateur dont on veut la réputation")
     @enqueue_request()
-    async def reputation_cmd(self, interaction: discord.Interaction, user: discord.Member):
+    async def reputation_cmd(self, interaction: Any, user: discord.Member):
         await interaction.response.defer(ephemeral=True)
         rep_data = await self.get_reputation_data()
 

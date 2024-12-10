@@ -2,6 +2,7 @@
 
 import discord
 from discord.ext import commands
+from discord import app_commands
 import logging
 from typing import List, Dict
 
@@ -21,10 +22,12 @@ class RoleBackup(commands.Cog):
         self.bot.loop.create_task(self.load_role_backup())
 
     async def load_role_backup(self) -> None:
+        # MODIF: Assurer que DataManager a une méthode get_role_backup()
         self.role_backup = await self.data.get_role_backup()
         logger.info("RoleBackup: Sauvegardes de rôles chargées avec succès.")
 
     async def save_role_backup(self) -> None:
+        # MODIF: Assurer que DataManager a une méthode save_role_backup()
         await self.data.save_role_backup(self.role_backup)
         logger.info("RoleBackup: Sauvegardes de rôles sauvegardées avec succès.")
 

@@ -2,6 +2,7 @@
 
 import discord
 from discord.ext import commands
+from discord import app_commands
 import logging
 from cogs.utilities.data_manager import DataManager
 

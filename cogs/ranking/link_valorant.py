@@ -6,7 +6,7 @@ from discord import app_commands
 import logging
 import re
 from urllib.parse import unquote
-from typing import Optional
+from typing import Optional, Any
 
 from cogs.utilities.utils import load_json, save_json
 from cogs.utilities.data_manager import DataManager
@@ -32,11 +32,11 @@ class LinkValorant(commands.Cog):
 
     async def load_all_data(self) -> None:
         self.config = await self.data.get_config()
-        self.user_data = await self.data.load_json_file(self.user_data_file)
+        self.user_data = await self.data.load_json(self.user_data_file)
         logger.info("LinkValorant: Configuration et données utilisateur chargées avec succès.")
 
     async def save_all_data(self) -> None:
-        await self.data.save_json_file(self.user_data_file, self.user_data)
+        await self.data.save_json(self.user_data_file, self.user_data)
         logger.info("LinkValorant: Données utilisateur sauvegardées avec succès.")
 
     def extract_valorant_username(self, tracker_url: str) -> Optional[str]:
@@ -47,7 +47,7 @@ class LinkValorant(commands.Cog):
         else:
             return None
 
-    async def ask_confirmation(self, interaction: discord.Interaction, message: str):
+    async def ask_confirmation(self, interaction: Any, message: str):
         view = ConfirmationView(interaction, None)
         await interaction.followup.send(message, view=view, ephemeral=True)
         await view.wait()
@@ -58,7 +58,7 @@ class LinkValorant(commands.Cog):
         description="Lier un compte Valorant à votre compte Discord en utilisant l'URL tracker.gg"
     )
     @enqueue_request()
-    async def link_valorant(self, interaction: discord.Interaction, tracker_url: str):
+    async def link_valorant(self, interaction: Any, tracker_url: str):
         valorant_username = self.extract_valorant_username(tracker_url)
         if not valorant_username:
             await interaction.response.send_message(
@@ -125,7 +125,7 @@ class LinkValorant(commands.Cog):
         return None
 
     @link_valorant.error
-    async def link_valorant_error(self, interaction: discord.Interaction, error: Exception):
+    async def link_valorant_error(self, interaction: Any, error: Exception):
         await interaction.followup.send("Une erreur est survenue.", ephemeral=True)
         logger.exception(f"Erreur link_valorant {interaction.user}: {error}")
 

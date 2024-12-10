@@ -2,9 +2,10 @@
 
 import discord
 from discord.ext import commands
+from discord import app_commands
 import aiohttp
 import logging
-from typing import Optional
+from typing import Optional, Any
 from cogs.utilities.data_manager import DataManager
 from cogs.utilities.request_manager import enqueue_request
 from cogs.utilities.permission_manager import is_admin
@@ -73,7 +74,7 @@ class AssignRankRole(commands.Cog):
             except Exception as e:
                 logger.exception(f"Erreur inattendue lors de l'attribution du rôle: {e}")
 
-    async def ask_confirmation(self, interaction: discord.Interaction, message: str):
+    async def ask_confirmation(self, interaction: Any, message: str):
         view = ConfirmationView(interaction, None)
         await interaction.followup.send(message, view=view, ephemeral=True)
         await view.wait()
@@ -83,7 +84,7 @@ class AssignRankRole(commands.Cog):
     @app_commands.describe(user="Utilisateur à mettre à jour.")
     @is_admin()
     @enqueue_request()
-    async def refresh_rank(self, interaction: discord.Interaction, user: discord.Member):
+    async def refresh_rank(self, interaction: Any, user: discord.Member):
         if not await self.ask_confirmation(interaction, f"Confirmez-vous la mise à jour du rôle Valorant pour {user.mention} ?"):
             return await interaction.followup.send("Action annulée.", ephemeral=True)
         # Ici on suppose que vous avez un link valorant

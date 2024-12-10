@@ -1,8 +1,8 @@
 # cogs/utilities/views.py
 
 import discord
-from discord import Interaction
 from discord.ui import View, Button
+from discord import app_commands
 import logging
 from typing import List, Dict, Any
 
@@ -18,17 +18,17 @@ class VoteView(View):
         self.list_index = list_index
 
     @discord.ui.button(label="18:00", style=discord.ButtonStyle.primary, custom_id="vote_18")
-    async def vote_18(self, interaction: Interaction, button: Button):
+    async def vote_18(self, interaction: discord.Interaction, button: Button):
         await self.scrim_registration.on_vote(interaction, self.rank, self.list_index, 18)
         self.stop()
 
     @discord.ui.button(label="19:00", style=discord.ButtonStyle.primary, custom_id="vote_19")
-    async def vote_19(self, interaction: Interaction, button: Button):
+    async def vote_19(self, interaction: discord.Interaction, button: Button):
         await self.scrim_registration.on_vote(interaction, self.rank, self.list_index, 19)
         self.stop()
 
     @discord.ui.button(label="20:00", style=discord.ButtonStyle.primary, custom_id="vote_20")
-    async def vote_20(self, interaction: Interaction, button: Button):
+    async def vote_20(self, interaction: discord.Interaction, button: Button):
         await self.scrim_registration.on_vote(interaction, self.rank, self.list_index, 20)
         self.stop()
 
@@ -46,7 +46,7 @@ class ResultView(View):
         self.channel_2_id = channel_2_id
 
     @discord.ui.button(label="Terminer Scrim", style=discord.ButtonStyle.success, custom_id="finish_scrim")
-    async def finish_scrim(self, interaction: Interaction, button: Button):
+    async def finish_scrim(self, interaction: discord.Interaction, button: Button):
         """Bouton pour terminer le scrim et enregistrer les résultats."""
         await self.finish_scrim_action(interaction)
         self.stop()
@@ -86,7 +86,7 @@ class ScrimsPreparationView(View):
         self.list_index = list_index
 
     @discord.ui.button(label="Valider Présence", style=discord.ButtonStyle.green, custom_id="validate_presence")
-    async def validate_presence(self, interaction: Interaction, button: Button):
+    async def validate_presence(self, interaction: discord.Interaction, button: Button):
         """Bouton pour valider la présence d'un joueur."""
         # Implémentez la logique pour valider la présence
         await interaction.response.send_message("Présence validée.", ephemeral=True)

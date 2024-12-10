@@ -2,6 +2,7 @@
 
 import discord
 from discord.ext import commands
+from discord import app_commands
 import logging
 from cogs.utilities.data_manager import DataManager
 
@@ -21,11 +22,12 @@ class MemberJoinListener(commands.Cog):
 
     async def load_all_data(self):
         self.config = await self.data.get_config()
-        self.user_data = await self.data.load_json_file('data/user_data.json')
+        
+        self.user_data = await self.data.load_json('data/user_data.json')
         logger.info("MemberJoinListener: Config et user_data chargées.")
 
     async def save_all_data(self):
-        await self.data.save_json_file('data/user_data.json', self.user_data)
+        await self.data.save_json('data/user_data.json', self.user_data)
         logger.info("MemberJoinListener: user_data sauvegardées.")
 
     @commands.Cog.listener()

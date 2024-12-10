@@ -34,7 +34,7 @@ class RoleCombinationManagement(commands.Cog):
         await self.data.save_config(self.config)
         logger.info("RoleCombinationManagement: Configuration sauvegardée avec succès.")
 
-    async def ask_confirmation(self, interaction: discord.Interaction, message: str):
+    async def ask_confirmation(self, interaction: Any, message: str):
         view = ConfirmationView(interaction, None)
         await interaction.response.send_message(message, view=view, ephemeral=True)
         await view.wait()
@@ -46,7 +46,7 @@ class RoleCombinationManagement(commands.Cog):
     @enqueue_request()
     async def add_role_combination(
         self,
-        interaction: discord.Interaction,
+        interaction: Any,
         required_roles: str,
         new_role: str
     ) -> None:
@@ -73,7 +73,7 @@ class RoleCombinationManagement(commands.Cog):
     @enqueue_request()
     async def remove_role_combination(
         self,
-        interaction: discord.Interaction,
+        interaction: Any,
         new_role: str
     ) -> None:
         await interaction.response.defer(ephemeral=True)
@@ -101,7 +101,7 @@ class RoleCombinationManagement(commands.Cog):
 
     @add_role_combination.error
     @remove_role_combination.error
-    async def role_combination_error(self, interaction: discord.Interaction, error: Exception) -> None:
+    async def role_combination_error(self, interaction: Any, error: Exception) -> None:
         if isinstance(error, app_commands.MissingRole):
             await interaction.followup.send(
                 "Vous n'avez pas la permission d'utiliser cette commande.",

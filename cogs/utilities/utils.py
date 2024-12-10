@@ -4,6 +4,7 @@ import json
 import logging
 import os
 from typing import Dict
+from discord import app_commands
 
 logger = logging.getLogger('discord.utilities.utils')
 

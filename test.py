@@ -1,10 +1,14 @@
+import typing
 import discord
 from discord.ext import commands
 import logging
 import os
 from dotenv import load_dotenv
 import asyncio
-
+import aiohttp
+print("aiohttp")
+print(aiohttp.__version__)
+print("discord")
 print(discord.__version__)
 print(f"Module 'discord' importé depuis : {discord.__file__}")
 print(f"Répertoire de travail actuel : {os.getcwd()}")
@@ -34,24 +38,15 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents, description="Bot complet")
 
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-VALORANT_API_KEY = os.getenv("VALORANT_API_KEY")
 
 if not DISCORD_BOT_TOKEN:
     logger.critical("Le token du bot n'est pas défini. Veuillez vérifier le fichier .env.")
     exit(1)
 
-if not VALORANT_API_KEY:
-    logger.critical("La clé API Valorant n'est pas définie. Veuillez vérifier le fichier .env.")
-    exit(1)
-
-# Ajout de la clé API Valorant au bot
-bot.valorant_api_key = VALORANT_API_KEY
-
 async def load_all_cogs():
+    # Liste des dossiers contenant les cogs
     cogs_folders = [
-        "configuration", "economy", "moderation", 
-        "ranking", "reputation", "role_management", 
-        "scrims", "tournaments", "voice_management"
+        "test"
     ]
     
     for folder in cogs_folders:
@@ -64,7 +59,10 @@ async def load_all_cogs():
                         await bot.load_extension(extension)
                         logger.info(f"{extension} chargé avec succès.")
                     except Exception as e:
-                        logger.exception(f"Erreur lors du chargement de {extension}: {e}")
+                        logger.error(f"Erreur lors du chargement de {extension}: {e}")
+                        logger.exception(e)
+                        # Arrête le chargement si un cog échoue
+                        raise RuntimeError(f"Arrêt du chargement à cause de {extension}")
 
 @bot.event
 async def on_ready():
@@ -75,25 +73,17 @@ async def on_ready():
 async def on_error(event, *args, **kwargs):
     logger.exception(f"Erreur non capturée dans l'événement {event}: {args} {kwargs}")
 
-async def shutdown(bot):
-    logger.info("Arrêt propre du bot...")
-    for task in asyncio.all_tasks():
-        if task is not asyncio.current_task():
-            task.cancel()
-    await bot.close()
-
 async def main():
     async with bot:
-        await load_all_cogs()
+        try:
+            await load_all_cogs()
+        except RuntimeError as e:
+            logger.critical(f"Erreur critique lors du chargement des cogs : {e}")
+            return
         await bot.start(DISCORD_BOT_TOKEN)
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Interruption par l'utilisateur. Arrêt...")
-        asyncio.run(shutdown(bot))
-    except Exception as e:
-        logger.exception(f"Erreur inattendue : {e}")
-    finally:
-        logger.info("Le bot est maintenant arrêté.")
+        logger.info("Bot arrêté manuellement.")
