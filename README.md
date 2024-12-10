@@ -1,6 +1,6 @@
 # KayoBot
 
-![Logo du Bot](path/to/your/logo.png)
+![Logo du Bot](D:\python\Kayo\KAYO_icon.webp)
 
 ## Description
 
