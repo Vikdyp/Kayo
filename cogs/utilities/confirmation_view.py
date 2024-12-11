@@ -20,7 +20,7 @@ class PurgeConfirmationView(View):
 
     async def interaction_check(self, interaction: Interaction) -> bool:
         """Vérifie si l'utilisateur a le rôle requis pour interagir avec les boutons."""
-        if any(role.name == "Admin" for role in interaction.user.roles):
+        if any(role.name == "Modérateur" for role in interaction.user.roles):
             return True
         await interaction.response.send_message(
             "Vous n'avez pas la permission d'interagir avec cette commande.",

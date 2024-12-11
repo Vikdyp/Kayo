@@ -33,11 +33,12 @@ class Clean(commands.Cog):
         app_commands.Choice(name="Supprimer les messages avec liens", value="links"),
     ]
 
-    async def ask_confirmation(self, interaction: discord.Interaction, message: str):
-        view = PurgeConfirmationView(interaction, None)
+    async def ask_confirmation(self, interaction: discord.Interaction, message: str, count: Optional[int] = None):
+        view = PurgeConfirmationView(interaction, interaction.channel, count)
         await interaction.followup.send(message, view=view, ephemeral=True)
         await view.wait()
         return view.value
+
 
     @clean_group.command(name="execute", description="Nettoie les messages selon le type et les options spécifiées.")
     @app_commands.describe(
