@@ -65,7 +65,8 @@ def setup_logging():
 setup_logging()
 logger = logging.getLogger('bot')
 
-intents = discord.Intents.default()
+intents = discord.Intents.all()
+intents.presences = True
 intents.members = True
 intents.voice_states = True
 intents.guilds = True
@@ -109,9 +110,6 @@ async def load_all_cogs():
     
     from cogs.utilities.request_manager import setup_request_manager
     setup_request_manager(bot)
-
-    from cogs.voice_management.online_count_updater import setup_online_count_updater
-    setup_online_count_updater(bot)
 
 @bot.event
 async def on_ready():

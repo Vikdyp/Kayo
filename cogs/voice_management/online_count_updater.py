@@ -3,137 +3,158 @@ from discord.ext import commands, tasks
 import logging
 from cogs.utilities.data_manager import DataManager
 
-logger = logging.getLogger("discord.voice_management.online_count_updater")
+logger = logging.getLogger("discord.rank_channel_updater")
 
-class OnlineCountUpdater(commands.Cog):
-    """Cog pour mettre à jour les noms des salons avec le nombre de membres en ligne par rôle."""
+class RankChannelUpdater(commands.Cog):
+    """Cog pour mettre à jour automatiquement les salons en fonction des rôles des rangs."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.data = DataManager()
-        logger.info("OnlineCountUpdater initialisé.")
+        self.update_rank_channels_task.start()  # Démarre la tâche périodique
+        logger.info("RankChannelUpdater initialisé et tâche périodique démarrée.")
 
-    @tasks.loop(minutes=5)
-    async def update_task(self):
-        """Mise à jour des noms des salons toutes les 5 minutes."""
-        logger.info("Exécution de la tâche périodique de mise à jour des salons.")
+    def cog_unload(self):
+        """Arrête la tâche lorsque le cog est déchargé."""
+        self.update_rank_channels_task.cancel()
+        logger.info("RankChannelUpdater déchargé et tâche périodique arrêtée.")
+
+    @tasks.loop(minutes=5)  # Exécute la tâche toutes les 5 minutes
+    async def update_rank_channels_task(self):
+        """Tâche périodique pour mettre à jour les noms des salons des rangs."""
+        logger.info("Exécution de la tâche de mise à jour des salons des rangs.")
         config = await self.data.get_config()
-        role_channel_mapping = {
-            "fer": "rank_Fer",
-            "bronze": "rank_Bronze",
-            "argent": "rank_Argent",
-            "or": "rank_Or",
-            "platine": "rank_Platine",
-            "diamant": "rank_Diamant",
-            "ascendant": "rank_Ascendant",
-            "immortel": "rank_Immortel",
-        }
+        roles_config = config.get("roles", {})
+        channels_config = config.get("channels", {})
+        
+        # Rangs spécifiques
+        ranks = ["fer", "bronze", "argent", "or", "platine", "diamant", "ascendant", "immortel", "radiant"]
 
         guild = self.bot.guilds[0] if self.bot.guilds else None
         if not guild:
-            logger.warning("Aucun serveur trouvé pour mettre à jour les salons.")
+            logger.warning("Aucun serveur trouvé pour la mise à jour des salons.")
             return
 
-        for role_name, channel_key in role_channel_mapping.items():
-            # Récupérer l'ID du rôle et du salon depuis la configuration
-            role_id = config.get("roles", {}).get(role_name)
-            channel_id = config.get("channels", {}).get(channel_key)
+        for rank in ranks:
+            role_id = roles_config.get(rank)
+            channel_id = channels_config.get(rank)
 
+            # Vérifier si le rôle et le salon sont configurés
             if not role_id or not channel_id:
-                logger.warning(f"Rôle ou salon introuvable pour {role_name}. Ignoré.")
+                logger.warning(f"Rang {rank.capitalize()} : rôle ou salon non configuré.")
                 continue
 
-            # Récupérer le rôle et le salon
             role = guild.get_role(role_id)
             channel = guild.get_channel(channel_id)
 
+            # Vérifier si le rôle et le salon existent dans le serveur
             if not role:
-                logger.warning(f"Rôle {role_name} avec ID {role_id} introuvable.")
+                logger.warning(f"Rôle {rank.capitalize()} introuvable dans le serveur.")
                 continue
+
             if not channel:
-                logger.warning(f"Canal {channel_key} avec ID {channel_id} introuvable.")
+                logger.warning(f"Salon {rank.capitalize()} introuvable dans le serveur.")
                 continue
 
-            # Comptez les membres en ligne pour le rôle
-            online_count = sum(1 for m in role.members if m.status != discord.Status.offline)
-            logger.debug(f"Nombre de membres en ligne pour {role.name}: {online_count}")
+            # Compter les membres avec le rôle qui ne sont pas hors ligne
+            online_members = [member for member in role.members if member.status != discord.Status.offline]
+            online_count = len(online_members)
 
-            # Nouveau nom pour le salon
-            new_name = f"{role.name.capitalize()} {online_count} online"
-
-            # Mettre à jour le nom du canal si nécessaire
-            if channel.name != new_name:
+            # Renommer le salon pour inclure le nombre de membres en ligne
+            new_channel_name = f"{rank.capitalize()} - {online_count} en ligne"
+            if channel.name != new_channel_name:
                 try:
-                    await channel.edit(name=new_name)
-                    logger.info(f"Nom du canal {channel.name} mis à jour : {new_name}.")
+                    await channel.edit(name=new_channel_name)
+                    logger.info(f"Nom du salon {channel.name} mis à jour : {new_channel_name}.")
                 except Exception as e:
-                    logger.exception(f"Erreur lors de la mise à jour du canal {channel.name} : {e}")
+                    logger.error(f"Erreur lors de la mise à jour du salon {channel.name} : {e}")
+            else:
+                logger.debug(f"Nom du salon {channel.name} déjà à jour.")
 
-    @update_task.before_loop
-    async def before_update_task(self):
+
+    @update_rank_channels_task.before_loop
+    async def before_update_rank_channels_task(self):
         """Attendre que le bot soit prêt avant de démarrer la tâche."""
         logger.info("Attente que le bot soit prêt pour démarrer la tâche périodique.")
         await self.bot.wait_until_ready()
         logger.info("Le bot est prêt. La tâche périodique démarre maintenant.")
 
-    @commands.command(name="test_online_count")
+    @commands.command(name="start_rank_update_task")
     @commands.has_permissions(administrator=True)
-    async def test_online_count(self, ctx: commands.Context):
-        """Commande de test pour compter le nombre de membres en ligne par rôle."""
-        logger.info("Commande test_online_count appelée.")
-        config = await self.data.get_config()
-        role_mapping = {
-            "fer": "rank_Fer",
-            "bronze": "rank_Bronze",
-            "argent": "rank_Argent",
-            "or": "rank_Or",
-            "platine": "rank_Platine",
-            "diamant": "rank_Diamant",
-            "ascendant": "rank_Ascendant",
-            "immortel": "rank_Immortel",
-        }
+    async def start_rank_update_task(self, ctx: commands.Context):
+        """Démarre la tâche périodique de mise à jour des salons."""
+        if not self.update_rank_channels_task.is_running():
+            self.update_rank_channels_task.start()
+            await ctx.send("✅ Tâche périodique démarrée.")
+            logger.info("Tâche périodique démarrée manuellement.")
+        else:
+            await ctx.send("⚠️ La tâche est déjà en cours d'exécution.")
 
+    @commands.command(name="stop_rank_update_task")
+    @commands.has_permissions(administrator=True)
+    async def stop_rank_update_task(self, ctx: commands.Context):
+        """Arrête la tâche périodique de mise à jour des salons."""
+        if self.update_rank_channels_task.is_running():
+            self.update_rank_channels_task.cancel()
+            await ctx.send("✅ Tâche périodique arrêtée.")
+            logger.info("Tâche périodique arrêtée manuellement.")
+        else:
+            await ctx.send("⚠️ La tâche n'est pas en cours d'exécution.")
+
+    @commands.command(name="test_online_members")
+    @commands.has_permissions(administrator=True)
+    async def test_online_members(self, ctx: commands.Context):
+        """Affiche les membres en ligne et leurs rôles."""
+        logger.info("Commande test_online_members appelée.")
         guild = ctx.guild
+
         if not guild:
-            await ctx.send("Impossible de récupérer le serveur. Assurez-vous que la commande est exécutée dans un serveur.")
+            await ctx.send("⚠️ Impossible de récupérer le serveur. Assurez-vous que la commande est exécutée dans un serveur.")
+            logger.error("Commande exécutée hors d'un serveur.")
             return
 
-        result = []
-        for role_name, channel_key in role_mapping.items():
-            role_id = config.get("roles", {}).get(role_name)
-            if not role_id:
-                result.append(f"⚠️ Rôle {role_name} non configuré.")
-                logger.warning(f"Rôle {role_name} non configuré.")
-                continue
+        # Inclure tous les statuts sauf 'offline'
+        online_members = [
+            member for member in guild.members if member.status in (discord.Status.online, discord.Status.idle, discord.Status.dnd)
+        ]
 
-            role = guild.get_role(role_id)
-            if not role:
-                result.append(f"⚠️ Rôle {role_name} introuvable dans le serveur.")
-                logger.warning(f"Rôle {role_name} introuvable dans le serveur.")
-                continue
+        if not online_members:
+            await ctx.send("Aucun membre en ligne trouvé.")
+            logger.info("Aucun membre en ligne.")
+            return
 
-            # Log pour afficher tous les membres du rôle
-            logger.debug(f"Membres avec le rôle {role.name}: {[m.display_name for m in role.members]}")
-            
-            # Comptez les membres en ligne
-            online_count = sum(1 for m in role.members if m.status != discord.Status.offline)
-            logger.debug(f"Statuts des membres pour {role.name}: {[m.status for m in role.members]}")
+        result = ["**Membres en ligne et leurs rôles :**"]
+        for member in online_members:
+            roles = ", ".join([role.name for role in member.roles if role.name != "@everyone"])
+            status = str(member.status).capitalize()  # Ajout du statut pour diagnostic
+            result.append(f"🔹 **{member.display_name}** ({status}) : {roles or 'Aucun rôle'}")
 
-            result.append(f"🔹 **{role.name.capitalize()}** : {online_count} en ligne.")
+        # Envoie les résultats dans le chat
+        messages = []
+        chunk = ""
+        for line in result:
+            if len(chunk) + len(line) + 1 < 2000:  # Gérer la limite Discord
+                chunk += f"{line}\n"
+            else:
+                messages.append(chunk)
+                chunk = f"{line}\n"
+        messages.append(chunk)
 
-        # Envoyer le résultat dans le chat
-        await ctx.send("\n".join(result))
-        logger.info("Résultat de test_online_count envoyé.")
+        for message in messages:
+            await ctx.send(message)
+
+        logger.info("Résultat de test_online_members envoyé.")
+
+    @commands.command(name="debug_members")
+    @commands.has_permissions(administrator=True)
+    async def debug_members(self, ctx: commands.Context):
+        """Affiche tous les membres du serveur avec leur statut."""
+        guild = ctx.guild
+        members = [f"{member.display_name}: {member.status}" for member in guild.members]
+        await ctx.send("\n".join(members[:2000]))
+
+
 
 async def setup(bot: commands.Bot):
     """Ajoute le cog au bot."""
-    await bot.add_cog(OnlineCountUpdater(bot))
-    
-def setup_online_count_updater(bot: commands.Bot):
-    """Initialise et démarre OnlineCountUpdater avec le bot."""
-    cog = bot.get_cog("OnlineCountUpdater")
-    if cog:
-        cog.update_task.start()
-        logger.info("Tâche OnlineCountUpdater démarrée.")
-    else:
-        logger.warning("OnlineCountUpdater non chargé. Impossible de démarrer la tâche.")
+    await bot.add_cog(RankChannelUpdater(bot))
