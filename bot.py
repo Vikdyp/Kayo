@@ -110,6 +110,9 @@ async def load_all_cogs():
     from cogs.utilities.request_manager import setup_request_manager
     setup_request_manager(bot)
 
+    from cogs.voice_management.online_count_updater import setup_online_count_updater
+    setup_online_count_updater(bot)
+
 @bot.event
 async def on_ready():
     logger.info(f"{bot.user} est connecté avec succès.")
