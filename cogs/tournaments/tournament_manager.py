@@ -11,7 +11,7 @@ import random
 from cogs.utilities.data_manager import DataManager
 from cogs.utilities.request_manager import enqueue_request
 from cogs.utilities.permission_manager import is_admin
-from cogs.utilities.confirmation_view import ConfirmationView
+from cogs.utilities.confirmation_view import PurgeConfirmationView
 
 logger = logging.getLogger("discord.tournament")
 

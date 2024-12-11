@@ -1,28 +1,24 @@
 # cogs/utilities/confirmation_view.py
 
 import discord
-from discord import TextChannel
+from discord import TextChannel, Interaction
 from discord.ui import View, Button
-from discord import app_commands
 import logging
-from typing import Optional, Any
-
-# Suppression des importations inutilisées
-# from .utils import load_json, save_json
+from typing import Optional, Callable, Any
 
 logger = logging.getLogger('discord.utilities.confirmation_view')
 
 
-class ConfirmationView(discord.ui.View):
+class PurgeConfirmationView(View):
     """Vue pour la confirmation des actions de nettoyage."""
 
-    def __init__(self, interaction: Any, target_channel: discord.TextChannel, count: Optional[int]):
+    def __init__(self, interaction: Interaction, target_channel: TextChannel, count: Optional[int]):
         super().__init__(timeout=30)  # Temps d'attente de 30 secondes
         self.interaction = interaction
         self.target_channel = target_channel
         self.count = count
 
-    async def interaction_check(self, interaction: Any) -> bool:
+    async def interaction_check(self, interaction: Interaction) -> bool:
         """Vérifie si l'utilisateur a le rôle requis pour interagir avec les boutons."""
         if any(role.name == "Admin" for role in interaction.user.roles):
             return True
@@ -35,7 +31,7 @@ class ConfirmationView(discord.ui.View):
     @discord.ui.button(label="Confirmer", style=discord.ButtonStyle.green)
     async def confirm(
         self,
-        interaction: Any,
+        interaction: Interaction,
         button: discord.ui.Button
     ) -> None:
         """Confirme l'action de nettoyage."""
@@ -94,7 +90,7 @@ class ConfirmationView(discord.ui.View):
     @discord.ui.button(label="Annuler", style=discord.ButtonStyle.grey)
     async def cancel(
         self,
-        interaction: Any,
+        interaction: Interaction,
         button: discord.ui.Button
     ) -> None:
         """Annule l'action de nettoyage."""
@@ -127,15 +123,18 @@ class ConfirmationView(discord.ui.View):
         self.stop()
 
 
-class ConfirmationView(discord.ui.View):
-    def __init__(self, interaction: Any, callback):
+class ModerationConfirmationView(View):
+    """Vue générique pour la confirmation des actions de modération."""
+
+    def __init__(self, interaction: Interaction, callback: Callable[[Interaction], Any]):
         super().__init__(timeout=30)
         self.interaction = interaction
         self.callback = callback
-        self.value = None
+        self.value: Optional[bool] = None
 
     @discord.ui.button(label="Confirmer", style=discord.ButtonStyle.green)
-    async def confirm(self, interaction: Any, button: discord.ui.Button):
+    async def confirm(self, interaction: Interaction, button: discord.ui.Button):
+        """Confirme l'action de modération."""
         if interaction.user.id != self.interaction.user.id:
             return await interaction.response.send_message("Vous n'êtes pas l'auteur de cette commande.", ephemeral=True)
         self.value = True
@@ -143,9 +142,25 @@ class ConfirmationView(discord.ui.View):
         self.stop()
 
     @discord.ui.button(label="Annuler", style=discord.ButtonStyle.grey)
-    async def cancel(self, interaction: Any, button: discord.ui.Button):
+    async def cancel(self, interaction: Interaction, button: discord.ui.Button):
+        """Annule l'action de modération."""
         if interaction.user.id != self.interaction.user.id:
             return await interaction.response.send_message("Vous n'êtes pas l'auteur de cette commande.", ephemeral=True)
         self.value = False
         await interaction.response.defer()
+        self.stop()
+
+    async def on_timeout(self) -> None:
+        """Gère le délai d'attente de la vue générique de confirmation."""
+        try:
+            await self.interaction.edit_original_response(
+                content="La confirmation a expiré.",
+                embed=None,
+                view=None
+            )
+            logger.info(f"Vue de confirmation expirée pour l'utilisateur {self.interaction.user}.")
+        except discord.Forbidden:
+            logger.warning("Impossible de modifier le message de confirmation générique.")
+        except Exception as e:
+            logger.exception(f"Erreur lors de la gestion du timeout de la vue générique de confirmation: {e}")
         self.stop()

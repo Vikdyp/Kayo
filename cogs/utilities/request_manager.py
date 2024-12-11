@@ -1,15 +1,18 @@
+# cogs/utilities/request_manager.py
+
 import asyncio
 import heapq
-import logging
 from datetime import datetime, time
 import discord
-from discord import app_commands
 from functools import wraps
+import logging
+from typing import Callable, Any
 
-logger = logging.getLogger("discord.request_manager")
+logger = logging.getLogger("request_manager")
+
 
 class Request:
-    def __init__(self, interaction: discord.Interaction, callback, priority: int):
+    def __init__(self, interaction: discord.Interaction, callback: Callable[[discord.Interaction], Any], priority: int):
         self.interaction = interaction
         self.callback = callback
         self.priority = priority
@@ -19,6 +22,7 @@ class Request:
         if self.priority == other.priority:
             return self.timestamp < other.timestamp
         return self.priority < other.priority
+
 
 class RequestManager:
     def __init__(self):
@@ -30,33 +34,35 @@ class RequestManager:
         self.request_count_per_hour = {}
 
     def start(self, bot: discord.Client):
-        if self.processing_task is None:
+        if self.processing_task is None or self.processing_task.done():
             self.processing_task = bot.loop.create_task(self.process_requests())
-            logger.info("RequestManager started.")
+            logger.debug("RequestManager processing task started.")
 
     def stop(self):
         self.shutdown_flag = True
-        logger.info("RequestManager stopping...")
+        logger.debug("RequestManager stopping...")
 
     async def process_requests(self):
-        await asyncio.sleep(2)
+        logger.debug("Request processing loop started.")
+        await asyncio.sleep(2)  # Petit délai avant de commencer
         while not self.shutdown_flag:
-            await asyncio.sleep(0.1)
             async with self.lock:
                 if self.queue:
                     req = heapq.heappop(self.queue)
+                    logger.debug(f"Dequeued request: interaction={req.interaction.id}, priority={req.priority}")
                 else:
                     req = None
             if req:
-                current_hour = datetime.utcnow().hour
-                self.request_count_per_hour[current_hour] = self.request_count_per_hour.get(current_hour, 0) + 1
                 try:
                     await req.callback(req.interaction)
                 except Exception as e:
-                    logger.exception(f"Erreur lors de l'exécution de la commande: {e}")
-                    await req.interaction.followup.send(
-                        "Une erreur est survenue lors du traitement de votre requête.", ephemeral=True
-                    )
+                    logger.exception(f"Error processing request {req.interaction.id}: {e}")
+                    try:
+                        await req.interaction.followup.send(
+                            "Une erreur est survenue lors du traitement de votre demande.", ephemeral=True
+                        )
+                    except Exception as send_error:
+                        logger.error(f"Échec de l'envoi de la réponse d'erreur: {send_error}")
             else:
                 await asyncio.sleep(0.5)
 
@@ -66,32 +72,33 @@ class RequestManager:
         return start <= now <= end
 
     def calculate_priority(self, interaction: discord.Interaction) -> int:
+        """Calcule la priorité d'une requête en fonction des rôles de l'utilisateur et des heures de pointe."""
         base_priority = 1000
         user = interaction.user
-        guild = interaction.guild
-        if guild:
-            member = guild.get_member(user.id)
-            if member:
-                if member.guild_permissions.administrator:
-                    base_priority = 100
-                else:
-                    booster_role = discord.utils.get(guild.roles, name="booster")
-                    bon_joueur_role = discord.utils.get(guild.roles, name="bon joueur")
-                    if booster_role and booster_role in member.roles:
-                        base_priority = 300
-                    elif bon_joueur_role and bon_joueur_role in member.roles:
-                        base_priority = 500
-                    else:
-                        base_priority = 700
+
+        if user.guild_permissions.administrator:
+            base_priority = 100
+        else:
+            booster_role = discord.utils.get(interaction.guild.roles, name="booster")
+            bon_joueur_role = discord.utils.get(interaction.guild.roles, name="bon joueur")
+            if booster_role and booster_role in user.roles:
+                base_priority = 300
+            elif bon_joueur_role and bon_joueur_role in user.roles:
+                base_priority = 500
+            else:
+                base_priority = 700
+
         if self.is_peak_hours() and not user.guild_permissions.administrator:
             base_priority += 200
         return base_priority
 
-    async def enqueue(self, interaction: discord.Interaction, callback):
+    async def enqueue(self, interaction: discord.Interaction, callback: Callable[[discord.Interaction], Any]):
+        """Ajoute une requête à la file d'attente avec une priorité calculée."""
         priority = self.calculate_priority(interaction)
         req = Request(interaction, callback, priority)
         async with self.lock:
             heapq.heappush(self.queue, req)
+            logger.debug(f"Request added to queue: interaction={interaction.id}, priority={priority}")
 
     def get_load_statistics(self):
         return self.request_count_per_hour
@@ -99,18 +106,30 @@ class RequestManager:
 
 request_manager = RequestManager()
 
-def setup_request_manager(bot):
+
+def setup_request_manager(bot: discord.Client):
+    """Initialise et démarre le RequestManager avec le bot."""
     request_manager.start(bot)
+    logger.info("RequestManager setup complete.")
+
 
 def teardown_request_manager():
+    """Arrête le RequestManager."""
     request_manager.stop()
+    logger.info("RequestManager teardown complete.")
 
 
 def enqueue_request():
+    """Décorateur pour enqueuer les commandes en utilisant le RequestManager."""
+
     def decorator(func):
         @wraps(func)
         async def wrapper(self, interaction: discord.Interaction, *args, **kwargs):
-            await interaction.response.defer(ephemeral=True)
-            await request_manager.enqueue(interaction, lambda i: func(self, i, *args, **kwargs))
+            try:
+                await interaction.response.defer(ephemeral=True)
+                logger.debug(f"Command deferred: interaction={interaction.id}")
+                await request_manager.enqueue(interaction, lambda i: func(self, i, *args, **kwargs))
+            except Exception as e:
+                logger.exception(f"Failed to enqueue request: {e}")
         return wrapper
     return decorator

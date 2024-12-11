@@ -11,7 +11,7 @@ from typing import Optional, Any
 from cogs.utilities.utils import load_json, save_json
 from cogs.utilities.data_manager import DataManager
 from cogs.utilities.request_manager import enqueue_request
-from cogs.utilities.confirmation_view import ConfirmationView
+from cogs.utilities.confirmation_view import PurgeConfirmationView
 
 logger = logging.getLogger('discord.ranking.link_valorant')
 
@@ -48,7 +48,7 @@ class LinkValorant(commands.Cog):
             return None
 
     async def ask_confirmation(self, interaction: Any, message: str):
-        view = ConfirmationView(interaction, None)
+        view = PurgeConfirmationView(interaction, None)
         await interaction.followup.send(message, view=view, ephemeral=True)
         await view.wait()
         return view.value

@@ -9,7 +9,7 @@ from datetime import datetime
 from cogs.utilities.data_manager import DataManager
 from cogs.utilities.request_manager import enqueue_request
 from cogs.utilities.permission_manager import is_admin
-from cogs.utilities.confirmation_view import ConfirmationView
+from cogs.utilities.confirmation_view import PurgeConfirmationView
 
 logger = logging.getLogger("discord.scrims")
 
@@ -44,7 +44,7 @@ class Scrims(commands.Cog):
         logger.info("Scrims: toutes les données sauvegardées.")
 
     async def ask_confirmation(self, interaction: discord.Interaction, message: str):
-        view = ConfirmationView(interaction, None)
+        view = PurgeConfirmationView(interaction, None)
         await interaction.response.send_message(message, view=view, ephemeral=True)
         await view.wait()
         return view.value
@@ -96,7 +96,7 @@ class Scrims(commands.Cog):
         # On part du principe que sub et coach doivent aussi confirmer
         for member in team_members:
             try:
-                view = ConfirmationView(interaction, None)
+                view = PurgeConfirmationView(interaction, None)
                 await member.send(f"{interaction.user.display_name} vous propose de rejoindre l'équipe '{team_name}'. Confirmez-vous ?", view=view)
                 await view.wait()
                 if not view.value:
@@ -196,7 +196,7 @@ class Scrims(commands.Cog):
 
         # Demander confirmation au user
         try:
-            view = ConfirmationView(interaction, None)
+            view = PurgeConfirmationView(interaction, None)
             await user.send(f"{interaction.user.display_name} vous propose de rejoindre l'équipe {team_info['name']} en tant que {role}. Confirmez-vous ?", view=view)
             await view.wait()
             if not view.value:

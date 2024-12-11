@@ -9,9 +9,11 @@ from typing import Optional, Any
 from cogs.utilities.data_manager import DataManager
 from cogs.utilities.request_manager import enqueue_request
 from cogs.utilities.permission_manager import is_admin
-from cogs.utilities.confirmation_view import ConfirmationView
+from cogs.utilities.confirmation_view import PurgeConfirmationView
 
 logger = logging.getLogger('discord.ranking.assign_rank_role')
+
+VALID_RANKS = ["Fer", "Bronze", "Argent", "Or", "Platine", "Diamant", "Ascendant", "Immortel", "Radiant"]
 
 class AssignRankRole(commands.Cog):
     """Cog pour attribuer des rôles basés sur le rang Valorant."""
@@ -51,16 +53,18 @@ class AssignRankRole(commands.Cog):
                         return
                     data = await response.json()
                     rank = data['data']['segments'][0]['stats']['rank']['metadata']['tierName']
-                    role_name = f"Valorant {rank}"
+                    role_name = rank  # Utilise directement le rang sans le préfixe "Valorant"
                     guild = member.guild
                     role_id = self.config.get("role_mappings", {}).get(role_name)
                     if role_id:
                         role = guild.get_role(role_id)
                         if role:
-                            valorant_roles = [r for r in guild.roles if r.name.startswith("Valorant ")]
+                            # Retirer les rôles Valorant précédents
+                            valorant_roles = [r for r in guild.roles if r.name in VALID_RANKS]
                             if valorant_roles:
                                 await member.remove_roles(*valorant_roles, reason="Mise à jour du rang Valorant.")
                                 logger.info(f"Rôles Valorant précédents retirés pour {member.name}.")
+                            # Ajouter le nouveau rôle
                             await member.add_roles(role, reason="Attribution du rang Valorant.")
                             logger.info(f"Rôle {role.name} attribué à {member.name}.")
                         else:
@@ -75,7 +79,7 @@ class AssignRankRole(commands.Cog):
                 logger.exception(f"Erreur inattendue lors de l'attribution du rôle: {e}")
 
     async def ask_confirmation(self, interaction: Any, message: str):
-        view = ConfirmationView(interaction, None)
+        view = PurgeConfirmationView(interaction, None)
         await interaction.followup.send(message, view=view, ephemeral=True)
         await view.wait()
         return view.value

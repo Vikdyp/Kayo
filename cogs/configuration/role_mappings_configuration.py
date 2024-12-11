@@ -1,109 +1,195 @@
-#cogs\configuration\role_mappings_configuration.py
+# cogs/configuration/roles_configuration.py
+
+import asyncio
 import discord
 from discord.ext import commands
 from discord import app_commands
 import logging
-from typing import Dict, Any
+from typing import Dict
 
 from cogs.utilities.request_manager import enqueue_request
 from cogs.utilities.data_manager import DataManager
 
-logger = logging.getLogger('discord.configuration.role_mappings')
+# Configurer le logger pour ce cog
+logger = logging.getLogger('configuration.role')
 
-class RoleMappingsConfiguration(commands.Cog):
-    """Cog pour gérer les mappings de rôles (script_role -> server_role)."""
+class RolesConfiguration(commands.Cog):
+    """Cog pour gérer la configuration des rôles."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.data = DataManager()
-        self.config: Dict[str, Any] = {}
-        self.bot.loop.create_task(self.load_config())
+        self.config: Dict[str, int] = {}
+        asyncio.create_task(self.load_config())
+        logger.info("RolesConfiguration initialisé.")
 
     async def load_config(self) -> None:
-        self.config = await self.data.get_config()
-        logger.info("RoleMappingsConfiguration: config chargée avec succès.")
+        """Charge la configuration des rôles depuis la base de données."""
+        try:
+            full_config = await self.data.get_config()
+            self.config = full_config.get("roles", {})
+            logger.info("RolesConfiguration: config chargée avec succès.")
+        except Exception as e:
+            logger.error("RolesConfiguration: Erreur lors du chargement de la config : %s", e)
+            self.config = {}
 
     async def save_config(self) -> None:
-        await self.data.save_config(self.config)
-        logger.info("RoleMappingsConfiguration: config sauvegardée avec succès.")
+        """Sauvegarde la configuration des rôles dans la base de données."""
+        try:
+            full_config = await self.data.get_config()
+            full_config["roles"] = self.config
+            await self.data.save_config(full_config)
+            logger.info("RolesConfiguration: config sauvegardée avec succès.")
+        except Exception as e:
+            logger.error("RolesConfiguration: Erreur lors de la sauvegarde de la config : %s", e)
 
-    role_mappings_group = app_commands.Group(
-        name="role_mappings",
-        description="Gérer les mappings de rôles",
-        default_permissions=discord.Permissions(administrator=True)
+    # Liste prédéfinie des rôles
+    PREDEFINED_ROLES = [
+        "bon joueur",
+        "booster",
+        "ban",
+        "mauvais joueur",
+        "admin",
+        "fer",
+        "bronze",
+        "argent",
+        "or",
+        "platine",
+        "diamant",
+        "ascendant",
+        "immortel",
+        "radiant",
+        "sentinel",
+        "duelist",
+        "controller",
+        "initiator",
+        "fill"
+    ]
+
+    # Création des choix pour les rôles prédéfinis
+    ROLE_CHOICES = [
+        app_commands.Choice(name=role.capitalize(), value=role)
+        for role in PREDEFINED_ROLES
+    ]
+
+    # Groupe de commandes /role
+    role_group = app_commands.Group(
+        name="role",
+        description="Gérer la configuration des rôles",
+        default_permissions=discord.Permissions(administrator=True)  # Restriction aux administrateurs
     )
 
-    @role_mappings_group.command(name="get", description="Affiche tous les mappings de rôles")
+    @role_group.command(name="get", description="Affiche les rôles configurés.")
     @enqueue_request()
-    async def role_mappings_get(self, interaction: discord.Interaction):
-        role_mappings = self.config.get("role_mappings", {})
-        if not role_mappings:
-            await interaction.followup.send("Aucun mapping de rôles défini.", ephemeral=True)
-            return
+    async def roles_get(self, interaction: discord.Interaction):
+        """Commande /role get : Affiche les rôles configurés."""
+        try:
+            logger.debug(f"Executing roles_get pour interaction={interaction.id}")
+            if not interaction.guild:
+                await interaction.followup.send(
+                    "Cette commande doit être exécutée dans un serveur.", ephemeral=True
+                )
+                return
 
-        embed = discord.Embed(title="Mappings de Rôles", color=discord.Color.blue())
-        for script_role, server_role_id in role_mappings.items():
-            server_role = interaction.guild.get_role(server_role_id)
-            if server_role:
-                embed.add_field(name=script_role, value=server_role.name, inline=False)
-            else:
-                embed.add_field(name=script_role, value="Rôle non trouvé", inline=False)
+            roles = self.config
+            logger.debug(f"Roles config: {roles}")
+            if not roles:
+                await interaction.followup.send("Aucun rôle configuré.", ephemeral=True)
+                return
 
-        await interaction.followup.send(embed=embed, ephemeral=True)
-        logger.info(f"{interaction.user} a demandé d'afficher les mappings de rôles.")
+            embed = discord.Embed(title="Rôles Configurés", color=discord.Color.blue())
+            for role_key, role_id in roles.items():
+                role = interaction.guild.get_role(role_id)
+                if role:
+                    embed.add_field(name=self.get_role_display_name(role_key), value=role.name, inline=False)
+                else:
+                    embed.add_field(name=self.get_role_display_name(role_key), value="Rôle non trouvé", inline=False)
 
-    @role_mappings_group.command(name="set", description="Mappez un rôle du script à un rôle du serveur")
-    @app_commands.describe(script_role="Nom du rôle utilisé dans le script", server_role="Rôle sur le serveur Discord")
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            logger.debug(f"roles_get exécuté avec succès pour interaction={interaction.id}")
+        except Exception as e:
+            logger.exception(f"Erreur dans roles_get pour interaction={interaction.id}: {e}")
+            await interaction.followup.send(
+                "Une erreur est survenue lors du traitement de votre requête.", ephemeral=True
+            )
+
+    @role_group.command(name="set", description="Configure un rôle pour une action spécifique.")
+    @app_commands.describe(role_name="Nom du rôle", role="Rôle Discord")
+    @app_commands.choices(role_name=ROLE_CHOICES)
     @enqueue_request()
-    async def role_mappings_set(self, interaction: discord.Interaction, script_role: str, server_role: discord.Role):
-        self.config.setdefault("role_mappings", {})
-        self.config["role_mappings"][script_role] = server_role.id
-        await self.save_config()
-        await interaction.followup.send(
-            f"Rôle `{script_role}` mappé à `{server_role.name}` avec succès.",
-            ephemeral=True
-        )
-        logger.info(f"Rôle mappé: {script_role} -> {server_role.name} ({server_role.id})")
+    async def roles_set(self, interaction: discord.Interaction, role_name: app_commands.Choice[str], role: discord.Role):
+        """Commande /role set : Configure un rôle pour une action spécifique."""
+        try:
+            logger.debug(f"Executing roles_set pour interaction={interaction.id} avec role_name={role_name.value}, role={role.id}")
+            if not interaction.guild:
+                await interaction.followup.send(
+                    "Cette commande doit être exécutée dans un serveur.", ephemeral=True
+                )
+                return
 
-    @role_mappings_group.command(name="remove", description="Supprime un mapping de rôle")
-    @app_commands.describe(script_role="Nom du rôle utilisé dans le script")
+            if role.guild.id != interaction.guild.id:
+                await interaction.followup.send(
+                    "Le rôle doit appartenir à ce serveur.", ephemeral=True
+                )
+                return
+
+            role_name_lower = role_name.value.lower()
+            if role_name_lower not in [r.lower() for r in self.PREDEFINED_ROLES]:
+                await interaction.followup.send(
+                    f"Rôle invalide. Choisissez parmi les suivantes : {', '.join(self.PREDEFINED_ROLES)}.", ephemeral=True
+                )
+                return
+
+            self.config[role_name_lower] = role.id
+            await self.save_config()
+            await interaction.followup.send(
+                f"Rôle {role.name} configuré pour {self.get_role_display_name(role_name_lower)}.", ephemeral=True
+            )
+            logger.debug(f"roles_set exécuté avec succès pour interaction={interaction.id}")
+        except Exception as e:
+            logger.exception(f"Erreur dans roles_set pour interaction={interaction.id}: {e}")
+            await interaction.followup.send(
+                "Une erreur est survenue lors du traitement de votre requête.", ephemeral=True
+            )
+
+    @role_group.command(name="remove", description="Supprime la configuration d'un rôle pour une action.")
+    @app_commands.describe(role_name="Nom du rôle")
+    @app_commands.choices(role_name=ROLE_CHOICES)
     @enqueue_request()
-    async def role_mappings_remove(self, interaction: discord.Interaction, script_role: str):
-        role_mappings = self.config.get("role_mappings", {})
-        if script_role not in role_mappings:
-            await interaction.followup.send(
-                f"Aucun mapping trouvé pour le rôle `{script_role}`.",
-                ephemeral=True
-            )
-            logger.warning(f"{interaction.user} a tenté de supprimer un mapping inexistant: {script_role}")
-            return
+    async def roles_remove(self, interaction: discord.Interaction, role_name: app_commands.Choice[str]):
+        """Commande /role remove : Supprime la configuration d'un rôle pour une action."""
+        try:
+            logger.debug(f"Executing roles_remove pour interaction={interaction.id} avec role_name={role_name.value}")
+            if not interaction.guild:
+                await interaction.followup.send(
+                    "Cette commande doit être exécutée dans un serveur.", ephemeral=True
+                )
+                return
 
-        del self.config["role_mappings"][script_role]
-        await self.save_config()
-        await interaction.followup.send(
-            f"Mapping pour le rôle `{script_role}` supprimé avec succès.",
-            ephemeral=True
-        )
-        logger.info(f"Mapping de rôle supprimé: {script_role}")
+            role_name_lower = role_name.value.lower()
+            if role_name_lower not in self.config:
+                await interaction.followup.send(
+                    f"Aucune configuration trouvée pour le rôle {self.get_role_display_name(role_name_lower)}.", ephemeral=True
+                )
+                logger.warning(f"{interaction.user} a tenté de supprimer un mapping inexistant: {role_name.value}")
+                return
 
-    @role_mappings_get.error
-    @role_mappings_set.error
-    @role_mappings_remove.error
-    async def role_mappings_command_error(self, interaction: discord.Interaction, error: Exception):
-        if isinstance(error, app_commands.MissingPermissions):
+            del self.config[role_name_lower]
+            await self.save_config()
             await interaction.followup.send(
-                "Vous n'avez pas la permission d'utiliser cette commande.",
-                ephemeral=True
+                f"Configuration pour le rôle {self.get_role_display_name(role_name_lower)} supprimée.", ephemeral=True
             )
-            logger.warning(f"{interaction.user} a tenté d'utiliser une commande role_mappings sans les permissions requises.")
-        else:
+            logger.debug(f"roles_remove exécuté avec succès pour interaction={interaction.id}")
+        except Exception as e:
+            logger.exception(f"Erreur dans roles_remove pour interaction={interaction.id}: {e}")
             await interaction.followup.send(
-                "Une erreur est survenue lors de l'exécution de la commande.",
-                ephemeral=True
+                "Une erreur est survenue lors du traitement de votre requête.", ephemeral=True
             )
-            logger.exception(f"Erreur lors de l'exécution d'une commande role_mappings par {interaction.user}: {error}")
 
+    def get_role_display_name(self, role_key: str) -> str:
+        """Retourne le nom affiché du rôle."""
+        return role_key.capitalize()
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(RoleMappingsConfiguration(bot))
-    logger.info("RoleMappingsConfiguration Cog chargé avec succès.")
+    await bot.add_cog(RolesConfiguration(bot))
+    logger.info("RolesConfiguration Cog chargé.")
