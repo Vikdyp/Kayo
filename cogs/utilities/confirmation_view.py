@@ -1,5 +1,3 @@
-# cogs/utilities/confirmation_view.py
-
 import discord
 from discord import TextChannel, Interaction
 from discord.ui import View, Button
@@ -17,6 +15,7 @@ class PurgeConfirmationView(View):
         self.interaction = interaction
         self.target_channel = target_channel
         self.count = count
+        self.value = None  # Initialise l'attribut value
 
     async def interaction_check(self, interaction: Interaction) -> bool:
         """Vérifie si l'utilisateur a le rôle requis pour interagir avec les boutons."""
@@ -35,57 +34,9 @@ class PurgeConfirmationView(View):
         button: discord.ui.Button
     ) -> None:
         """Confirme l'action de nettoyage."""
-        if self.count is None:
-            # Nettoyage complet du salon
-            try:
-                deleted = await self.target_channel.purge(limit=None)
-                await interaction.response.edit_message(
-                    content=f"Tous les messages dans {self.target_channel.mention} ont été supprimés.",
-                    embed=None,
-                    view=None
-                )
-                logger.info(f"{interaction.user} a nettoyé tous les messages dans {self.target_channel.name}.")
-            except discord.Forbidden:
-                await interaction.response.send_message(
-                    "Le bot n'a pas les permissions nécessaires pour supprimer les messages.",
-                    ephemeral=True
-                )
-                logger.error(f"Permission refusée pour nettoyer {self.target_channel.name}.")
-            except Exception as e:
-                await interaction.response.send_message(
-                    "Une erreur est survenue lors de la suppression des messages.",
-                    ephemeral=True
-                )
-                logger.exception(f"Erreur lors du nettoyage de {self.target_channel.name}: {e}")
-        else:
-            # Nettoyage d'un nombre spécifique de messages
-            try:
-                deleted = await self.target_channel.purge(limit=self.count + 1)  # +1 pour inclure la commande de nettoyage
-                await interaction.response.edit_message(
-                    content=f"{len(deleted) - 1} messages dans {self.target_channel.mention} ont été supprimés.",
-                    embed=None,
-                    view=None
-                )
-                logger.info(f"{interaction.user} a nettoyé {len(deleted) - 1} messages dans {self.target_channel.name}.")
-            except discord.Forbidden:
-                await interaction.response.send_message(
-                    "Le bot n'a pas les permissions nécessaires pour supprimer les messages.",
-                    ephemeral=True
-                )
-                logger.error(f"Permission refusée pour nettoyer {self.target_channel.name}.")
-            except discord.HTTPException as e:
-                await interaction.response.send_message(
-                    "Une erreur est survenue lors de la suppression des messages.",
-                    ephemeral=True
-                )
-                logger.exception(f"Erreur HTTP lors du nettoyage de {self.target_channel.name}: {e}")
-            except Exception as e:
-                await interaction.response.send_message(
-                    "Une erreur est survenue lors de la suppression des messages.",
-                    ephemeral=True
-                )
-                logger.exception(f"Erreur lors du nettoyage de {self.target_channel.name}: {e}")
-        self.stop()
+        self.value = True  # Marque l'action comme confirmée
+        await interaction.response.defer()  # Déférer l'interaction pour éviter les délais d'attente
+        self.stop()  # Arrête la vue
 
     @discord.ui.button(label="Annuler", style=discord.ButtonStyle.grey)
     async def cancel(
@@ -94,6 +45,7 @@ class PurgeConfirmationView(View):
         button: discord.ui.Button
     ) -> None:
         """Annule l'action de nettoyage."""
+        self.value = False  # Marque l'action comme annulée
         try:
             await interaction.response.edit_message(
                 content="Action annulée.",
@@ -109,6 +61,7 @@ class PurgeConfirmationView(View):
 
     async def on_timeout(self) -> None:
         """Gère le délai d'attente de la vue."""
+        self.value = None  # Marque l'expiration comme non résolue
         try:
             await self.interaction.edit_original_response(
                 content="La confirmation a expiré.",
@@ -152,6 +105,7 @@ class ModerationConfirmationView(View):
 
     async def on_timeout(self) -> None:
         """Gère le délai d'attente de la vue générique de confirmation."""
+        self.value = None
         try:
             await self.interaction.edit_original_response(
                 content="La confirmation a expiré.",
