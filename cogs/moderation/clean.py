@@ -1,26 +1,34 @@
+#cogs\moderation\clean.py
+import os
 import discord
 from discord.ext import commands
 from discord import app_commands
 import logging
-from typing import Optional
+from typing import Any, Callable, Optional
 import re
 
-from cogs.utilities.request_manager import enqueue_request
-from cogs.utilities.permission_manager import is_admin
-from cogs.utilities.confirmation_view import PurgeConfirmationView
+from utils.request_manager import enqueue_request
+from utils.confirmation_view import ConfirmationView
+from cogs.moderation.services.clean_service import CleanService
+from utils.database import database
 
-logger = logging.getLogger('discord.moderation.clean')
+logger = logging.getLogger('clean')
+
+
+def is_admin():
+    """Décorateur pour vérifier si un utilisateur a les permissions administratives."""
+    def predicate(interaction: discord.Interaction):
+        if interaction.user.guild_permissions.administrator:
+            return True
+        raise app_commands.MissingPermissions(["administrator"])
+    return app_commands.check(predicate)
+
 
 class Clean(commands.Cog):
     """Cog pour les commandes de nettoyage de messages."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-
-    clean_group = app_commands.Group(
-        name="clean",
-        description="Commandes pour nettoyer les messages"
-    )
 
     ACTION_CHOICES = [
         app_commands.Choice(name="Supprimer tous les messages", value="all"),
@@ -30,149 +38,226 @@ class Clean(commands.Cog):
         app_commands.Choice(name="Supprimer les messages avec images", value="image"),
         app_commands.Choice(name="Supprimer les messages avec GIFs", value="gif"),
         app_commands.Choice(name="Supprimer les messages avec liens", value="links"),
+        app_commands.Choice(name="Affiche l'historique des suppression", value="history"),
     ]
 
-    async def ask_confirmation(self, interaction: discord.Interaction, message: str, count: Optional[int] = None):
-        view = PurgeConfirmationView(interaction, interaction.channel, count)
+    async def ask_confirmation(
+        self,
+        interaction: discord.Interaction,
+        message: str,
+        callback: Callable[[Optional[bool]], Any],
+        confirm_label: str = "Confirmer",
+        confirm_style: discord.ButtonStyle = discord.ButtonStyle.green,
+        cancel_label: str = "Annuler",
+        cancel_style: discord.ButtonStyle = discord.ButtonStyle.grey
+    ) -> Optional[bool]:
+        """Pose une question de confirmation à l'utilisateur."""
+        view = ConfirmationView(
+            interaction=interaction,
+            callback=callback,
+            confirm_label=confirm_label,
+            confirm_style=confirm_style,
+            cancel_label=cancel_label,
+            cancel_style=cancel_style
+        )
         await interaction.followup.send(message, view=view, ephemeral=True)
-        await view.wait()  # Attend que l'utilisateur interagisse ou que le timeout expire
-        return view.value  # Retourne True, False ou None
+        await view.wait()
+        return view.value
 
-    @clean_group.command(name="execute", description="Nettoie les messages selon le type et les options spécifiées.")
+    @app_commands.command(name="clean", description="Nettoie les messages selon le type et les options spécifiées.")
     @app_commands.describe(
         action="Type d'action de nettoyage à effectuer",
         user="L'utilisateur ciblé (pour l'action 'user')",
         count="Nombre de messages à supprimer (pour l'action 'number')",
         message_id="ID du message à partir duquel supprimer (pour l'action 'from')",
-        scope="Portée: 'channel' ou 'all' (pour l'action 'user')"
     )
     @app_commands.choices(action=ACTION_CHOICES)
     @is_admin()
     @enqueue_request()
     async def clean_execute(
-        self, 
-        interaction: discord.Interaction, 
-        action: app_commands.Choice[str], 
-        user: Optional[discord.Member] = None, 
-        count: Optional[int] = None, 
+        self,
+        interaction: discord.Interaction,
+        action: app_commands.Choice[str],
+        user: Optional[discord.Member] = None,
+        count: Optional[int] = None,
         message_id: Optional[str] = None,
-        scope: Optional[str] = "channel"
     ):
+        """Exécute une action de nettoyage basée sur les choix de l'utilisateur."""
+        def get_type_icon(deletion_type: str) -> str:
+            """Retourne un émoji correspondant au type de suppression."""
+            icons = {
+                "all": "🧹",
+                "user": "👤",
+                "links": "🔗",
+                "image": "📷",
+                "gif": "🎞️",
+                "condition": "⚙️",
+                "from": "➡️"
+            }
+            return icons.get(deletion_type, "❓")
+
         channel = interaction.channel
         if not isinstance(channel, discord.TextChannel):
+            logger.warning("Commande utilisée en dehors d'un salon texte.")
             return await interaction.followup.send("Cette commande doit être utilisée dans un salon texte.", ephemeral=True)
 
         try:
+            # Initialisation de confirmation_callback par défaut
+            confirmation_callback = None
+
             if action.value == "all":
-                confirmation = await self.ask_confirmation(interaction, f"Confirmez-vous la suppression de **tous** les messages dans {channel.mention} ?")
-                if confirmation:
-                    deleted = await channel.purge(limit=None)
-                    await interaction.followup.send(f"Tous les messages dans {channel.mention} ont été supprimés ({len(deleted)}).", ephemeral=True)
-                else:
-                    logger.info(f"Action annulée ou expirée par {interaction.user}.")
-                    await interaction.followup.send("Action annulée ou confirmation expirée.", ephemeral=True)
+                async def confirmation_callback(value: Optional[bool]):
+                    if value:
+                        deleted_count = await CleanService.delete_all_messages(channel, interaction.user)
+                        await interaction.followup.send(
+                            f"Tous les messages dans {channel.mention} ont été supprimés ({deleted_count}).",
+                            ephemeral=True
+                        )
+                    else:
+                        await interaction.followup.send("Action annulée ou confirmation expirée.", ephemeral=True)
+
+                await self.ask_confirmation(
+                    interaction,
+                    f"Confirmez-vous la suppression de **tous** les messages dans {channel.mention} ?",
+                    confirmation_callback,
+                    confirm_label="Supprimer",
+                    confirm_style=discord.ButtonStyle.red
+                )
 
             elif action.value == "user":
                 if not user:
-                    return await interaction.followup.send("Veuillez spécifier un utilisateur pour cette action.", ephemeral=True)
-                if scope not in ("channel", "all"):
-                    return await interaction.followup.send("Scope invalide. Utilisez 'channel' ou 'all'.", ephemeral=True)
-                # Scope spécifique
-                if scope == "channel":
-                    confirmation = await self.ask_confirmation(interaction, f"Confirmez-vous la suppression de tous les messages de {user.mention} dans {channel.mention} ?")
-                    if confirmation:
-                        deleted = await channel.purge(limit=None, check=lambda m: m.author.id == user.id)
-                        await interaction.followup.send(f"{len(deleted)} messages de {user.mention} supprimés dans {channel.mention}.", ephemeral=True)
+                    await interaction.followup.send("Veuillez spécifier un utilisateur.", ephemeral=True)
+                    return
+
+                async def confirmation_callback(value: Optional[bool]):
+                    if value:
+                        deleted_count = await CleanService.delete_user_messages(channel, user, interaction.user)
+                        await interaction.followup.send(
+                            f"{deleted_count} messages de {user.mention} ont été supprimés dans {channel.mention}.",
+                            ephemeral=True
+                        )
                     else:
-                        logger.info(f"Action annulée ou expirée par {interaction.user}.")
                         await interaction.followup.send("Action annulée ou confirmation expirée.", ephemeral=True)
 
-                else:  # Scope global
-                    confirmation = await self.ask_confirmation(interaction, f"Confirmez-vous la suppression de tous les messages de {user.mention} dans tous les salons du serveur ?")
-                    if confirmation:
-                        total_deleted = 0
-                        for ch in interaction.guild.text_channels:
-                            del_in_channel = await ch.purge(limit=None, check=lambda m: m.author.id == user.id)
-                            total_deleted += len(del_in_channel)
-                        await interaction.followup.send(f"{total_deleted} messages de {user.mention} supprimés dans tous les salons du serveur.", ephemeral=True)
-                    else:
-                        logger.info(f"Action annulée ou expirée par {interaction.user}.")
-                        await interaction.followup.send("Action annulée ou confirmation expirée.", ephemeral=True)
+                await self.ask_confirmation(
+                    interaction,
+                    f"Confirmez-vous la suppression des messages de {user.mention} dans {channel.mention} ?",
+                    confirmation_callback,
+                    confirm_label="Supprimer",
+                    confirm_style=discord.ButtonStyle.red
+                )
 
             elif action.value == "number":
-                if not count or count < 1 or count > 100:
-                    return await interaction.followup.send("Le nombre de messages doit être entre 1 et 100.", ephemeral=True)
-                confirmation = await self.ask_confirmation(interaction, f"Confirmez-vous la suppression des {count} derniers messages dans {channel.mention} ?", count=count)
-                if confirmation:
-                    deleted = await channel.purge(limit=count)
-                    await interaction.followup.send(f"{len(deleted)} messages supprimés dans {channel.mention}.", ephemeral=True)
-                else:
-                    logger.info(f"Action annulée ou expirée par {interaction.user}.")
-                    await interaction.followup.send("Action annulée ou confirmation expirée.", ephemeral=True)
+                if not count or count <= 0:
+                    await interaction.followup.send("Veuillez spécifier un nombre de messages valide.", ephemeral=True)
+                    return
+
+                async def confirmation_callback(value: Optional[bool]):
+                    if value:
+                        deleted_count = await channel.purge(limit=count)
+                        await interaction.followup.send(
+                            f"{deleted_count} derniers messages supprimés dans {channel.mention}.",
+                            ephemeral=True
+                        )
+                    else:
+                        await interaction.followup.send("Action annulée ou confirmation expirée.", ephemeral=True)
+
+                await self.ask_confirmation(
+                    interaction,
+                    f"Confirmez-vous la suppression des {count} derniers messages dans {channel.mention} ?",
+                    confirmation_callback,
+                    confirm_label="Supprimer",
+                    confirm_style=discord.ButtonStyle.red
+                )
 
             elif action.value == "from":
                 if not message_id:
-                    return await interaction.followup.send("Veuillez spécifier un ID de message pour cette action.", ephemeral=True)
-                
-                # Extraction de l'ID numérique à partir de la chaîne
-                match = re.fullmatch(r'(\d{17,20})', message_id)
-                if not match:
-                    return await interaction.followup.send("Veuillez fournir un ID de message valide (seulement des chiffres).", ephemeral=True)
+                    await interaction.followup.send("Veuillez fournir l'ID d'un message valide.", ephemeral=True)
+                    return
+
                 try:
-                    msg_id_int = int(match.group(1))
-                    msg = await channel.fetch_message(msg_id_int)
-                except (discord.NotFound, ValueError):
-                    return await interaction.followup.send("Message introuvable ou ID invalide.", ephemeral=True)
-                
-                confirmation = await self.ask_confirmation(interaction, f"Confirmez-vous la suppression de tous les messages à partir du message `{msg_id_int}` dans {channel.mention} ?")
-                if confirmation:
-                    def after_check(m):
-                        return m.id >= msg.id
-                    deleted = await channel.purge(limit=None, check=after_check)
-                    await interaction.followup.send(f"{len(deleted)} messages supprimés dans {channel.mention} après le message `{msg_id_int}`.", ephemeral=True)
-                else:
-                    logger.info(f"Action annulée ou expirée par {interaction.user}.")
-                    await interaction.followup.send("Action annulée ou confirmation expirée.", ephemeral=True)
+                    message_id = int(message_id)
+                except ValueError:
+                    await interaction.followup.send("L'ID de message doit être un entier.", ephemeral=True)
+                    return
 
-            elif action.value == "image":
-                confirmation = await self.ask_confirmation(interaction, f"Confirmez-vous la suppression de tous les messages avec images dans {channel.mention} ?")
-                if confirmation:
-                    def image_check(m: discord.Message):
-                        return any(att.content_type.startswith("image/") for att in m.attachments if att.content_type) or any(e.image or e.thumbnail for e in m.embeds)
-                    deleted = await channel.purge(limit=None, check=image_check)
-                    await interaction.followup.send(f"{len(deleted)} messages avec images supprimés dans {channel.mention}.", ephemeral=True)
-                else:
-                    logger.info(f"Action annulée ou expirée par {interaction.user}.")
-                    await interaction.followup.send("Action annulée ou confirmation expirée.", ephemeral=True)
+                async def confirmation_callback(value: Optional[bool]):
+                    if value:
+                        deleted_count = await CleanService.delete_messages_after(channel, message_id, interaction.user)
+                        await interaction.followup.send(
+                            f"{deleted_count} messages supprimés après le message {message_id} dans {channel.mention}.",
+                            ephemeral=True
+                        )
+                    else:
+                        await interaction.followup.send("Action annulée ou confirmation expirée.", ephemeral=True)
 
-            elif action.value == "gif":
-                confirmation = await self.ask_confirmation(interaction, f"Confirmez-vous la suppression de tous les messages avec gifs dans {channel.mention} ?")
-                if confirmation:
-                    def gif_check(m: discord.Message):
-                        return any("gif" in (att.content_type or "") for att in m.attachments) or ".gif" in m.content.lower()
-                    deleted = await channel.purge(limit=None, check=gif_check)
-                    await interaction.followup.send(f"{len(deleted)} messages avec gifs supprimés dans {channel.mention}.", ephemeral=True)
-                else:
-                    logger.info(f"Action annulée ou expirée par {interaction.user}.")
-                    await interaction.followup.send("Action annulée ou confirmation expirée.", ephemeral=True)
+                await self.ask_confirmation(
+                    interaction,
+                    f"Confirmez-vous la suppression des messages après le message {message_id} dans {channel.mention} ?",
+                    confirmation_callback,
+                    confirm_label="Supprimer",
+                    confirm_style=discord.ButtonStyle.red
+                )
 
-            elif action.value == "links":
-                confirmation = await self.ask_confirmation(interaction, f"Confirmez-vous la suppression de tous les messages avec liens dans {channel.mention} ?")
-                if confirmation:
-                    def links_check(m: discord.Message):
-                        return "http://" in m.content.lower() or "https://" in m.content.lower()
-                    deleted = await channel.purge(limit=None, check=links_check)
-                    await interaction.followup.send(f"{len(deleted)} messages avec liens supprimés dans {channel.mention}.", ephemeral=True)
-                else:
-                    logger.info(f"Action annulée ou expirée par {interaction.user}.")
-                    await interaction.followup.send("Action annulée ou confirmation expirée.", ephemeral=True)
+            elif action.value == "history":
+                limit = 50
+                try:
+                    if limit > 100:
+                        await interaction.followup.send("La limite doit être inférieure ou égale à 100.", ephemeral=True)
+                        return
 
-            else:
-                await interaction.followup.send("Action invalide spécifiée.", ephemeral=True)
+                    deletions = await database.get_message_deletions(limit=limit)
+                    if not deletions:
+                        await interaction.followup.send("Aucune suppression trouvée.", ephemeral=True)
+                        return
 
-        except discord.HTTPException as e:
-            await interaction.followup.send("Une erreur est survenue lors de l'exécution.", ephemeral=True)
-            logger.exception(f"Erreur HTTP lors du nettoyage dans {channel.name}: {e}")
+                    table_header = (
+                        "╔════╦══════════════╦═════════════╦══════════════╦═══════╦══════════════════╗\n"
+                        "║ ID ║ Supprimé par ║ Salon       ║ Type         ║ Nb.   ║ Date             ║\n"
+                        "╠════╬══════════════╬═════════════╬══════════════╬═══════╬══════════════════╣\n"
+                    )
+
+                    table_rows = "\n".join([
+                        f"║ {d['id']:<2} ║ {d['deleted_by_user']:<12} ║ #{d['channel_name']:<10} ║ "
+                        f"{get_type_icon(d['deletion_type'])} {d['deletion_type']:<9} ║ "
+                        f"{d['message_count']:<5} ║ {d['timestamp'].strftime('%d/%m/%Y %H:%M'):<15} ║"
+                        for d in deletions
+                    ])
+
+                    table_footer = (
+                        "\n╚════╩══════════════╩═════════════╩══════════════╩═══════╩══════════════════╝"
+                    )
+
+                    history_text = f"{table_header}{table_rows}{table_footer}"
+
+                    if len(history_text) > 2000:
+                        with open("history.txt", "w", encoding="utf-8") as file:
+                            file.write(history_text)
+                        await interaction.followup.send(
+                            "L'historique est trop long pour être affiché. Voici un fichier contenant les données :",
+                            file=discord.File("history.txt"),
+                            ephemeral=True
+                        )
+                        os.remove("history.txt")
+                    else:
+                        await interaction.followup.send(f"```{history_text}```", ephemeral=True)
+
+                except Exception as e:
+                    logger.error(f"Erreur lors de la récupération de l'historique des suppressions : {e}")
+                    await interaction.followup.send("Une erreur est survenue lors de la récupération de l'historique.", ephemeral=True)
+
+            elif action.value in ["image", "gif", "links"]:
+                if action.value == "image":
+                    condition = lambda m: any(a.url.lower().endswith(("jpg", "jpeg", "png")) for a in m.attachments)
+                elif action.value == "gif":
+                    condition = lambda m: any(a.url.lower().endswith("gif") for a in m.attachments) or "gif" in m.content.lower()
+                elif action.value == "links":
+                    condition = lambda m: re.search(r"http[s]?://", m.content)
+
+        except Exception as e:
+            logger.exception(f"Erreur lors de l'exécution de la commande de nettoyage : {e}")
+            await interaction.followup.send("Une erreur est survenue.", ephemeral=True)
+
 
     @clean_execute.error
     async def clean_command_error(self, interaction: discord.Interaction, error: Exception):
@@ -181,13 +266,13 @@ class Clean(commands.Cog):
                 "Vous n'avez pas la permission d'utiliser cette commande.",
                 ephemeral=True
             )
-            logger.warning(f"{interaction.user} a tenté d'utiliser une commande clean sans les permissions requises.")
         else:
             await interaction.followup.send(
                 "Une erreur est survenue lors de l'exécution de la commande.",
                 ephemeral=True
             )
-            logger.exception(f"Erreur lors d'une commande clean par {interaction.user}: {error}")
+            logger.exception(f"Erreur lors d'une commande clean : {error}")
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Clean(bot))

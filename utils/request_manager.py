@@ -2,11 +2,11 @@
 
 import asyncio
 import heapq
-from datetime import datetime, time
+from datetime import datetime, timedelta
 import discord
 from functools import wraps
 import logging
-from typing import Callable, Any
+from typing import Callable, Any, Optional
 
 logger = logging.getLogger("request_manager")
 
@@ -17,44 +17,65 @@ class Request:
         self.callback = callback
         self.priority = priority
         self.timestamp = datetime.utcnow()
+        self.expiry = self.timestamp + timedelta(seconds=30)  # Expire après 30 secondes
 
     def __lt__(self, other):
+        # Priorité plus basse signifie priorité plus haute
         if self.priority == other.priority:
             return self.timestamp < other.timestamp
         return self.priority < other.priority
 
+    def is_expired(self) -> bool:
+        return datetime.utcnow() >= self.expiry
+
 
 class RequestManager:
-    def __init__(self):
+    def __init__(self, worker_count: int = 5):
         self.queue = []
         self.lock = asyncio.Lock()
-        self.processing_task = None
+        self.workers = []
         self.shutdown_flag = False
-        self.peak_hours = (time(hour=18), time(hour=22))
+        self.worker_count = worker_count
+        self.role_cache = {}
         self.request_count_per_hour = {}
 
     def start(self, bot: discord.Client):
-        if self.processing_task is None or self.processing_task.done():
-            self.processing_task = bot.loop.create_task(self.process_requests())
-            logger.debug("RequestManager processing task started.")
+        if not self.workers:
+            for _ in range(self.worker_count):
+                worker = bot.loop.create_task(self.process_requests())
+                self.workers.append(worker)
+            logger.debug(f"{self.worker_count} RequestManager processing tasks started.")
 
     def stop(self):
         self.shutdown_flag = True
+        for worker in self.workers:
+            worker.cancel()
         logger.debug("RequestManager stopping...")
 
     async def process_requests(self):
-        logger.debug("Request processing loop started.")
-        await asyncio.sleep(2)  # Petit délai avant de commencer
+        logger.debug("Worker started.")
         while not self.shutdown_flag:
+            req: Optional[Request] = None
             async with self.lock:
-                if self.queue:
+                while self.queue:
                     req = heapq.heappop(self.queue)
-                    logger.debug(f"Dequeued request: interaction={req.interaction.id}, priority={req.priority}")
-                else:
-                    req = None
+                    if req.is_expired():
+                        logger.warning(f"Request expired and removed: interaction={req.interaction.id}")
+                        try:
+                            await req.interaction.followup.send(
+                                "Votre demande a expiré avant d'avoir pu être traitée.", ephemeral=True
+                            )
+                        except Exception as send_error:
+                            logger.error(f"Échec de l'envoi du message d'expiration: {send_error}")
+                        req = None
+                        continue
+                    break  # Requête valide trouvée
             if req:
                 try:
                     await req.callback(req.interaction)
+                    # Mettre à jour les statistiques
+                    current_hour = datetime.utcnow().hour
+                    self.request_count_per_hour[current_hour] = self.request_count_per_hour.get(current_hour, 0) + 1
                 except Exception as e:
                     logger.exception(f"Error processing request {req.interaction.id}: {e}")
                     try:
@@ -64,23 +85,23 @@ class RequestManager:
                     except Exception as send_error:
                         logger.error(f"Échec de l'envoi de la réponse d'erreur: {send_error}")
             else:
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.1)  # Délai réduit pour réagir plus rapidement
 
-    def is_peak_hours(self) -> bool:
-        now = datetime.utcnow().time()
-        start, end = self.peak_hours
-        return start <= now <= end
+    def get_role(self, guild: discord.Guild, role_name: str) -> Optional[discord.Role]:
+        if role_name not in self.role_cache:
+            self.role_cache[role_name] = discord.utils.get(guild.roles, name=role_name)
+        return self.role_cache.get(role_name)
 
     def calculate_priority(self, interaction: discord.Interaction) -> int:
-        """Calcule la priorité d'une requête en fonction des rôles de l'utilisateur et des heures de pointe."""
+        """Calcule la priorité d'une requête en fonction des rôles de l'utilisateur."""
         base_priority = 1000
         user = interaction.user
 
         if user.guild_permissions.administrator:
             base_priority = 100
         else:
-            booster_role = discord.utils.get(interaction.guild.roles, name="booster")
-            bon_joueur_role = discord.utils.get(interaction.guild.roles, name="bon joueur")
+            booster_role = self.get_role(interaction.guild, "booster")
+            bon_joueur_role = self.get_role(interaction.guild, "bon joueur")
             if booster_role and booster_role in user.roles:
                 base_priority = 300
             elif bon_joueur_role and bon_joueur_role in user.roles:
@@ -88,8 +109,6 @@ class RequestManager:
             else:
                 base_priority = 700
 
-        if self.is_peak_hours() and not user.guild_permissions.administrator:
-            base_priority += 200
         return base_priority
 
     async def enqueue(self, interaction: discord.Interaction, callback: Callable[[discord.Interaction], Any]):

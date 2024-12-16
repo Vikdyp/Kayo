@@ -1,144 +1,130 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import logging
-import logging.config
-import os
-from dotenv import load_dotenv
+from utils.database import database
+from config import DISCORD_TOKEN, TEST_GUILD_ID, LOGGING, TEST_MODE
 import asyncio
-from config_log import LOGGING_ENABLED, GLOBAL_DEBUG  # Assurez-vous que c'est bien config_log.py
+from utils.request_manager import setup_request_manager, teardown_request_manager
+from cogs.voice_management.online_count_updater import setup_rank_updater, teardown_rank_updater, rank_updater
 
-# Charger les variables d'environnement
-load_dotenv()
+def configure_logging():
+    """Configure le niveau de logging pour chaque module en fonction du fichier de configuration."""
+    # Supprimer les handlers de base
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
 
-# Configuration centralisée des logs
-def setup_logging():
-    log_level_bot = logging.DEBUG if LOGGING_ENABLED.get("bot", False) and GLOBAL_DEBUG else logging.CRITICAL
-    log_level_request_manager = logging.DEBUG if LOGGING_ENABLED.get("request_manager", False) and GLOBAL_DEBUG else logging.CRITICAL
-    log_level_configuration_channels = logging.DEBUG if LOGGING_ENABLED.get("configuration.channels", False) and GLOBAL_DEBUG else logging.CRITICAL
+    # Configurer chaque logger en fonction de `LOGGING`
+    for logger_name, is_enabled in LOGGING.items():
+        logger = logging.getLogger(logger_name)
+        if is_enabled:
+            logger.setLevel(logging.DEBUG)  # Activer les logs (DEBUG par exemple)
+            handler = logging.StreamHandler()  # Handler pour afficher dans la console
+            handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+            logger.addHandler(handler)
+        else:
+            logger.setLevel(logging.CRITICAL)  # Désactiver les logs (CRITICAL = quasi muet)
 
-    logging_config = {
-        'version': 1,
-        'disable_existing_loggers': False,
-        'formatters': {
-            'standard': {
-                'format': "\n%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-            },
-        },
-        'handlers': {
-            'file_bot': {
-                'level': 'DEBUG' if LOGGING_ENABLED.get("bot", False) and GLOBAL_DEBUG else 'CRITICAL',
-                'class': 'logging.FileHandler',
-                'formatter': 'standard',
-                'filename': 'logs/bot.log',
-                'encoding': 'utf-8',
-                'mode': 'a',
-            },
-            'console': {
-                'level': 'DEBUG' if LOGGING_ENABLED.get("bot", False) and GLOBAL_DEBUG else 'CRITICAL',
-                'class': 'logging.StreamHandler',
-                'formatter': 'standard',
-            },
-        },
-        'loggers': {
-            'bot': {
-                'handlers': ['file_bot', 'console'],
-                'level': log_level_bot,
-                'propagate': False,
-            },
-            'request_manager': {
-                'handlers': ['file_bot'],
-                'level': log_level_request_manager,
-                'propagate': False,
-            },
-            'configuration.channels': {  # Exemple pour un cog
-                'handlers': ['file_bot'],
-                'level': log_level_configuration_channels,
-                'propagate': False,
-            },
-            # Ajoutez d'autres loggers pour vos cogs si nécessaire
-        }
-    }
+# Appeler configure_logging avant tout
+configure_logging()
 
-    logging.config.dictConfig(logging_config)
-
-# Initialiser la configuration des logs
-setup_logging()
-logger = logging.getLogger('bot')
-
+# Configuration des intents
 intents = discord.Intents.all()
-intents.presences = True
-intents.members = True
-intents.voice_states = True
 intents.guilds = True
+intents.members = True
+intents.messages = True
 intents.message_content = True
 
-bot = commands.Bot(command_prefix="!", intents=intents, description="Bot complet")
+# Initialisation du bot
+bot = commands.Bot(command_prefix='!', intents=intents)
 
-# Charger les tokens depuis les variables d'environnement
-DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-VALORANT_API_KEY = os.getenv("VALORANT_API_KEY")
-
-if not DISCORD_BOT_TOKEN:
-    logger.critical("Le token du bot n'est pas défini. Veuillez vérifier le fichier .env.")
-    exit(1)
-
-if not VALORANT_API_KEY:
-    logger.critical("La clé API Valorant n'est pas définie. Veuillez vérifier le fichier .env.")
-    exit(1)
-
-# Assigner la clé API Valorant à l'objet Bot
-bot.valorant_api_key = VALORANT_API_KEY
-
-async def load_all_cogs():
-    cogs_folders = [
-        "configuration", "economy", "moderation", 
-        "ranking", "reputation", "role_management", 
-        "scrims", "tournaments", "voice_management"
-    ]
-    
-    for folder in cogs_folders:
-        cogs_dir = os.path.join("cogs", folder)
-        if os.path.exists(cogs_dir):
-            for filename in os.listdir(cogs_dir):
-                if filename.endswith(".py") and filename != "__init__.py":
-                    extension = f"cogs.{folder}.{filename[:-3]}"
-                    try:
-                        await bot.load_extension(extension)
-                        logger.info(f"{extension} chargé avec succès.")
-                    except Exception as e:
-                        logger.exception(f"Erreur lors du chargement de {extension}: {e}")
-    
-    from cogs.utilities.request_manager import setup_request_manager
-    setup_request_manager(bot)
+# Liste explicite des cogs à charger
+cog_paths = [
+    'cogs.configuration.channels_configuration',
+    'cogs.configuration.role_mappings_configuration',
+    'cogs.moderation.clean',
+]
 
 @bot.event
 async def on_ready():
-    logger.info(f"{bot.user} est connecté avec succès.")
-    await bot.tree.sync()
+    logger = logging.getLogger('bot')
+    logger.info(f'Connecté en tant que {bot.user}')
+    await database.connect()
+    setup_request_manager(bot)
+    logger.info("RequestManager démarré.")
+
+    # Démarrer les tâches planifiées
+    if not clean_old_logs.is_running():
+        clean_old_logs.start()
+        logger.info("Tâche de nettoyage planifiée démarrée.")
+
+    # Démarrer le RankUpdater
+    if not rank_updater.task or not rank_updater.task.is_running():
+        setup_rank_updater(bot)
+        logger.info("Tâche de mise à jour des salons démarrée.")
+
+    # Synchroniser les commandes
+    await asyncio.sleep(1)  # Facultatif
+    try:
+        if TEST_MODE:
+            # Mode test : synchroniser uniquement avec TEST_GUILD_ID
+            guild = discord.Object(id=int(TEST_GUILD_ID))
+            synced_commands = await bot.tree.sync(guild=guild)
+            logger.info(f"Commandes synchronisées pour la guilde {TEST_GUILD_ID}: {len(synced_commands)}")
+        else:
+            # Mode normal : synchroniser globalement
+            synced_commands = await bot.tree.sync()
+            logger.info(f"Commandes globales synchronisées : {len(synced_commands)}")
+    except Exception as e:
+        logger.error(f"Erreur lors de la synchronisation des commandes : {e}")
+
+@tasks.loop(hours=24)
+async def clean_old_logs():
+    logger = logging.getLogger('bot')
+    try:
+        await database.purge_old_logs_and_clean_relations(days=30)
+    except Exception as e:
+        logger.error(f"Erreur lors du nettoyage automatique des logs : {e}")
 
 @bot.event
-async def on_error(event, *args, **kwargs):
-    logger.exception(f"Erreur non capturée dans l'événement {event}: {args} {kwargs}")
+async def on_disconnect():
+    logger = logging.getLogger('bot')
+    teardown_request_manager()
+    await database.disconnect()
+    logger.info("Déconnecté et déconnecté de la base de données.")
 
-async def shutdown(bot):
-    logger.info("Arrêt propre du bot...")
-    for task in asyncio.all_tasks():
-        if task is not asyncio.current_task():
-            task.cancel()
-    await bot.close()
+async def load_cogs():
+    logger = logging.getLogger('bot')
+    for cog_path in cog_paths:
+        try:
+            await bot.load_extension(cog_path)
+            logger.info(f'Cog chargé: {cog_path}')
+        except commands.errors.ExtensionAlreadyLoaded:
+            logger.warning(f'Cog déjà chargé: {cog_path}')
+        except commands.errors.ExtensionNotFound:
+            logger.error(f'Cog non trouvé: {cog_path}')
+        except commands.errors.NoEntryPointError:
+            logger.error(f'Pas de fonction setup dans le cog: {cog_path}')
+        except Exception as e:
+            logger.exception(f'Erreur lors du chargement du cog {cog_path}: {e}')
 
 async def main():
     async with bot:
-        await load_all_cogs()
-        await bot.start(DISCORD_BOT_TOKEN)
+        await load_cogs()
+        await bot.start(DISCORD_TOKEN)
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Interruption par l'utilisateur. Arrêt...")
-        asyncio.run(shutdown(bot))
+        logger = logging.getLogger('bot')
+        logger.info("Bot arrêté manuellement.")
     except Exception as e:
-        logger.exception(f"Erreur inattendue : {e}")
+        logger = logging.getLogger('bot')
+        logger.exception(f"Erreur inattendue: {e}")
     finally:
-        logger.info("Le bot est maintenant arrêté.")
+        loop = asyncio.get_event_loop()
+        if not loop.is_closed():
+            loop.run_until_complete(database.disconnect())
+            teardown_request_manager()
+            loop.close()
+        logger.info("Bot arrêté proprement.")

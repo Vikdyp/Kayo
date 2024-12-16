@@ -1,176 +1,155 @@
-# cogs/configuration/channels_configuration.py
-
 import discord
 from discord.ext import commands
 from discord import app_commands
 import logging
-import asyncio
-from typing import Dict
+from typing import Dict, Optional
 
-from cogs.utilities.request_manager import enqueue_request
-from cogs.utilities.data_manager import DataManager
+from utils.request_manager import enqueue_request
+from utils.confirmation_view import ConfirmationView
+from cogs.configuration.services.channel_service import ChannelService
 
-# Configurer le logger pour ce cog
-logger = logging.getLogger('configuration.channel')
+logger = logging.getLogger('channels_configuration')
+
 
 class ChannelsConfiguration(commands.Cog):
     """Cog pour gérer la configuration des salons."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.data = DataManager()
         self.config: Dict[str, int] = {}
-        asyncio.create_task(self.load_config())
         logger.info("ChannelsConfiguration initialisé.")
 
-    async def load_config(self):
-        """Charge la configuration des salons depuis la base de données."""
-        try:
-            full_config = await self.data.get_config()
-            self.config = full_config.get("channels", {})
-            logger.info("Configuration des salons chargée : %s", self.config)
-        except Exception as e:
-            logger.error("Erreur lors du chargement de la configuration des salons : %s", e)
-            self.config = {}
-
-    async def save_config(self):
-        """Sauvegarde la configuration des salons dans la base de données."""
-        try:
-            full_config = await self.data.get_config()
-            full_config["channels"] = self.config
-            await self.data.save_config(full_config)
-            logger.info("Configuration des salons sauvegardée : %s", self.config)
-        except Exception as e:
-            logger.error("Erreur lors de la sauvegarde de la configuration des salons : %s", e)
-
-    # Liste prédéfinie des actions et leurs descriptions
     PREDEFINED_ACTIONS = [
         ("demande-deban", "Demande de déban"),
         ("conflict", "Gestion des conflits"),
         ("teams_forum_id", "Forum de présentation des équipes"),
         ("inscription_tournament_channel_id", "Salon d'inscription aux tournois"),
-        ("tournament_channel_id", "Salon des tournois")
+        ("tournament_channel_id", "Salon des tournois"),
+        ("fer", "Salon rang fer"),
+        ("bronze", "Salon rang bronze"),
+        ("argent", "Salon rang argent"),
+        ("or", "Salon rang or"),
+        ("platine", "Salon rang platine"),
+        ("diamant", "Salon rang diamant"),
+        ("ascendant", "Salon rang ascendant"),
+        ("immortel", "Salon rang immortel"),
+        ("radiant", "Salon rang radiant"),
     ]
 
-    # Création des choix pour les actions prédéfinies
     ACTION_CHOICES = [
         app_commands.Choice(name=description, value=action)
         for action, description in PREDEFINED_ACTIONS
     ]
 
-    # Groupe de commandes /channel
-    channel_group = app_commands.Group(
-        name="channel",
-        description="Gérer la configuration des salons",
-        default_permissions=discord.Permissions(administrator=True)  # Restriction aux administrateurs
+    @app_commands.command(name="salon", description="Exécute des actions sur la configuration des salons.")
+    @app_commands.describe(
+        action="Action à effectuer",
+        channel="Salon Discord (nécessaire pour 'set')"
     )
-
-    @channel_group.command(name="get", description="Affiche les salons configurés.")
+    @app_commands.choices(action=ACTION_CHOICES)
     @enqueue_request()
-    async def channels_get(self, interaction: discord.Interaction):
-        """Commande /channel get : Affiche les salons configurés."""
+    async def channels_execute(
+        self, 
+        interaction: discord.Interaction, 
+        action: app_commands.Choice[str], 
+        channel: Optional[discord.TextChannel] = None
+    ):
+        """Exécute une action de configuration de salon en fonction de l'option spécifiée."""
         try:
-            logger.debug(f"Executing channels_get for interaction={interaction.id}")
+            logger.debug(f"Execution de channels_execute avec action={action.value}, channel={channel}")
+
             if not interaction.guild:
                 await interaction.followup.send(
                     "Cette commande doit être exécutée dans un serveur.", ephemeral=True
                 )
                 return
 
-            channels = self.config
-            logger.debug(f"Channels config: {channels}")
-            if not channels:
-                await interaction.followup.send("Aucun salon configuré.", ephemeral=True)
-                return
+            action_lower = action.value.lower()
 
-            embed = discord.Embed(title="Salons Configurés", color=discord.Color.green())
-            for action, channel_id in channels.items():
-                channel = interaction.guild.get_channel(channel_id)
-                if channel:
-                    embed.add_field(name=self.get_action_display_name(action), value=channel.mention, inline=False)
+            if action_lower == "get":
+                channels = await ChannelService.get_channels_config(interaction.guild.id)
+                if not channels:
+                    await interaction.followup.send("Aucun salon configuré.", ephemeral=True)
+                    return
+
+                embed = discord.Embed(title="Salons Configurés", color=discord.Color.green())
+                for key, channel_id in channels.items():
+                    guild_channel = interaction.guild.get_channel(channel_id)
+                    display_name = self.get_action_display_name(key)
+                    if guild_channel:
+                        embed.add_field(name=display_name, value=guild_channel.mention, inline=False)
+                    else:
+                        embed.add_field(name=display_name, value="Salon non trouvé", inline=False)
+
+                await interaction.followup.send(embed=embed, ephemeral=True)
+
+            elif action_lower == "set":
+                if not channel:
+                    await interaction.followup.send(
+                        "Veuillez spécifier un salon pour cette action.", ephemeral=True
+                    )
+                    return
+
+                success = await ChannelService.set_channel_for_action(
+                    interaction.guild.id, action_lower, channel.id
+                )
+                if success:
+                    await interaction.followup.send(
+                        f"Salon {channel.mention} configuré pour **{self.get_action_display_name(action_lower)}**.",
+                        ephemeral=True
+                    )
                 else:
-                    embed.add_field(name=self.get_action_display_name(action), value="Salon non trouvé", inline=False)
+                    await interaction.followup.send(
+                        "Une erreur est survenue lors de la configuration du salon.", ephemeral=True
+                    )
 
-            await interaction.followup.send(embed=embed, ephemeral=True)
-            logger.debug(f"channels_get exécuté avec succès pour interaction={interaction.id}")
+            elif action_lower == "remove":
+                channels = await ChannelService.get_channels_config(interaction.guild.id)
+                if action_lower not in channels:
+                    await interaction.followup.send(
+                        f"Aucune configuration trouvée pour l'action **{self.get_action_display_name(action_lower)}**.",
+                        ephemeral=True
+                    )
+                    return
+
+                async def confirmation_callback(result: Optional[bool]):
+                    if result is True:
+                        success = await ChannelService.remove_channel_for_action(
+                            interaction.guild.id, action_lower
+                        )
+                        if success:
+                            await interaction.followup.send(
+                                f"Configuration pour **{self.get_action_display_name(action_lower)}** supprimée.",
+                                ephemeral=True
+                            )
+                        else:
+                            await interaction.followup.send(
+                                "Une erreur est survenue lors de la suppression.", ephemeral=True
+                            )
+                    elif result is False:
+                        await interaction.followup.send("Suppression annulée.", ephemeral=True)
+                    else:
+                        await interaction.followup.send("Le délai de confirmation a expiré.", ephemeral=True)
+
+                view = ConfirmationView(
+                    interaction=interaction,
+                    callback=confirmation_callback
+                )
+                await interaction.followup.send(
+                    f"Êtes-vous sûr de vouloir supprimer la configuration pour **{self.get_action_display_name(action_lower)}** ?",
+                    view=view,
+                    ephemeral=True
+                )
+
+            else:
+                await interaction.followup.send(
+                    f"Action non prise en charge : **{self.get_action_display_name(action_lower)}**.",
+                    ephemeral=True
+                )
         except Exception as e:
-            logger.exception(f"Erreur dans channels_get pour interaction={interaction.id}: {e}")
+            logger.exception(f"Erreur dans channels_execute pour action={action.value}: {e}")
             await interaction.followup.send(
-                "Une erreur est survenue lors du traitement de votre requête.", ephemeral=True
-            )
-
-    @channel_group.command(name="set", description="Configure un salon pour une action spécifique.")
-    @app_commands.describe(action="Action à configurer", channel="Salon Discord")
-    @app_commands.choices(action=ACTION_CHOICES)
-    @enqueue_request()
-    async def channels_set(self, interaction: discord.Interaction, action: app_commands.Choice[str], channel: discord.TextChannel):
-        """Commande /channel set : Configure un salon pour une action spécifique."""
-        try:
-            logger.debug(f"Executing channels_set pour interaction={interaction.id} avec action={action.value}, channel={channel.id}")
-            if not interaction.guild:
-                await interaction.followup.send(
-                    "Cette commande doit être exécutée dans un serveur.", ephemeral=True
-                )
-                return
-
-            if channel.guild.id != interaction.guild.id:
-                await interaction.followup.send(
-                    "Le salon doit appartenir à ce serveur.", ephemeral=True
-                )
-                return
-
-            action_lower = action.value.lower()
-            valid_actions = [a[0] for a in self.PREDEFINED_ACTIONS]
-            if action_lower not in valid_actions:
-                await interaction.followup.send(
-                    f"Action invalide. Choisissez parmi les suivantes : {', '.join(valid_actions)}.", ephemeral=True
-                )
-                return
-
-            self.config[action_lower] = channel.id
-            await self.save_config()
-            await interaction.followup.send(
-                f"Salon {channel.name} configuré pour l'action {self.get_action_display_name(action_lower)}.", ephemeral=True
-            )
-            logger.debug(f"channels_set exécuté avec succès pour interaction={interaction.id}")
-        except Exception as e:
-            logger.exception(f"Erreur dans channels_set pour interaction={interaction.id}: {e}")
-            await interaction.followup.send(
-                "Une erreur est survenue lors du traitement de votre requête.", ephemeral=True
-            )
-
-    @channel_group.command(name="remove", description="Supprime la configuration d'un salon pour une action.")
-    @app_commands.describe(action="Action à supprimer")
-    @app_commands.choices(action=ACTION_CHOICES)
-    @enqueue_request()
-    async def channels_remove(self, interaction: discord.Interaction, action: app_commands.Choice[str]):
-        """Commande /channel remove : Supprime la configuration d'un salon pour une action."""
-        try:
-            logger.debug(f"Executing channels_remove pour interaction={interaction.id} avec action={action.value}")
-            if not interaction.guild:
-                await interaction.followup.send(
-                    "Cette commande doit être exécutée dans un serveur.", ephemeral=True
-                )
-                return
-
-            action_lower = action.value.lower()
-            if action_lower not in self.config:
-                await interaction.followup.send(
-                    f"Aucune configuration trouvée pour l'action {self.get_action_display_name(action_lower)}.", ephemeral=True
-                )
-                logger.warning(f"{interaction.user} a tenté de supprimer un mapping inexistant: {action.value}")
-                return
-
-            del self.config[action_lower]
-            await self.save_config()
-            await interaction.followup.send(
-                f"Configuration pour l'action {self.get_action_display_name(action_lower)} supprimée.", ephemeral=True
-            )
-            logger.debug(f"channels_remove exécuté avec succès pour interaction={interaction.id}")
-        except Exception as e:
-            logger.exception(f"Erreur dans channels_remove pour interaction={interaction.id}: {e}")
-            await interaction.followup.send(
-                "Une erreur est survenue lors du traitement de votre requête.", ephemeral=True
+                "Une erreur est survenue lors de l'exécution de cette commande.", ephemeral=True
             )
 
     def get_action_display_name(self, action_key: str) -> str:
@@ -178,7 +157,8 @@ class ChannelsConfiguration(commands.Cog):
         for key, description in self.PREDEFINED_ACTIONS:
             if key == action_key:
                 return description
-        return action_key.capitalize()
+        return action_key.replace('_', ' ').capitalize()
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ChannelsConfiguration(bot))

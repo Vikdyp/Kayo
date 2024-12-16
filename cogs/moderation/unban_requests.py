@@ -1,3 +1,5 @@
+# cogs/moderation/unban_requests.py
+
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -24,6 +26,7 @@ class UnbanRequestView(View):
     async def accept_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Handler pour le bouton Accepter."""
         try:
+            # Étape 1 : Vérification des permissions
             if not interaction.user.guild_permissions.administrator:
                 await interaction.followup.send(
                     "Vous n'avez pas les permissions nécessaires pour effectuer cette action.",
@@ -31,7 +34,7 @@ class UnbanRequestView(View):
                 )
                 return
 
-            # Accéder au cog Moderation
+            # Étape 2 : Accéder au cog Moderation
             moderation_cog = self.bot.get_cog("Moderation")
             if not moderation_cog:
                 logger.error("Cog 'Moderation' introuvable.")
@@ -41,7 +44,7 @@ class UnbanRequestView(View):
                 )
                 return
 
-            # Étape 1 : Débannir l'utilisateur
+            # Étape 3 : Débannir l'utilisateur
             logger.debug(f"Tentative de débannissement de l'utilisateur ID: {self.user_id} via le bouton.")
             await moderation_cog.unban_member(
                 user_id=self.user_id,
@@ -49,7 +52,7 @@ class UnbanRequestView(View):
             )
             logger.info(f"Utilisateur ID: {self.user_id} débanni avec succès.")
 
-            # Étape 2 : Restaurer les rôles sauvegardés
+            # Étape 4 : Restauration des rôles
             guild = interaction.guild
             if not guild:
                 logger.error("Serveur introuvable lors de la tentative de restauration des rôles.")
@@ -66,15 +69,24 @@ class UnbanRequestView(View):
             else:
                 logger.warning(f"L'utilisateur ID: {self.user_id} n'est pas présent dans le serveur pour la restauration des rôles.")
 
-            # Étape 3 : Informer l'utilisateur via DM
+            # Étape 5 : Mise à jour du fichier JSON pour supprimer la demande de débannissement
+            data_manager = DataManager()
+            moderation_data = await data_manager.get_moderation_data()
+            user_id_str = str(self.user_id)
+            if "bans" in moderation_data and user_id_str in moderation_data["bans"]:
+                del moderation_data["bans"][user_id_str]
+                await data_manager.save_moderation_data(moderation_data)
+                logger.info(f"Demande de débannissement pour l'utilisateur ID: {self.user_id} supprimée des données.")
+
+            # Étape 6 : Informer l'utilisateur via DM
             try:
                 user = await self.bot.fetch_user(self.user_id)
                 if user:
                     await user.send(
-                        f"Vous avez été débanni du serveur **{guild.name}**.\n"
+                        f"Votre demande de débannissement du serveur **{guild.name}** a été acceptée.\n"
                         f"**Raison :** Demande de débannissement acceptée."
                     )
-                    logger.info(f"DM envoyé à l'utilisateur {user.display_name} pour le débannissement.")
+                    logger.info(f"DM envoyé à l'utilisateur {user.display_name} concernant le débannissement.")
                 else:
                     logger.warning(f"Impossible de trouver l'utilisateur ID: {self.user_id} pour l'envoi d'un DM.")
             except discord.Forbidden:
@@ -82,7 +94,24 @@ class UnbanRequestView(View):
             except discord.HTTPException as e:
                 logger.error(f"Erreur HTTP lors de l'envoi du DM à l'utilisateur ID: {self.user_id}: {e}")
 
-            # Étape finale : Confirmer le succès
+            # Étape 7 : Supprimer le message de demande de débannissement
+            try:
+                await interaction.message.delete()
+                logger.info(f"Message de demande de débannissement supprimé pour l'utilisateur ID: {self.user_id}.")
+            except discord.Forbidden:
+                logger.error("Permission refusée pour supprimer le message de demande de débannissement.")
+                await interaction.followup.send(
+                    "Je n'ai pas les permissions nécessaires pour supprimer le message de demande de débannissement.",
+                    ephemeral=True,
+                )
+            except discord.HTTPException as e:
+                logger.error(f"Erreur HTTP lors de la suppression du message de demande de débannissement: {e}")
+                await interaction.followup.send(
+                    "Une erreur est survenue lors de la suppression du message de demande de débannissement.",
+                    ephemeral=True
+                )
+
+            # Étape finale : Confirmation à l'administrateur
             await interaction.followup.send(
                 "L'utilisateur a été débanni et ses rôles ont été restaurés avec succès.",
                 ephemeral=True,
@@ -96,12 +125,11 @@ class UnbanRequestView(View):
         finally:
             self.stop()
 
-
-
     @discord.ui.button(label="Refuser", style=discord.ButtonStyle.red, custom_id="unban_reject")
     async def reject_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Handler pour le bouton Refuser."""
         try:
+            # Étape 1 : Vérification des permissions
             if not interaction.user.guild_permissions.administrator:
                 await interaction.followup.send(
                     "Vous n'avez pas les permissions nécessaires pour effectuer cette action.",
@@ -109,10 +137,11 @@ class UnbanRequestView(View):
                 )
                 return
 
+            # Étape 2 : Supprimer le message de demande de débannissement
             try:
                 await interaction.message.delete()
                 await interaction.followup.send(
-                    "La demande de débannissement a été refusée et la demande a été supprimée.",
+                    "La demande de débannissement a été refusée et le message a été supprimé.",
                     ephemeral=True,
                 )
                 logger.info(f"Unban refusé pour l'utilisateur ID: {self.user_id} par {interaction.user}")
@@ -189,14 +218,38 @@ class UnbanRequests(commands.Cog):
         embed.add_field(name="Raison de la demande de débannissement", value=raison, inline=False)
         embed.set_footer(text="Demande de Débannissement")
 
+        # Création de la vue avec les boutons
         view = UnbanRequestView(self.bot, user.id, interaction.user)
+
         try:
-            await demande_deban_channel.send(embed=embed, view=view)
+            # Envoi de la demande de débannissement dans le salon approprié
+            message = await demande_deban_channel.send(embed=embed, view=view)
+            logger.info(f"Demande de débannissement pour {user.display_name} envoyée dans {demande_deban_channel.name}.")
+
+            # Mise à jour des données JSON pour enregistrer la demande de débannissement
+            moderation_data = await self.data.get_moderation_data()
+            user_id_str = str(user.id)
+            if "bans" not in moderation_data:
+                moderation_data["bans"] = {}
+            moderation_data["bans"][user_id_str] = {
+                "ban_type": "perma",
+                "ban_end": None,
+                "ban_reason": raison,
+                "banned_by": interaction.user.id,
+                "banned_at": datetime.utcnow().isoformat(),
+                "warnings_count": 0,
+                "unban_request_msg_id": message.id,
+                "unban_request_channel_id": demande_deban_channel.id,
+                "saved_roles": []  # Remplissez ceci si nécessaire
+            }
+            await self.data.save_moderation_data(moderation_data)
+            logger.debug(f"Demande de débannissement enregistrée pour l'utilisateur ID: {user.id}.")
+
+            # Confirmation à l'utilisateur ayant fait la demande
             await interaction.followup.send(
                 f"Demande de débannissement pour {user.display_name} envoyée dans {demande_deban_channel.mention}.",
                 ephemeral=True
             )
-            logger.info(f"{interaction.user} a envoyé une demande de débannissement pour {user.display_name}.")
         except discord.Forbidden:
             logger.error(f"Permission refusée pour envoyer un message dans {demande_deban_channel.name}.")
             await interaction.followup.send(

@@ -8,7 +8,7 @@ from typing import List, Dict, Any
 
 from cogs.utilities.data_manager import DataManager
 from cogs.utilities.request_manager import enqueue_request
-from cogs.utilities.confirmation_view import PurgeConfirmationView
+from cogs.utilities.confirmation_view import ConfirmationView
 
 logger = logging.getLogger('discord.role_management.role_combination_management')
 
@@ -35,7 +35,7 @@ class RoleCombinationManagement(commands.Cog):
         logger.info("RoleCombinationManagement: Configuration sauvegardée avec succès.")
 
     async def ask_confirmation(self, interaction: Any, message: str):
-        view = PurgeConfirmationView(interaction, None)
+        view = ConfirmationView(interaction, None)
         await interaction.response.send_message(message, view=view, ephemeral=True)
         await view.wait()
         return view.value

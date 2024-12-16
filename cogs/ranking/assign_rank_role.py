@@ -9,7 +9,7 @@ from typing import Optional, Any
 from cogs.utilities.data_manager import DataManager
 from cogs.utilities.request_manager import enqueue_request
 from cogs.utilities.permission_manager import is_admin
-from cogs.utilities.confirmation_view import PurgeConfirmationView
+from cogs.utilities.confirmation_view import ConfirmationView
 
 logger = logging.getLogger('discord.ranking.assign_rank_role')
 
@@ -79,7 +79,7 @@ class AssignRankRole(commands.Cog):
                 logger.exception(f"Erreur inattendue lors de l'attribution du rôle: {e}")
 
     async def ask_confirmation(self, interaction: Any, message: str):
-        view = PurgeConfirmationView(interaction, None)
+        view = ConfirmationView(interaction, None)
         await interaction.followup.send(message, view=view, ephemeral=True)
         await view.wait()
         return view.value
