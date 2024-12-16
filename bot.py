@@ -48,7 +48,11 @@ cog_paths = [
 async def on_ready():
     logger = logging.getLogger('bot')
     logger.info(f'Connecté en tant que {bot.user}')
+
     await database.connect()
+    monitor_database.start()  # Démarrer la surveillance de la connexion
+    logger.info("Surveillance de la connexion à la base de données démarrée.")
+
     setup_request_manager(bot)
     logger.info("RequestManager démarré.")
 
@@ -84,6 +88,23 @@ async def clean_old_logs():
         await database.purge_old_logs_and_clean_relations(days=30)
     except Exception as e:
         logger.error(f"Erreur lors du nettoyage automatique des logs : {e}")
+
+@tasks.loop(hours=1)
+async def monitor_database():
+    """Vérifie la connexion à la base de données toutes les heures."""
+    logger = logging.getLogger('bot')
+    try:
+        await database.ensure_connected()
+        logger.info("Connexion à la base de données vérifiée avec succès.")
+    except Exception as e:
+        logger.error(f"Erreur lors de la vérification de la connexion à la base de données : {e}")
+
+def start_monitor_database():
+    """Démarre la tâche `monitor_database` si elle n'est pas déjà en cours."""
+    if not monitor_database.is_running():
+        monitor_database.start()
+        logger = logging.getLogger('bot')
+        logger.info("Tâche `monitor_database` démarrée.")
 
 @bot.event
 async def on_disconnect():

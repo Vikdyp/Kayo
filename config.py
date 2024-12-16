@@ -13,6 +13,7 @@ DATABASE = {
     'host': os.getenv('DATABASE_HOST'),
     'port': int(os.getenv('DATABASE_PORT', 5432)),
     'ssl': os.getenv('DATABASE_SSL', 'false').lower() in ['true', '1', 't']
+
 }
 
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')

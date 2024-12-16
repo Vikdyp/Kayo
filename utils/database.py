@@ -20,7 +20,8 @@ class Database:
                 port=DATABASE['port'],
                 ssl=DATABASE.get('ssl', False),
                 min_size=1,
-                max_size=10
+                max_size=10,
+                max_inactive_connection_lifetime=3600
             )
             logging.info("Connexion à la base de données réussie.")
         except Exception as e:
@@ -30,6 +31,19 @@ class Database:
         if self.pool:
             await self.pool.close()
             logging.info("Déconnexion de la base de données.")
+
+    async def ensure_connected(self):
+        """Vérifie si le pool est actif et tente de le reconnecter si nécessaire."""
+        if not self.pool:
+            logging.warning("Le pool est fermé. Tentative de reconnexion...")
+            await self.connect()
+        else:
+            try:
+                async with self.pool.acquire() as connection:
+                    await connection.execute('SELECT 1;')  # Vérification simple
+            except Exception as e:
+                logging.error(f"Erreur lors de la vérification de la connexion : {e}")
+                await self.connect()
 
     async def execute(self, query, *args):
         try:
