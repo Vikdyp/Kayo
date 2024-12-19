@@ -31,5 +31,6 @@ LOGGING = {
     'database': False,
     'request_manager': False,
     'rank_updater': False,
+    'admin': True
     # Ajoutez d'autres modules ici
 }

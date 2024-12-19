@@ -1,5 +1,4 @@
-# cogs/utilities/request_manager.py
-
+#utils\request_manager.py
 import asyncio
 import heapq
 from datetime import datetime, timedelta
@@ -10,17 +9,15 @@ from typing import Callable, Any, Optional
 
 logger = logging.getLogger("request_manager")
 
-
 class Request:
     def __init__(self, interaction: discord.Interaction, callback: Callable[[discord.Interaction], Any], priority: int):
         self.interaction = interaction
         self.callback = callback
         self.priority = priority
         self.timestamp = datetime.utcnow()
-        self.expiry = self.timestamp + timedelta(seconds=30)  # Expire après 30 secondes
+        self.expiry = self.timestamp + timedelta(seconds=30)
 
     def __lt__(self, other):
-        # Priorité plus basse signifie priorité plus haute
         if self.priority == other.priority:
             return self.timestamp < other.timestamp
         return self.priority < other.priority
@@ -69,13 +66,15 @@ class RequestManager:
                             logger.error(f"Échec de l'envoi du message d'expiration: {send_error}")
                         req = None
                         continue
-                    break  # Requête valide trouvée
+                    break
             if req:
+                logger.debug(f"Processing request: interaction={req.interaction.id}, callback={req.callback}")
                 try:
                     await req.callback(req.interaction)
-                    # Mettre à jour les statistiques
+                    # Mise à jour des stats
                     current_hour = datetime.utcnow().hour
                     self.request_count_per_hour[current_hour] = self.request_count_per_hour.get(current_hour, 0) + 1
+                    logger.debug(f"Request processed successfully: interaction={req.interaction.id}")
                 except Exception as e:
                     logger.exception(f"Error processing request {req.interaction.id}: {e}")
                     try:
@@ -85,7 +84,7 @@ class RequestManager:
                     except Exception as send_error:
                         logger.error(f"Échec de l'envoi de la réponse d'erreur: {send_error}")
             else:
-                await asyncio.sleep(0.1)  # Délai réduit pour réagir plus rapidement
+                await asyncio.sleep(0.1)
 
     def get_role(self, guild: discord.Guild, role_name: str) -> Optional[discord.Role]:
         if role_name not in self.role_cache:
@@ -93,10 +92,8 @@ class RequestManager:
         return self.role_cache.get(role_name)
 
     def calculate_priority(self, interaction: discord.Interaction) -> int:
-        """Calcule la priorité d'une requête en fonction des rôles de l'utilisateur."""
         base_priority = 1000
         user = interaction.user
-
         if user.guild_permissions.administrator:
             base_priority = 100
         else:
@@ -108,11 +105,9 @@ class RequestManager:
                 base_priority = 500
             else:
                 base_priority = 700
-
         return base_priority
 
     async def enqueue(self, interaction: discord.Interaction, callback: Callable[[discord.Interaction], Any]):
-        """Ajoute une requête à la file d'attente avec une priorité calculée."""
         priority = self.calculate_priority(interaction)
         req = Request(interaction, callback, priority)
         async with self.lock:
@@ -122,33 +117,32 @@ class RequestManager:
     def get_load_statistics(self):
         return self.request_count_per_hour
 
-
 request_manager = RequestManager()
 
-
 def setup_request_manager(bot: discord.Client):
-    """Initialise et démarre le RequestManager avec le bot."""
     request_manager.start(bot)
     logger.info("RequestManager setup complete.")
 
-
 def teardown_request_manager():
-    """Arrête le RequestManager."""
     request_manager.stop()
     logger.info("RequestManager teardown complete.")
 
-
 def enqueue_request():
-    """Décorateur pour enqueuer les commandes en utilisant le RequestManager."""
-
     def decorator(func):
         @wraps(func)
         async def wrapper(self, interaction: discord.Interaction, *args, **kwargs):
             try:
                 await interaction.response.defer(ephemeral=True)
                 logger.debug(f"Command deferred: interaction={interaction.id}")
+                # Ajout d'un log pour confirmer l'envoi en queue
+                logger.debug(f"Enqueuing request for {func.__name__}, interaction={interaction.id}")
                 await request_manager.enqueue(interaction, lambda i: func(self, i, *args, **kwargs))
             except Exception as e:
                 logger.exception(f"Failed to enqueue request: {e}")
+                # En cas d'erreur ici, essayez d'envoyer une réponse directe
+                try:
+                    await interaction.followup.send("Impossible d'enregistrer votre demande.", ephemeral=True)
+                except:
+                    pass
         return wrapper
     return decorator
