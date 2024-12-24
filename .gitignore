@@ -17,3 +17,6 @@ data/*.json
 # IDEs
 .vscode/
 *.swp
+
+# Discloud
+discloud.config

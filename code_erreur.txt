@@ -1,0 +1,8 @@
+ERREUR 101
+    ligne: 82
+    fichier: utils\request_manager.py
+    cause: ne pas utiliser defer diffrectement dans le cog request_manager le gere deja (await interaction.response.defer(ephemeral=True))
+
+ERREUR 001
+    ligne: 172
+    fichier: cogs\moderation\moderation.py

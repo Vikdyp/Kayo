@@ -1,0 +1,120 @@
+# cogs/role_management/role_combination_management.py
+
+import discord
+from discord.ext import commands
+from discord import app_commands
+import logging
+from typing import List, Dict, Any
+
+from cogs.utilities.data_manager import DataManager
+from cogs.utilities.request_manager import enqueue_request
+from cogs.utilities.confirmation_view import ConfirmationView
+
+logger = logging.getLogger('discord.role_management.role_combination_management')
+
+class RoleCombinationManagement(commands.Cog):
+    """Cog pour gérer l'ajout et la suppression des combinaisons de rôles."""
+
+    dependencies = []
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+        self.data = DataManager()
+        self.config: Dict[str, Any] = {}
+        self.role_combinations: List[Dict[str, Any]] = []
+        self.bot.loop.create_task(self.load_config())
+
+    async def load_config(self) -> None:
+        self.config = await self.data.get_config()
+        self.role_combinations = self.config.get("role_combinations", [])
+        logger.info("RoleCombinationManagement: Configuration chargée avec succès.")
+
+    async def save_config(self) -> None:
+        self.config['role_combinations'] = self.role_combinations
+        await self.data.save_config(self.config)
+        logger.info("RoleCombinationManagement: Configuration sauvegardée avec succès.")
+
+    async def ask_confirmation(self, interaction: Any, message: str):
+        view = ConfirmationView(interaction, None)
+        await interaction.response.send_message(message, view=view, ephemeral=True)
+        await view.wait()
+        return view.value
+
+    @app_commands.command(name="add_role_combination", description="Ajoute une nouvelle combinaison de rôles.")
+    @app_commands.describe(required_roles="Liste des rôles requis, séparés par des virgules", new_role="Nouveau rôle à attribuer")
+    @app_commands.checks.has_role("Admin")  # Utiliser le nom du rôle approprié
+    @enqueue_request()
+    async def add_role_combination(
+        self,
+        interaction: Any,
+        required_roles: str,
+        new_role: str
+    ) -> None:
+        await interaction.response.defer(ephemeral=True)
+        required_roles_list = [role.strip() for role in required_roles.split(",")]
+        confirm = await self.ask_confirmation(interaction, f"Confirmez-vous l'ajout de la combinaison de rôles ?\nRôles requis: {', '.join(required_roles_list)} -> Nouveau rôle: {new_role}")
+        if not confirm:
+            return await interaction.followup.send("Action annulée.", ephemeral=True)
+
+        self.role_combinations.append({
+            'required_roles': required_roles_list,
+            'new_role': new_role
+        })
+        await self.save_config()
+        await interaction.followup.send(
+            f"Combinaison de rôles ajoutée: Si un membre a {' et '.join(required_roles_list)}, il recevra le rôle `{new_role}`.",
+            ephemeral=True
+        )
+        logger.info(f"Nouvelle combinaison de rôles ajoutée: {required_roles_list} -> {new_role}")
+
+    @app_commands.command(name="remove_role_combination", description="Supprime une combinaison de rôles existante.")
+    @app_commands.describe(new_role="Nouveau rôle à supprimer")
+    @app_commands.checks.has_role("Admin")  # Utiliser le nom du rôle approprié
+    @enqueue_request()
+    async def remove_role_combination(
+        self,
+        interaction: Any,
+        new_role: str
+    ) -> None:
+        await interaction.response.defer(ephemeral=True)
+        confirm = await self.ask_confirmation(interaction, f"Confirmez-vous la suppression de la combinaison de rôles pour le rôle {new_role} ?")
+        if not confirm:
+            return await interaction.followup.send("Action annulée.", ephemeral=True)
+
+        original_length = len(self.role_combinations)
+        self.role_combinations = [
+            combo for combo in self.role_combinations if combo.get('new_role') != new_role
+        ]
+        await self.save_config()
+        if len(self.role_combinations) < original_length:
+            await interaction.followup.send(
+                f"Combinaison de rôles pour le rôle `{new_role}` supprimée avec succès.",
+                ephemeral=True
+            )
+            logger.info(f"Combinaison de rôles pour le rôle '{new_role}' supprimée.")
+        else:
+            await interaction.followup.send(
+                f"Aucune combinaison de rôles trouvée pour le rôle `{new_role}`.",
+                ephemeral=True
+            )
+            logger.warning(f"Aucune combinaison de rôles trouvée pour le rôle '{new_role}' à supprimer.")
+
+    @add_role_combination.error
+    @remove_role_combination.error
+    async def role_combination_error(self, interaction: Any, error: Exception) -> None:
+        if isinstance(error, app_commands.MissingRole):
+            await interaction.followup.send(
+                "Vous n'avez pas la permission d'utiliser cette commande.",
+                ephemeral=True
+            )
+            logger.warning(f"{interaction.user} a tenté d'utiliser une commande de gestion des rôles sans permissions.")
+        else:
+            await interaction.followup.send(
+                "Une erreur est survenue lors de l'exécution de la commande.",
+                ephemeral=True
+            )
+            logger.exception(f"Erreur lors de l'exécution de la commande de gestion des rôles par {interaction.user}: {error}")
+
+async def setup(bot: commands.Bot) -> None:
+    await bot.add_cog(RoleCombinationManagement(bot))
+    logger.info("RoleCombinationManagement Cog chargé avec succès.")
