@@ -79,7 +79,7 @@ class RequestManager:
                     logger.exception(f"Error processing request {req.interaction.id}: {e}")
                     try:
                         await req.interaction.followup.send(
-                            "Une erreur est survenue lors du traitement de votre demande.", ephemeral=True
+                            "Une erreur est survenue lors du traitement de votre demande. erreur 101", ephemeral=True
                         )
                     except Exception as send_error:
                         logger.error(f"Échec de l'envoi de la réponse d'erreur: {send_error}")

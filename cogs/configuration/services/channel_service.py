@@ -1,4 +1,4 @@
-#cogs\configuration\services\channel_service.py
+# cogs\configuration\services\channel_service.py
 
 from utils.database import database
 import logging

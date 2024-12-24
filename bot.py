@@ -1,3 +1,4 @@
+#bot.py
 import discord
 from discord.ext import commands, tasks
 import logging
@@ -49,6 +50,7 @@ cog_paths = [
     'cogs.configuration.role_mappings_configuration',
     'cogs.moderation.clean',
     'cogs.admin.admin',
+    'cogs.moderation.moderation',
 ]
 
 @bot.event

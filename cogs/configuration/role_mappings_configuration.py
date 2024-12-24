@@ -1,3 +1,4 @@
+# cogs\configuration\role_mappings_configuration.py
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -8,7 +9,6 @@ from utils.request_manager import enqueue_request
 from cogs.configuration.services.role_service import RoleService
 
 logger = logging.getLogger('roles_configuration')
-
 
 class RolesConfiguration(commands.Cog):
     """Cog pour gérer la configuration des rôles."""
@@ -77,7 +77,7 @@ class RolesConfiguration(commands.Cog):
             elif action.value == "set":
                 if not role_name or not role:
                     await interaction.followup.send(
-                        "Veuillez spécifier un rôle et un rôle Discord pour cette action.", ephemeral=True
+                        "Veuillez spécifier un rôle (role_name) et un rôle Discord (role).", ephemeral=True
                     )
                     return
 

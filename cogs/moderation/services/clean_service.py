@@ -17,7 +17,7 @@ class CleanService:
             
             # Enregistrement dans la base de données
             await database.log_message_deletion(
-                deleted_by=deleted_by.name,
+                deleted_by=deleted_by.id,
                 channel=channel.name,
                 guild=channel.guild.name,
                 deletion_type="all",
@@ -41,7 +41,7 @@ class CleanService:
             
             # Enregistrement dans la base de données
             await database.log_message_deletion(
-                deleted_by=deleted_by.name,
+                deleted_by=deleted_by.id,
                 channel=channel.name,
                 guild=channel.guild.name,
                 deletion_type="user",
@@ -66,7 +66,7 @@ class CleanService:
             
             # Enregistrement dans la base de données
             await database.log_message_deletion(
-                deleted_by=deleted_by.name,
+                deleted_by=deleted_by.id,
                 channel=channel.name,
                 guild=channel.guild.name,
                 deletion_type="from",
@@ -94,7 +94,7 @@ class CleanService:
             # Vérifier si des messages ont été supprimés avant d'enregistrer
             if len(deleted) > 0:
                 await database.log_message_deletion(
-                    deleted_by=deleted_by.name,
+                    deleted_by=deleted_by.id,
                     channel=channel.name,
                     guild=channel.guild.name,
                     deletion_type="condition",
@@ -108,5 +108,3 @@ class CleanService:
         except discord.HTTPException as e:
             logger.error(f"Erreur HTTP lors de la suppression des messages répondant à une condition dans {channel.name}: {e}")
             raise
-
-

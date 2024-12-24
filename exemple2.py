@@ -1,5 +1,4 @@
-# cogs/user_cog.py
-
+# exemple2.py
 from discord.ext import commands
 from discord import Interaction
 from cogs.utilities.confirmation_view import ConfirmationView

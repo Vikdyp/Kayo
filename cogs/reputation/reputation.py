@@ -5,8 +5,8 @@ from discord.ext import commands
 from discord import app_commands
 import logging
 from datetime import datetime
-from cogs.utilities.data_manager import DataManager
-from cogs.utilities.request_manager import enqueue_request
+from utils.database import Database
+from utils.request_manager import enqueue_request
 from typing import Any
 
 logger = logging.getLogger('discord.reputation')

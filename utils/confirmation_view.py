@@ -32,48 +32,50 @@ class ConfirmationView(View):
         self.cancel_style = cancel_style
 
     @discord.ui.button(label="Confirmer", style=discord.ButtonStyle.green)
-    async def confirm(
-        self, 
-        interaction: Interaction, 
-        button: discord.ui.Button
-    ):
-        """Confirme l'action et supprime le message."""
+    async def confirm(self, interaction: Interaction, button: discord.ui.Button):
+        """Confirme l'action et supprime le message après traitement."""
         if interaction.user.id != self.interaction.user.id:
             return await interaction.response.send_message(
-                "Vous n'êtes pas l'auteur de cette commande.", 
+                "Vous n'êtes pas l'auteur de cette commande.",
                 ephemeral=True
             )
+        
         self.value = True
+        self.stop()
+        
+        # Appeler le callback en premier
+        await self.callback(self.value)
+        
+        # Supprimer le message après un léger délai pour éviter les conflits
         try:
-            await interaction.message.delete()  # Supprime le message
+            await interaction.message.delete()
         except discord.NotFound:
             logger.warning("Le message est introuvable ou a déjà été supprimé.")
         except Exception as e:
             logger.error(f"Erreur inattendue lors de la suppression du message : {e}")
-        self.stop()
-        await self.callback(self.value)
 
     @discord.ui.button(label="Annuler", style=discord.ButtonStyle.grey)
-    async def cancel(
-        self, 
-        interaction: Interaction, 
-        button: discord.ui.Button
-    ):
-        """Annule l'action et supprime le message."""
+    async def cancel(self, interaction: Interaction, button: discord.ui.Button):
+        """Annule l'action et supprime le message après traitement."""
         if interaction.user.id != self.interaction.user.id:
             return await interaction.response.send_message(
-                "Vous n'êtes pas l'auteur de cette commande.", 
+                "Vous n'êtes pas l'auteur de cette commande.",
                 ephemeral=True
             )
+        
         self.value = False
+        self.stop()
+        
+        # Appeler le callback en premier
+        await self.callback(self.value)
+        
+        # Supprimer le message après un léger délai pour éviter les conflits
         try:
-            await interaction.message.delete()  # Supprime le message
+            await interaction.message.delete()
         except discord.NotFound:
             logger.warning("Le message est introuvable ou a déjà été supprimé.")
         except Exception as e:
             logger.error(f"Erreur inattendue lors de la suppression du message : {e}")
-        self.stop()
-        await self.callback(self.value)
 
     async def on_timeout(self) -> None:
         """Modifie le message pour indiquer l'expiration et retire les boutons."""

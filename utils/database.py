@@ -1,3 +1,5 @@
+#utils\database.py
+from typing import Optional
 import asyncpg
 import logging
 import asyncio
@@ -182,9 +184,13 @@ class Database:
             query_select = f"SELECT id FROM {table} WHERE {column} = $1;"
             result = await self.fetchval(query_select, value)
             if result:
+                logger.debug(f"ID trouvé pour {table}.{column} = {value}: {result}")
                 return result
+
             query_insert = f"INSERT INTO {table} ({column}) VALUES ($1) RETURNING id;"
-            return await self.fetchval(query_insert, value)
+            result = await self.fetchval(query_insert, value)
+            logger.debug(f"Nouvel ID créé pour {table}.{column} = {value}: {result}")
+            return result
         except Exception as e:
             logger.error(f"Erreur SQL dans get_or_create_id pour {table}.{column} avec valeur '{value}': {e}")
             raise
@@ -193,11 +199,11 @@ class Database:
         query = """
             SELECT 
                 md.id,
-                u.username AS deleted_by_user,
+                u.discord_id AS deleted_by_user,
                 ch.channel AS channel_name,
                 s.serveur AS server_name,
                 d.type AS deletion_type,
-                tu.username AS target_user,
+                tu.discord_id AS target_user,
                 n.nombre AS message_count,
                 md.timestamp
             FROM 
@@ -212,5 +218,43 @@ class Database:
             LIMIT $1;
         """
         return await self.fetch(query, limit)
+    
+    async def log_message_deletion(
+        self,
+        deleted_by: int,  # Utilisation de l'ID Discord
+        channel: str,
+        guild: str,
+        deletion_type: str,
+        target_user: Optional[int],  # Discord ID pour target_user
+        message_count: int
+    ):
+        """
+        Enregistre une suppression de messages dans la table `message_deletions`.
+        """
+        try:
+            # Récupérer ou créer les IDs nécessaires dans la base de données
+            deleted_by_id = await self.get_or_create_id("user_id", "discord_id", deleted_by)
+            channel_id = await self.get_or_create_id("channel_id", "channel", channel)
+            guild_id = await self.get_or_create_id("serveur_id", "serveur", guild)
+            deletion_type_id = await self.get_or_create_id("deletion_id", "type", deletion_type)
+            target_user_id = None
+
+            if target_user:
+                target_user_id = await self.get_or_create_id("user_id", "discord_id", target_user)
+
+            message_count_id = await self.get_or_create_id("nombre_id", "nombre", message_count)
+
+            # Insérer les données dans la table `message_deletions`
+            query = """
+            INSERT INTO message_deletions (deleted_by, channel_id, guild_id, deletion_type, target_user, message_count)
+            VALUES ($1, $2, $3, $4, $5, $6);
+            """
+            await self.execute(query, deleted_by_id, channel_id, guild_id, deletion_type_id, target_user_id, message_count_id)
+
+            logger.info("Suppression de messages enregistrée dans la base de données.")
+        except Exception as e:
+            logger.error(f"Erreur lors de l'enregistrement de la suppression de messages : {e}")
+
+
 
 database = Database()

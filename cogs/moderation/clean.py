@@ -63,6 +63,18 @@ class Clean(commands.Cog):
         await interaction.followup.send(message, view=view, ephemeral=True)
         await view.wait()
         return view.value
+    
+    async def get_user_name_or_mention(self, discord_id: int) -> str:
+        """
+        Récupère le nom d'utilisateur ou mention pour un discord_id.
+        Si l'utilisateur est introuvable, retourne simplement `<@ID>`.
+        """
+        try:
+            user = self.bot.get_user(discord_id) or await self.bot.fetch_user(discord_id)
+            return f"@{user.display_name}" if user else f"<@{discord_id}>"
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération du nom pour discord_id {discord_id} : {e}")
+            return f"<@{discord_id}>"
 
     @app_commands.command(name="clean", description="Nettoie les messages selon le type et les options spécifiées.")
     @app_commands.describe(
@@ -218,11 +230,12 @@ class Clean(commands.Cog):
                     )
 
                     table_rows = "\n".join([
-                        f"║ {d['id']:<2} ║ {d['deleted_by_user']:<12} ║ #{d['channel_name']:<10} ║ "
+                        f"║ {d['id']:<2} ║ {await self.get_user_name_or_mention(int(d['deleted_by_user']))} ║ #{d['channel_name']:<10} ║ "
                         f"{get_type_icon(d['deletion_type'])} {d['deletion_type']:<9} ║ "
                         f"{d['message_count']:<5} ║ {d['timestamp'].strftime('%d/%m/%Y %H:%M'):<15} ║"
                         for d in deletions
                     ])
+
 
                     table_footer = (
                         "\n╚════╩══════════════╩═════════════╩══════════════╩═══════╩══════════════════╝"

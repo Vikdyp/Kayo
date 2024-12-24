@@ -1,4 +1,4 @@
-#cogs\configuration\services\role_service.py
+# cogs\configuration\services\role_service.py
 import logging
 from utils.database import database
 
@@ -9,6 +9,8 @@ class RoleService:
     async def get_roles_config(guild_id: int) -> dict:
         """
         Récupère la configuration des rôles pour un serveur spécifique.
+        Maintenant la table roles_configurations possède une colonne 'id' en clé primaire.
+        Mais la logique reste la même, on utilise (guild_id, role_name) pour trouver les rôles.
         """
         query = """
         SELECT role_name, role_id
@@ -31,6 +33,8 @@ class RoleService:
     async def set_role_for_action(guild_id: int, role_name: str, role_id: int) -> bool:
         """
         Configure un rôle pour une action spécifique dans un serveur.
+        'id' est la clé primaire, mais nous utilisons toujours ON CONFLICT sur (guild_id, role_name)
+        grâce à l'index unique, ce qui permet un upsert basé sur ces deux colonnes.
         """
         query = """
         INSERT INTO roles_configurations (guild_id, role_name, role_id)
@@ -50,6 +54,7 @@ class RoleService:
     async def remove_role_for_action(guild_id: int, role_name: str) -> bool:
         """
         Supprime la configuration d'un rôle pour une action spécifique.
+        On se base toujours sur (guild_id, role_name).
         """
         query = """
         DELETE FROM roles_configurations
