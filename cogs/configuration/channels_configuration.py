@@ -34,6 +34,9 @@ class ChannelsConfiguration(commands.Cog):
         ("ascendant", "Salon rang ascendant"),
         ("immortel", "Salon rang immortel"),
         ("radiant", "Salon rang radiant"),
+        ("welcome", "Salon d'acceuil"),
+        ("rules", "Salon des regle du serveur"),
+        ("introductions", "salon pour la presentation du serveur"),
     ]
 
     ACTION_CHOICES = [

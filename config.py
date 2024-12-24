@@ -32,6 +32,6 @@ LOGGING = {
     'request_manager': False,
     'rank_updater': False,
     'admin': False,
-    'moderation' : True
+    'moderation' : False
     # Ajoutez d'autres modules ici
 }

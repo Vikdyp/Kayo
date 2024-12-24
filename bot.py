@@ -51,6 +51,8 @@ cog_paths = [
     'cogs.moderation.clean',
     'cogs.admin.admin',
     'cogs.moderation.moderation',
+    'cogs.file_counter.file_counter',
+    'cogs.accueil.accueil'
 ]
 
 @bot.event
