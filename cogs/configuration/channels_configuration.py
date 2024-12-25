@@ -1,3 +1,4 @@
+#cogs\configuration\channels_configuration.py
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -37,6 +38,7 @@ class ChannelsConfiguration(commands.Cog):
         ("welcome", "Salon d'acceuil"),
         ("rules", "Salon des regle du serveur"),
         ("introductions", "salon pour la presentation du serveur"),
+        ("modération", "salon de modération")
     ]
 
     ACTION_CHOICES = [

@@ -52,7 +52,9 @@ cog_paths = [
     'cogs.admin.admin',
     'cogs.moderation.moderation',
     'cogs.file_counter.file_counter',
-    'cogs.accueil.accueil'
+    'cogs.accueil.accueil',
+    'cogs.role_management.game_role',
+    'cogs.role_management.role_combination',
 ]
 
 @bot.event
