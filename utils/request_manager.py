@@ -97,7 +97,7 @@ class RequestManager:
         if user.guild_permissions.administrator:
             base_priority = 100
         else:
-            booster_role = self.get_role(interaction.guild, "booster")
+            booster_role = self.get_role(interaction.guild, "admin")
             bon_joueur_role = self.get_role(interaction.guild, "bon joueur")
             if booster_role and booster_role in user.roles:
                 base_priority = 300
