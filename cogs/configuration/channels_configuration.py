@@ -38,7 +38,8 @@ class ChannelsConfiguration(commands.Cog):
         ("welcome", "Salon d'acceuil"),
         ("rules", "Salon des regle du serveur"),
         ("introductions", "salon pour la presentation du serveur"),
-        ("modération", "salon de modération")
+        ("modération", "salon de modération"),
+        ("rang", "salon pour definir les rang"),
     ]
 
     ACTION_CHOICES = [

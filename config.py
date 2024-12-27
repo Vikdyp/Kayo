@@ -34,5 +34,6 @@ LOGGING = {
     'admin': False,
     'moderation' : False,
     'rank_roles' : True,
+    'valorant_service' : True,
     # Ajoutez d'autres modules ici
 }

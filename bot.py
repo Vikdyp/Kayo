@@ -54,7 +54,7 @@ cog_paths = [
     'cogs.file_counter.file_counter',
     'cogs.accueil.accueil',
     'cogs.role_management.game_role',
-    'cogs.ranking.assign_rank_role',
+    'cogs.ranking.assign_rank',
 ]
 
 @bot.event
