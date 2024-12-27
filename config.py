@@ -36,7 +36,7 @@ LOGGING = {
     'rank_roles' : False,
     'valorant_service' : False,
     'rules' : False,
-    'assign_rank' : True,
+    'assign_rank' : False,
     'rank_service' : False,
     # Ajoutez d'autres modules ici
 }
