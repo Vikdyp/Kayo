@@ -55,6 +55,7 @@ cog_paths = [
     'cogs.accueil.accueil',
     'cogs.role_management.game_role',
     'cogs.ranking.assign_rank',
+    'cogs.rules.rules',
 ]
 
 @bot.event

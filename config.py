@@ -33,7 +33,8 @@ LOGGING = {
     'rank_updater': False,
     'admin': False,
     'moderation' : False,
-    'rank_roles' : True,
-    'valorant_service' : True,
+    'rank_roles' : False,
+    'valorant_service' : False,
+    'rules' : False,
     # Ajoutez d'autres modules ici
 }

@@ -258,3 +258,39 @@ async def refresh_role_mappings(guild_id: int):
         if guild_id in _role_cache:
             del _role_cache[guild_id]
             logger.info(f"Cache des mappings de rôles vidé pour guild_id={guild_id}.")
+
+async def delete_valo_data(discord_id: int) -> bool:
+    """
+    Supprime les données Valorant d'un utilisateur dans la table user_id,
+    c'est-à-dire pseudo, tag, puuid, region, rank, elo.
+    """
+    query = """
+        UPDATE user_id
+           SET valorant_pseudo = NULL,
+               valorant_tag = NULL,
+               valorant_puuid = NULL,
+               valorant_region = NULL,
+               valorant_rank = NULL,
+               valorant_elo = NULL
+         WHERE discord_id = $1
+    """
+    try:
+        result = await database.execute(query, discord_id)
+        logger.info(f"Données Valorant supprimées pour Discord ID {discord_id}.")
+        return True
+    except Exception as e:
+        logger.error(f"Erreur lors de la suppression des données Valorant pour {discord_id}: {e}")
+        return False
+
+async def user_exists_in_db(discord_id: int) -> bool:
+    """
+    Vérifie si un enregistrement existe pour 'discord_id' dans la table user_id.
+    """
+    query = """
+        SELECT 1
+          FROM user_id
+         WHERE discord_id = $1
+         LIMIT 1
+    """
+    record = await database.fetchrow(query, discord_id)
+    return record is not None
