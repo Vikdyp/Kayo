@@ -12,20 +12,24 @@ from cogs.ranking.services.assign_rank_service import (
     get_all_users_with_valo_info,
     get_role_mappings,
     refresh_role_mappings,
-    delete_valo_data,           # <-- nouveau import
-    user_exists_in_db           # <-- nouveau import
+    delete_valo_data,
+    user_exists_in_db,
+    get_role_id_for_config,       # <-- NOUVELLE FONCTION IMPORTÉE
+    get_or_create_server_record   # <-- NOUVELLE FONCTION IMPORTÉE
 )
 from cogs.ranking.services.valorant_service import get_puuid, get_player_rank
 from utils.database import database
 import logging
 import asyncio
 
-logger = logging.getLogger("embed_cog")
+logger = logging.getLogger("assign_rank")
 
 # --- Nouveau helper pour récupérer le salon 'rules' ---
 async def get_rules_channel_id(guild_id: int) -> Optional[int]:
     """
     Récupère l'ID du salon configuré pour 'rules' dans la table channel_configurations.
+    On suppose que channel_configurations est aussi passé en mode server_id,
+    mais si tu n'as pas encore migré, on laisse tel quel.
     """
     query = """
         SELECT channel_id
@@ -37,6 +41,8 @@ async def get_rules_channel_id(guild_id: int) -> Optional[int]:
     return await database.fetchval(query, guild_id)
 
 # --- Mapping rang Valorant → ID dans roles_configurations ---
+# Note : "id" ici fait référence à la PK de la table roles_configurations,
+#        PAS le role_id Discord.
 VALORANT_RANK_TO_DB_ID = {
     "Iron 1": 3,
     "Iron 2": 3,
@@ -66,10 +72,8 @@ VALORANT_RANK_TO_DB_ID = {
     "no_rank": 41,
 }
 
-# Type de message persistant
 EMBED_MESSAGE_TYPE = "embed_selection"
 
-# --- Modal pour enregistrer Pseudo/Tag ---
 class PseudoTagModal(discord.ui.Modal, title="Renseignez votre Pseudo et Tag Valorant"):
     pseudo = discord.ui.TextInput(
         label="Pseudo",
@@ -79,7 +83,7 @@ class PseudoTagModal(discord.ui.Modal, title="Renseignez votre Pseudo et Tag Val
     )
     tag = discord.ui.TextInput(
         label="Tag",
-        placeholder="Entrez votre tag Valorant",
+        placeholder="Entrez votre tag Valorant sans le #",
         max_length=6,
         required=True,
     )
@@ -87,13 +91,13 @@ class PseudoTagModal(discord.ui.Modal, title="Renseignez votre Pseudo et Tag Val
     def __init__(self, user: discord.User, cog):
         super().__init__()
         self.user = user
-        self.cog = cog  # pour accéder au bot, etc.
+        self.cog = cog
 
     async def on_submit(self, interaction: discord.Interaction):
         pseudo = self.pseudo.value.strip()
         tag = self.tag.value.strip()
 
-        # Validation des entrées
+        # Vérifications basiques
         if not pseudo.isalnum():
             await interaction.response.send_message(
                 "Le pseudo ne doit contenir que des lettres et des chiffres.",
@@ -146,7 +150,6 @@ class PseudoTagModal(discord.ui.Modal, title="Renseignez votre Pseudo et Tag Val
                 ephemeral=True
             )
 
-# --- View avec 2 boutons ---
 class EmbedButtonsView(discord.ui.View):
     def __init__(self, cog):
         super().__init__(timeout=None)
@@ -167,9 +170,6 @@ class EmbedButtonsView(discord.ui.View):
         custom_id="button:delete_valo_data"
     )
     async def delete_valo_data_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """
-        Supprime pseudo, tag, puuid, region, rank, elo pour l'utilisateur courant.
-        """
         try:
             success = await delete_valo_data(interaction.user.id)
             if success:
@@ -189,7 +189,6 @@ class EmbedButtonsView(discord.ui.View):
                 ephemeral=True
             )
 
-# --- Le Cog principal ---
 class EmbedCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -236,7 +235,7 @@ class EmbedCog(commands.Cog):
     @commands.has_permissions(administrator=True)
     async def send_embed(self, ctx: commands.Context):
         """
-        Envoie un embed dans le salon configuré pour l'action 'rang', 
+        Envoie un embed dans le salon configuré pour l'action 'rang',
         avec un texte expliquant comment renseigner ou effacer ses données Valorant.
         """
         guild_id = ctx.guild.id
@@ -268,7 +267,6 @@ class EmbedCog(commands.Cog):
                     "Envoi d'un nouvel embed."
                 )
 
-        # --- Embed plus détaillé ---
         embed = discord.Embed(
             title="Gestion de vos informations Valorant",
             description=(
@@ -307,7 +305,6 @@ class EmbedCog(commands.Cog):
     async def ping(self, ctx: commands.Context):
         await ctx.send("Pong!")
 
-    # --- Tâche de mise à jour toutes les 30 minutes ---
     @tasks.loop(minutes=30)
     async def update_roles_task(self):
         logger.info("Début de la tâche de mise à jour des rôles Valorant.")
@@ -315,8 +312,6 @@ class EmbedCog(commands.Cog):
         # 1) Récupération de tous les utilisateurs
         users = await get_all_users_with_valo_info()
         logger.info(f"{len(users)} utilisateurs trouvés pour la mise à jour des rôles.")
-
-        # (Possibilité de mise à jour par lots si besoin...)
 
         for record in users:
             discord_id = record["discord_id"]
@@ -327,7 +322,7 @@ class EmbedCog(commands.Cog):
             current_rank = record.get("valorant_rank")
             current_elo  = record.get("valorant_elo")
 
-            # Récupération du member Discord
+            # Récupérer le member
             member = None
             for guild in self.bot.guilds:
                 m = guild.get_member(discord_id)
@@ -364,14 +359,10 @@ class EmbedCog(commands.Cog):
                     updated = await set_valorant_details(discord_id, puuid, region, new_rank, new_elo)
                     if updated:
                         logger.info(f"[update_roles_task] Rang/Elo mis à jour pour {discord_id}: {new_rank}, Elo={new_elo}")
-                else:
-                    # Joueur pas classé => on skip ou on met no_rank
-                    pass
 
             # Déterminer le nouveau rôle "rang Valorant"
-            guild_id = member.guild.id
             if not new_rank:
-                # Gérer un rôle "no_rank" si vous le voulez
+                # Joueur pas classé => si tu veux lui enlever tout rôle, tu pourrais le faire ici
                 continue
             else:
                 role_config_id = VALORANT_RANK_TO_DB_ID.get(new_rank)
@@ -379,16 +370,15 @@ class EmbedCog(commands.Cog):
                     logger.warning(f"[update_roles_task] Aucun mapping pour le rang {new_rank} dans VALORANT_RANK_TO_DB_ID.")
                     continue
 
-            # Récupérer en base le role_id Discord
-            query = """
-                SELECT role_id
-                FROM roles_configurations
-                WHERE guild_id = $1
-                  AND id = $2
-            """
-            discord_role_id = await database.fetchval(query, guild_id, role_config_id)
+            # --- NOUVEAU : On récupère le 'role_id' Discord via la fonction get_role_id_for_config ---
+            try:
+                discord_role_id = await get_role_id_for_config(member.guild.id, member.guild.name, role_config_id)
+            except Exception as e:
+                logger.error(f"[update_roles_task] Erreur get_role_id_for_config: {e}")
+                discord_role_id = None
+
             if not discord_role_id:
-                logger.warning(f"[update_roles_task] Aucun 'role_id' trouvé en base pour guild={guild_id}, id={role_config_id}.")
+                logger.warning(f"[update_roles_task] Aucun 'role_id' trouvé en base pour guild={member.guild.id}, id={role_config_id}.")
                 continue
 
             desired_role = member.guild.get_role(discord_role_id)
@@ -397,9 +387,9 @@ class EmbedCog(commands.Cog):
                 continue
 
             # Supprimer les anciens rôles de rang
-            role_mappings = await get_role_mappings(guild_id)
+            role_mappings = await get_role_mappings(member.guild.id, member.guild.name)
             if not role_mappings:
-                logger.warning(f"[update_roles_task] Aucun mapping de rôles trouvé pour guild_id={guild_id}.")
+                logger.warning(f"[update_roles_task] Aucun mapping de rôles trouvé pour guild_id={member.guild.id}.")
                 continue
 
             rank_role_ids = set(role_mappings.values())
@@ -430,7 +420,7 @@ class EmbedCog(commands.Cog):
     async def refresh_roles_cache_task(self):
         logger.info("Début de la tâche de rafraîchissement du cache des rôles.")
         for guild in self.bot.guilds:
-            await refresh_role_mappings(guild.id)
+            await refresh_role_mappings(guild.id, guild.name)
         logger.info("Tâche de rafraîchissement du cache des rôles terminée.")
 
     @refresh_roles_cache_task.before_loop
