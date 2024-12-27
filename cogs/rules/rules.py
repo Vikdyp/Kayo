@@ -1,5 +1,3 @@
-# cogs\rules\rules.py
-
 import discord
 from discord.ext import commands
 from cogs.rules.service.rules_services import (
@@ -10,11 +8,14 @@ from cogs.rules.service.rules_services import (
 )
 import logging
 
+from utils import request_manager
+
 logger = logging.getLogger("rules_cog")
 
 class AcceptRulesView(discord.ui.View):
-    def __init__(self):
+    def __init__(self, cog):
         super().__init__(timeout=None)
+        self.cog = cog
 
     @discord.ui.button(
         label="Accepter le règlement",
@@ -22,19 +23,47 @@ class AcceptRulesView(discord.ui.View):
         custom_id="button:accept_rules"
     )
     async def accept_rules_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        discord_id = interaction.user.id
-        success = await accept_rules_user(discord_id)
-        if success:
-            await interaction.response.send_message(
-                "Vous avez accepté le règlement. Bienvenue !",
-                ephemeral=True
-            )
-        else:
-            await interaction.response.send_message(
-                "Une erreur est survenue lors de l'enregistrement. Veuillez réessayer plus tard.",
-                ephemeral=True
-            )
+        # 1) Défère la réponse
+        await interaction.response.defer(ephemeral=True)
+        
+        # 2) Enfile la requête dans le RequestManager
+        await request_manager.enqueue(
+            interaction=interaction,
+            callback=lambda i: self.cog.do_accept_rules(i),
+            request_type="CLASSIC"  # Ou "URGENT" selon la logique
+        )
 
+class AcceptRulesCog(commands.Cog):
+    """Cog pour gérer l'acceptation des règles via un bouton."""
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+        logger.info("AcceptRulesCog initialisé.")
+        self.bot.loop.create_task(self.reload_persistent_views())
+
+    async def do_accept_rules(self, interaction: discord.Interaction):
+        """
+        Gère la logique pour accepter les règles.
+        """
+        try:
+            discord_id = interaction.user.id
+            success = await accept_rules_user(discord_id)
+            if success:
+                await interaction.followup.send(
+                    "Vous avez accepté le règlement. Bienvenue !",
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send(
+                    "Une erreur est survenue lors de l'enregistrement. Veuillez réessayer plus tard.",
+                    ephemeral=True
+                )
+        except Exception as e:
+            logger.error(f"Erreur lors de l'acceptation des règles pour {interaction.user}: {e}")
+            await interaction.followup.send(
+                "Une erreur est survenue lors de l'acceptation des règles.",
+                ephemeral=True
+            )
 
 class RulesCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -47,10 +76,12 @@ class RulesCog(commands.Cog):
         Envoie l'embed du règlement dans le salon 'rules' 
         et stocke ce message en base (persistent_messages).
         """
-        guild_id = ctx.guild.id
+        guild = ctx.guild
+        guild_id = guild.id
+        guild_name = guild.name
 
         # 1) Récupérer le salon
-        channel_id = await get_rules_channel_id(guild_id)
+        channel_id = await get_rules_channel_id(guild_id, guild_name)
         if not channel_id:
             await ctx.send("Aucun salon 'rules' configuré pour cette guilde.", delete_after=10)
             return
@@ -61,7 +92,7 @@ class RulesCog(commands.Cog):
             return
 
         # 2) Vérifier s'il y a déjà un message persistant "rules_embed"
-        existing_data = await get_rules_message(guild_id)
+        existing_data = await get_rules_message(guild_id, guild_name)
         if existing_data:
             # Tenter de récupérer le message
             try:
@@ -92,7 +123,7 @@ class RulesCog(commands.Cog):
         message = await channel.send(embed=embed, view=view)
 
         # 5) Stocker dans persistent_messages
-        success = await store_rules_message(guild_id, channel_id, message.id)
+        success = await store_rules_message(guild_id, guild_name, channel_id, message.id)
         if success:
             await ctx.send(f"Règlement envoyé dans {channel.mention}", delete_after=10)
         else:

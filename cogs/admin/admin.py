@@ -28,7 +28,7 @@ class AdminSync(commands.Cog):
         sync_only="Synchroniser uniquement les commandes sans recharger les cogs."
     )
     @app_commands.choices(target=COG_CHOICES)
-    @enqueue_request()
+    @enqueue_request("URGENT")
     @app_commands.default_permissions(administrator=True)  # Restreindre aux administrateurs
     async def sync_commands(
         self,
@@ -91,7 +91,7 @@ class AdminSync(commands.Cog):
             await interaction.followup.send(f"Erreur : {e}", ephemeral=True)
 
     @app_commands.command(name="dbstatus", description="Affiche l'état actuel du pool de connexions à la base de données.")
-    @enqueue_request()
+    @enqueue_request("URGENT")
     @app_commands.default_permissions(administrator=True)  # Restreindre aux administrateurs
     async def db_status(self, interaction: discord.Interaction):
         """Affiche l'état actuel du pool de connexions à la base de données."""

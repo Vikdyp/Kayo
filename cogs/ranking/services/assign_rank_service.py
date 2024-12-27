@@ -1,4 +1,3 @@
-# cogs\ranking\services\assign_rank_service.py
 import asyncio
 from typing import Optional, Dict
 from utils.database import database
@@ -46,45 +45,83 @@ async def get_or_create_server_record(guild_id: int, guild_name: str) -> Optiona
 # PERSISTENT MESSAGES
 # ------------------------------------------------
 
-async def store_persistent_message(guild_id: int, channel_id: int, message_id: int, message_type: str) -> bool:
-    query = """
-        INSERT INTO persistent_messages (guild_id, channel_id, message_id, message_type)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (guild_id, message_type) DO UPDATE
-        SET channel_id = EXCLUDED.channel_id,
-            message_id = EXCLUDED.message_id,
-            created_at = now();
+async def store_persistent_message(discord_guild_id: int, channel_id: int, message_id: int, message_type: str, guild_name: str = "Inconnu") -> bool:
+    """
+    Enregistre ou met à jour un message persistant pour un serveur donné.
+    Désormais, on récupère d'abord l'ID interne du serveur (server_db_id),
+    puis on insère/MAJ dans persistent_messages (colonne guild_id = server_db_id).
     """
     try:
-        await database.execute(query, guild_id, channel_id, message_id, message_type)
-        logger.info(f"Message persistant stocké: guild_id={guild_id}, channel_id={channel_id}, message_id={message_id}, type={message_type}")
+        server_db_id = await get_or_create_server_record(discord_guild_id, guild_name)
+        if not server_db_id:
+            return False
+
+        query = """
+            INSERT INTO persistent_messages (guild_id, channel_id, message_id, message_type)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (guild_id, message_type) DO UPDATE
+            SET channel_id = EXCLUDED.channel_id,
+                message_id = EXCLUDED.message_id,
+                created_at = now();
+        """
+        await database.execute(query, server_db_id, channel_id, message_id, message_type)
+        logger.info(
+            f"Message persistant stocké: server_db_id={server_db_id}, "
+            f"channel_id={channel_id}, message_id={message_id}, type={message_type}"
+        )
         return True
     except Exception as e:
         logger.error(f"Erreur lors du stockage du message persistant: {e}")
         return False
 
-async def get_persistent_message(guild_id: int, message_type: str) -> Optional[Dict[str, int]]:
-    query = """
-        SELECT channel_id, message_id 
-        FROM persistent_messages 
-        WHERE guild_id = $1 AND message_type = $2;
+async def get_persistent_message(discord_guild_id: int, message_type: str, guild_name: str = "Inconnu") -> Optional[Dict[str, int]]:
     """
-    record = await database.fetchrow(query, guild_id, message_type)
-    if record:
-        logger.debug(f"Message persistant récupéré: guild_id={guild_id}, type={message_type}, channel_id={record['channel_id']}, message_id={record['message_id']}")
-        return {'channel_id': record['channel_id'], 'message_id': record['message_id']}
-    else:
-        logger.warning(f"Aucun message persistant trouvé pour guild_id={guild_id} et type={message_type}.")
-        return None
-
-async def delete_persistent_message(guild_id: int, message_type: str) -> bool:
-    query = """
-        DELETE FROM persistent_messages 
-        WHERE guild_id = $1 AND message_type = $2;
+    Récupère channel_id et message_id pour un type de message persistant.
+    On convertit d'abord discord_guild_id → server_db_id (FK dans persistent_messages).
     """
     try:
-        await database.execute(query, guild_id, message_type)
-        logger.info(f"Message persistant supprimé: guild_id={guild_id}, type={message_type}")
+        server_db_id = await get_or_create_server_record(discord_guild_id, guild_name)
+        if not server_db_id:
+            return None
+
+        query = """
+            SELECT channel_id, message_id 
+              FROM persistent_messages 
+             WHERE guild_id = $1
+               AND message_type = $2
+        """
+        record = await database.fetchrow(query, server_db_id, message_type)
+        if record:
+            logger.debug(
+                f"Message persistant récupéré: server_db_id={server_db_id}, "
+                f"type={message_type}, channel_id={record['channel_id']}, message_id={record['message_id']}"
+            )
+            return {'channel_id': record['channel_id'], 'message_id': record['message_id']}
+        else:
+            logger.warning(
+                f"Aucun message persistant trouvé pour server_db_id={server_db_id}, type={message_type}."
+            )
+            return None
+    except Exception as e:
+        logger.error(f"Erreur lors de la récupération du message persistant: {e}")
+        return None
+
+async def delete_persistent_message(discord_guild_id: int, message_type: str, guild_name: str = "Inconnu") -> bool:
+    """
+    Supprime l'enregistrement d'un message persistant pour un type donné.
+    """
+    try:
+        server_db_id = await get_or_create_server_record(discord_guild_id, guild_name)
+        if not server_db_id:
+            return False
+
+        query = """
+            DELETE FROM persistent_messages 
+             WHERE guild_id = $1
+               AND message_type = $2;
+        """
+        await database.execute(query, server_db_id, message_type)
+        logger.info(f"Message persistant supprimé: server_db_id={server_db_id}, type={message_type}")
         return True
     except Exception as e:
         logger.error(f"Erreur lors de la suppression du message persistant: {e}")
@@ -92,36 +129,54 @@ async def delete_persistent_message(guild_id: int, message_type: str) -> bool:
 
 # ------------------------------------------------
 # CHANNEL CONFIG
-# (Ici, tu n'as pas encore migré channel_configurations sur server_id.
-#  Si c'est fait, adapte la même logique que pour roles_configurations.)
 # ------------------------------------------------
 
 async def get_channel_id(guild_id: int, action: str) -> Optional[int]:
+    """
+    Récupère channel_id depuis channel_configurations,
+    en passant par la table serveur_id (server_db_id).
+    """
+    server_db_id = await get_or_create_server_record(guild_id, "Inconnu")
+    if not server_db_id:
+        return None
+
     query = """
         SELECT channel_id
         FROM channel_configurations
-        WHERE guild_id = $1 AND action = $2;
+        WHERE server_id = $1 AND action = $2;
     """
-    channel_id = await database.fetchval(query, guild_id, action)
-    if channel_id:
-        logger.debug(f"Salon trouvé: guild_id={guild_id}, action={action}, channel_id={channel_id}")
-    else:
-        logger.warning(f"Aucun salon trouvé pour guild_id={guild_id} et action='{action}'.")
-    return channel_id
+    try:
+        channel_id = await database.fetchval(query, server_db_id, action)
+        if channel_id:
+            logger.debug(f"Salon trouvé: server_db_id={server_db_id}, action={action}, channel_id={channel_id}")
+        else:
+            logger.warning(f"Aucun salon trouvé pour server_db_id={server_db_id} et action='{action}'.")
+        return channel_id
+    except Exception as e:
+        logger.error(f"[get_channel_id] Erreur : {e}")
+        return None
 
 async def set_channel_id(guild_id: int, action: str, channel_id: int) -> bool:
+    """
+    Définit (ou met à jour) le channel_id pour une action donnée dans la table channel_configurations,
+    après avoir récupéré l'ID interne du serveur via get_or_create_server_record.
+    """
+    server_db_id = await get_or_create_server_record(guild_id, "Inconnu")
+    if not server_db_id:
+        return False
+
     query = """
-        INSERT INTO channel_configurations (guild_id, action, channel_id)
+        INSERT INTO channel_configurations (server_id, action, channel_id)
         VALUES ($1, $2, $3)
-        ON CONFLICT (guild_id, action) DO UPDATE
+        ON CONFLICT (server_id, action) DO UPDATE
         SET channel_id = EXCLUDED.channel_id;
     """
     try:
-        await database.execute(query, guild_id, action, channel_id)
-        logger.info(f"Salon défini: guild_id={guild_id}, action='{action}', channel_id={channel_id}")
+        await database.execute(query, server_db_id, action, channel_id)
+        logger.info(f"Salon défini: server_db_id={server_db_id}, action='{action}', channel_id={channel_id}")
         return True
     except Exception as e:
-        logger.error(f"Erreur lors de la définition du salon pour guild_id={guild_id}, action='{action}': {e}")
+        logger.error(f"Erreur lors de la définition du salon : {e}")
         return False
 
 # ------------------------------------------------

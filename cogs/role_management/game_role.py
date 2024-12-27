@@ -1,4 +1,3 @@
-# cogs\role_management\game_role.py
 import discord
 from discord.ext import commands
 from cogs.role_management.services.game_role_service import (
@@ -10,6 +9,8 @@ from cogs.role_management.services.game_role_service import (
 )
 import logging
 
+from utils import request_manager
+
 logger = logging.getLogger("roles.roles")
 
 class RolesView(discord.ui.View):
@@ -19,23 +20,54 @@ class RolesView(discord.ui.View):
 
     @discord.ui.button(label="Initiator", style=discord.ButtonStyle.primary, custom_id="role_button:initiator")
     async def initiator_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.cog.handle_role_selection(interaction, "initiator")
+        # 1) On peut "déferrer" immédiatement la réponse à l'utilisateur,
+        #    pour éviter le délai de 3 secondes imposé par Discord.
+        await interaction.response.defer(ephemeral=True)
+
+        # 2) On ajoute la requête au request_manager, par exemple en 'CLASSIC'
+        #    (ou "URGENT", "PASSIVE", selon la logique souhaitée).
+        await request_manager.enqueue(
+            interaction=interaction,
+            callback=lambda i: self.cog.handle_role_selection(i, "initiator"),
+            request_type="PASSIVE"
+    )
 
     @discord.ui.button(label="Controller", style=discord.ButtonStyle.primary, custom_id="role_button:controller")
     async def controller_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.cog.handle_role_selection(interaction, "controller")
-
+        await interaction.response.defer(ephemeral=True)
+        await request_manager.enqueue(
+            interaction=interaction,
+            callback=lambda i: self.cog.handle_role_selection(i, "controller"),
+            request_type="PASSIVE"
+    )
+        
     @discord.ui.button(label="Duelist", style=discord.ButtonStyle.primary, custom_id="role_button:duelist")
     async def duelist_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.cog.handle_role_selection(interaction, "duelist")
-
+        await interaction.response.defer(ephemeral=True)
+        await request_manager.enqueue(
+            interaction=interaction,
+            callback=lambda i: self.cog.handle_role_selection(i, "duelist"),
+            request_type="PASSIVE"
+        )
+        
     @discord.ui.button(label="Sentinel", style=discord.ButtonStyle.primary, custom_id="role_button:sentinel")
     async def sentinel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.cog.handle_role_selection(interaction, "sentinel")
+        await interaction.response.defer(ephemeral=True)
+        await request_manager.enqueue(
+            interaction=interaction,
+            callback=lambda i: self.cog.handle_role_selection(interaction, "sentinel"),
+            request_type="PASSIVE"
+        )        
 
     @discord.ui.button(label="Fill", style=discord.ButtonStyle.primary, custom_id="role_button:fill")
     async def fill_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.cog.handle_role_selection(interaction, "fill")
+        await interaction.response.defer(ephemeral=True)
+        await request_manager.enqueue(
+            interaction=interaction,
+            callback=lambda i: self.cog.handle_role_selection(interaction, "fill"),
+            request_type="PASSIVE"
+        )
+
 
 class RolesCog(commands.Cog):
     """Cog pour gérer la sélection des rôles via des boutons."""
@@ -56,14 +88,20 @@ class RolesCog(commands.Cog):
             description="Veuillez sélectionner le rôle que vous souhaitez jouer.",
             color=discord.Color.green()
         )
-        embed.set_footer(text="Vous pouvez changer a tout moment.")
+        embed.set_footer(text="Vous pouvez changer à tout moment.")
 
         view = RolesView(self)
         message = await ctx.send(embed=embed, view=view)
         logger.info(f"Message envoyé avec ID : {message.id} dans le canal {ctx.channel.name}")
 
         # Enregistrement en base de données
-        success = await store_persistent_message(ctx.guild.id, ctx.channel.id, message.id, "role_selection")
+        success = await store_persistent_message(
+            ctx.guild.id,
+            ctx.channel.id,
+            message.id,
+            "role_selection",
+            ctx.guild.name  # important pour get_or_create_server_record
+        )
         if success:
             logger.info(f"Message persisté avec ID {message.id}")
         else:
@@ -75,9 +113,14 @@ class RolesCog(commands.Cog):
         """
         await self.bot.wait_until_ready()
         logger.info("Rechargement des vues persistantes...")
-        guilds = self.bot.guilds
-        for guild in guilds:
-            message_data = await get_persistent_message(guild.id, "role_selection")
+
+        for guild in self.bot.guilds:
+            # Récupère le message persistant pour "role_selection"
+            message_data = await get_persistent_message(
+                guild.id,
+                "role_selection",
+                guild.name
+            )
             if not message_data:
                 continue
 
@@ -99,14 +142,14 @@ class RolesCog(commands.Cog):
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction):
         """
-        Écoute les interactions pour debugger.
+        Écoute les interactions pour debugger (optionnel).
         """
         logger.debug(f"Interaction reçue : {interaction.data}")
 
     async def handle_role_selection(self, interaction: discord.Interaction, role_name: str):
         """
-        Gère la sélection des rôles en s'assurant qu'un utilisateur ne peut avoir qu'un seul des cinq rôles à la fois.
-        Affiche le rôle ajouté et le rôle retiré en cas de changement.
+        Gère la sélection des rôles en s'assurant qu'un utilisateur ne peut avoir qu'un seul 
+        des cinq rôles à la fois. Affiche le rôle ajouté et le rôle retiré en cas de changement.
         """
         logger.info(f"Interaction pour le rôle {role_name} par {interaction.user}")
 
@@ -121,8 +164,9 @@ class RolesCog(commands.Cog):
         # Liste des rôles à gérer
         roles_to_manage = ['initiator', 'controller', 'duelist', 'sentinel', 'fill']
 
-        # Récupérer les IDs des rôles configurés
-        roles_config = await get_all_role_ids(guild.id, roles_to_manage)
+        # Récupérer les IDs des rôles configurés via get_all_role_ids
+        # => on passe guild.id et la liste des rôles, plus le guild.name pour la conversion en DB.
+        roles_config = await get_all_role_ids(guild.id, roles_to_manage, guild.name)
         if not roles_config:
             await interaction.response.send_message("Les rôles ne sont pas configurés correctement.", ephemeral=True)
             logger.error(f"Rôles non configurés pour guild_id={guild.id}.")
@@ -132,11 +176,14 @@ class RolesCog(commands.Cog):
         roles = {name: guild.get_role(role_id) for name, role_id in roles_config.items()}
         missing_roles = [name for name, role in roles.items() if role is None]
         if missing_roles:
-            await interaction.response.send_message(f"Les rôles suivants sont manquants sur le serveur : {', '.join(missing_roles)}.", ephemeral=True)
+            await interaction.response.send_message(
+                f"Les rôles suivants sont manquants sur le serveur : {', '.join(missing_roles)}.",
+                ephemeral=True
+            )
             logger.error(f"Rôles manquants pour guild_id={guild.id}: {', '.join(missing_roles)}.")
             return
 
-        # Récupérer les rôles actuels de l'utilisateur parmi les rôles à gérer
+        # Récupérer les rôles actuels de l'utilisateur parmi les rôles gérés
         current_roles = [role for role in user.roles if role.id in roles_config.values()]
         roles_to_remove = [role for role in current_roles if role.name != role_name]
         role_to_add = roles.get(role_name)

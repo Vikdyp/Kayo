@@ -56,7 +56,8 @@ class Moderation(commands.Cog):
             app_commands.Choice(name="Vérifier le statut", value="check_status")
         ]
     )
-    @enqueue_request()
+    @enqueue_request("URGENT")
+    @app_commands.default_permissions(administrator=True)
     async def moderation_execute(
         self,
         interaction: discord.Interaction,

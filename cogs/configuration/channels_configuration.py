@@ -61,7 +61,8 @@ class ChannelsConfiguration(commands.Cog):
         channel="Salon Discord (nécessaire pour 'set')"
     )
     @app_commands.choices(action=ACTION_CHOICES, salon_action=SALON_ACTION_CHOICES)
-    @enqueue_request()
+    @enqueue_request("URGENT")
+    @app_commands.default_permissions(administrator=True)
     async def channels_execute(
         self, 
         interaction: discord.Interaction, 

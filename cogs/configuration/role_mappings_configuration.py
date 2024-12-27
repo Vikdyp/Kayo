@@ -41,7 +41,8 @@ class RolesConfiguration(commands.Cog):
             app_commands.Choice(name="Supprimer un rôle", value="remove")
         ]
     )
-    @enqueue_request()
+    @enqueue_request("URGENT")
+    @app_commands.default_permissions(administrator=True)
     async def roles_execute(
         self,
         interaction: discord.Interaction,

@@ -22,3 +22,5 @@ data/*.json
 discloud.config
 
 testss.py
+
+internal_auth.py

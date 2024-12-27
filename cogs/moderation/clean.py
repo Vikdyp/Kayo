@@ -85,7 +85,7 @@ class Clean(commands.Cog):
     )
     @app_commands.choices(action=ACTION_CHOICES)
     @is_admin()
-    @enqueue_request()
+    @enqueue_request("URGENT")
     async def clean_execute(
         self,
         interaction: discord.Interaction,

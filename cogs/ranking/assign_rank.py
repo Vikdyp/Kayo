@@ -1,5 +1,3 @@
-# cogs/ranking/assign_rank.py
-
 from typing import Optional
 import discord
 from discord.ext import commands, tasks
@@ -14,31 +12,26 @@ from cogs.ranking.services.assign_rank_service import (
     refresh_role_mappings,
     delete_valo_data,
     user_exists_in_db,
-    get_role_id_for_config,       # <-- NOUVELLE FONCTION IMPORTÉE
-    get_or_create_server_record   # <-- NOUVELLE FONCTION IMPORTÉE
+    get_role_id_for_config,
+    get_or_create_server_record
 )
 from cogs.ranking.services.valorant_service import get_puuid, get_player_rank
+from utils import request_manager
 from utils.database import database
 import logging
 import asyncio
 
 logger = logging.getLogger("assign_rank")
 
+EMBED_MESSAGE_TYPE = "embed_rank"
+
 # --- Nouveau helper pour récupérer le salon 'rules' ---
 async def get_rules_channel_id(guild_id: int) -> Optional[int]:
     """
     Récupère l'ID du salon configuré pour 'rules' dans la table channel_configurations.
-    On suppose que channel_configurations est aussi passé en mode server_id,
-    mais si tu n'as pas encore migré, on laisse tel quel.
+    Désormais basé sur server_id, donc on réutilise get_channel_id.
     """
-    query = """
-        SELECT channel_id
-          FROM channel_configurations
-         WHERE guild_id = $1
-           AND action = 'rules'
-         LIMIT 1
-    """
-    return await database.fetchval(query, guild_id)
+    return await get_channel_id(guild_id, 'rules')
 
 # --- Mapping rang Valorant → ID dans roles_configurations ---
 # Note : "id" ici fait référence à la PK de la table roles_configurations,
@@ -72,18 +65,16 @@ VALORANT_RANK_TO_DB_ID = {
     "no_rank": 41,
 }
 
-EMBED_MESSAGE_TYPE = "embed_selection"
-
 class PseudoTagModal(discord.ui.Modal, title="Renseignez votre Pseudo et Tag Valorant"):
     pseudo = discord.ui.TextInput(
         label="Pseudo",
-        placeholder="Entrez votre pseudo Valorant",
+        placeholder="Entrez votre pseudo Valorant (exemple: globeX)",
         max_length=16,
         required=True,
     )
     tag = discord.ui.TextInput(
         label="Tag",
-        placeholder="Entrez votre tag Valorant sans le #",
+        placeholder="Entrez votre tag Valorant sans le # (exemple: meow)",
         max_length=6,
         required=True,
     )
@@ -161,8 +152,15 @@ class EmbedButtonsView(discord.ui.View):
         custom_id="button:pseudo_tag"
     )
     async def pseudo_tag_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        modal = PseudoTagModal(interaction.user, self.cog)
-        await interaction.response.send_modal(modal)
+        # 1) Défère la réponse
+        await interaction.response.defer(ephemeral=True)
+        
+        # 2) Enfile la requête dans le RequestManager
+        await request_manager.enqueue(
+            interaction=interaction,
+            callback=lambda i: self.cog.do_pseudo_tag(i),
+            request_type="PASSIVE"  
+        )
 
     @discord.ui.button(
         label="Effacer mes données Valorant",
@@ -170,21 +168,58 @@ class EmbedButtonsView(discord.ui.View):
         custom_id="button:delete_valo_data"
     )
     async def delete_valo_data_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # 1) Défère la réponse
+        await interaction.response.defer(ephemeral=True)
+        
+        # 2) Enfile la requête dans le RequestManager
+        await request_manager.enqueue(
+            interaction=interaction,
+            callback=lambda i: self.cog.do_delete_valo_data(i),
+            request_type="PASSIVE"  
+        )
+
+class EmbedButtonsCog(commands.Cog):
+    """Cog pour gérer les boutons d'embed."""
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+        logger.info("EmbedButtonsCog initialisé.")
+        # Vous pouvez charger des vues persistantes si nécessaire
+
+    async def do_pseudo_tag(self, interaction: discord.Interaction):
+        """
+        Gère la logique pour renseigner le pseudo/tag Valorant.
+        """
+        try:
+            # Par exemple, ouvrir un modal
+            modal = PseudoTagModal(interaction.user, self)
+            await interaction.followup.send_modal(modal)
+        except Exception as e:
+            logger.exception(f"Erreur dans do_pseudo_tag pour {interaction.user}: {e}")
+            await interaction.followup.send(
+                "Une erreur est survenue lors de la réception de votre pseudo/tag.",
+                ephemeral=True
+            )
+
+    async def do_delete_valo_data(self, interaction: discord.Interaction):
+        """
+        Gère la logique pour effacer les données Valorant.
+        """
         try:
             success = await delete_valo_data(interaction.user.id)
             if success:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     "Vos données Valorant ont été supprimées de la base de données.",
                     ephemeral=True
                 )
             else:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     "Une erreur est survenue lors de la suppression de vos données.",
                     ephemeral=True
                 )
         except Exception as e:
             logger.error(f"Erreur lors de la suppression des données Valorant pour {interaction.user}: {e}")
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "Une erreur est survenue lors de la suppression de vos données.",
                 ephemeral=True
             )
@@ -207,7 +242,11 @@ class EmbedCog(commands.Cog):
         logger.info("Rechargement de l'embed persistant...")
 
         for guild in self.bot.guilds:
-            message_data = await get_persistent_message(guild.id, EMBED_MESSAGE_TYPE)
+            message_data = await get_persistent_message(
+                guild.id,            # discord_guild_id
+                EMBED_MESSAGE_TYPE, 
+                guild.name           # guild_name
+            )
             if not message_data:
                 logger.info(f"Aucun message persistant trouvé pour la guilde {guild.id}.")
                 continue
@@ -231,7 +270,7 @@ class EmbedCog(commands.Cog):
     async def on_ready(self):
         logger.info(f"Cog {self.__class__.__name__} prêt.")
 
-    @commands.command(name="send_embed")
+    @commands.command(name="send_embed_rang")
     @commands.has_permissions(administrator=True)
     async def send_embed(self, ctx: commands.Context):
         """
