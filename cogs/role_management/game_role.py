@@ -9,7 +9,7 @@ from cogs.role_management.services.game_role_service import (
 )
 import logging
 
-from utils import request_manager
+from utils.request_manager import enqueue_button_request, enqueue_request
 
 logger = logging.getLogger("roles.roles")
 
@@ -19,54 +19,29 @@ class RolesView(discord.ui.View):
         self.cog = cog
 
     @discord.ui.button(label="Initiator", style=discord.ButtonStyle.primary, custom_id="role_button:initiator")
+    @enqueue_button_request("FAST")
     async def initiator_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # 1) On peut "déferrer" immédiatement la réponse à l'utilisateur,
-        #    pour éviter le délai de 3 secondes imposé par Discord.
-        await interaction.response.defer(ephemeral=True)
-
-        # 2) On ajoute la requête au request_manager, par exemple en 'CLASSIC'
-        #    (ou "URGENT", "PASSIVE", selon la logique souhaitée).
-        await request_manager.enqueue(
-            interaction=interaction,
-            callback=lambda i: self.cog.handle_role_selection(i, "initiator"),
-            request_type="PASSIVE"
-    )
+        await self.cog.handle_role_selection(interaction, "initiator")
 
     @discord.ui.button(label="Controller", style=discord.ButtonStyle.primary, custom_id="role_button:controller")
+    @enqueue_button_request("FAST")
     async def controller_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-        await request_manager.enqueue(
-            interaction=interaction,
-            callback=lambda i: self.cog.handle_role_selection(i, "controller"),
-            request_type="PASSIVE"
-    )
-        
+        await self.cog.handle_role_selection(interaction, "controller")
+
     @discord.ui.button(label="Duelist", style=discord.ButtonStyle.primary, custom_id="role_button:duelist")
+    @enqueue_button_request("FAST")
     async def duelist_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-        await request_manager.enqueue(
-            interaction=interaction,
-            callback=lambda i: self.cog.handle_role_selection(i, "duelist"),
-            request_type="PASSIVE"
-        )
-        
+        await self.cog.handle_role_selection(interaction, "duelist")
+
     @discord.ui.button(label="Sentinel", style=discord.ButtonStyle.primary, custom_id="role_button:sentinel")
+    @enqueue_button_request("FAST")
     async def sentinel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-        await request_manager.enqueue(
-            interaction=interaction,
-            callback=lambda i: self.cog.handle_role_selection(interaction, "sentinel"),
-            request_type="PASSIVE"
-        )        
+        await self.cog.handle_role_selection(interaction, "sentinel")
 
     @discord.ui.button(label="Fill", style=discord.ButtonStyle.primary, custom_id="role_button:fill")
+    @enqueue_button_request("FAST")
     async def fill_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-        await request_manager.enqueue(
-            interaction=interaction,
-            callback=lambda i: self.cog.handle_role_selection(interaction, "fill"),
-            request_type="PASSIVE"
-        )
+        await self.cog.handle_role_selection(interaction, "fill")
 
 
 class RolesCog(commands.Cog):

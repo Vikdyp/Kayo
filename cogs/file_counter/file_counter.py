@@ -3,7 +3,7 @@ from discord.ext import commands
 import logging
 from typing import Optional
 from cogs.file_counter.services.file_counter_service import FileCounterService
-from utils import request_manager
+from utils.request_manager import enqueue_button_request, enqueue_request
 # from utils.request_manager import enqueue_request  # Tu peux le réutiliser si besoin
 
 logger = logging.getLogger("cogs.file_counter")
@@ -18,36 +18,31 @@ class CounterView(discord.ui.View):
         self.terminer_count = terminer_count
 
     @discord.ui.button(label="Ajouter", style=discord.ButtonStyle.green, custom_id="file_counter:ajouter")
+    @enqueue_button_request("FAST")
     async def ajouter_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-        await request_manager.enqueue(
-            interaction=interaction,
-            callback=lambda i: self.do_ajouter(i),
-            request_type="CLASSIC"
-    )
+        # Vérifier que l'Interaction vient du bon serveur
+        if interaction.guild is None:
+            await interaction.response.send_message("Cette interaction ne peut être utilisée que sur un serveur.", ephemeral=True)
+            return
 
+        # On vérifie que le server_db_id correspond au serveur actuel
+        # Ce n'est pas strictement nécessaire si tu n'héberges qu'un seul message par guild
+        # Sinon, on pourrait aussi stocker l'ID discord brut et vérifier.
+        # Pour simplifier, on omet la vérification.
+
+        updated = await FileCounterService.update_counts(self.server_db_id, self.channel_id, ajouter=True)
+        if updated:
+            self.ajouter_count = updated['ajouter_count']
+            self.terminer_count = updated['terminer_count']
+            await self.update_embed(interaction)
+        else:
+            await interaction.response.send_message("Erreur lors de la mise à jour du compteur.", ephemeral=True)
 
     @discord.ui.button(label="Terminer", style=discord.ButtonStyle.blurple, custom_id="file_counter:terminer")
+    @enqueue_button_request("FAST")
     async def terminer_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # 1) On défère la réponse => Discord sait que le bot va traiter ça
-        await interaction.response.defer(ephemeral=True)
-
-        # 2) On enfile la requête dans le request_manager
-        await request_manager.enqueue(
-            interaction=interaction,
-            callback=lambda i: self.do_terminer(i),
-            request_type="CLASSIC"  # ou "URGENT", "PASSIVE", etc. selon ta logique
-        )
-
-    async def do_terminer(self, interaction: discord.Interaction):
-        """
-        Fait le vrai traitement : vérifie guild, appelle FileCounterService.update_counts, etc.
-        """
         if interaction.guild is None:
-            # Comme on aura déjà fait "defer", on doit maintenant utiliser followup
-            await interaction.followup.send(
-                "Cette interaction ne peut être utilisée que sur un serveur.", ephemeral=True
-            )
+            await interaction.response.send_message("Cette interaction ne peut être utilisée que sur un serveur.", ephemeral=True)
             return
 
         updated = await FileCounterService.update_counts(self.server_db_id, self.channel_id, terminer=True)
@@ -56,21 +51,7 @@ class CounterView(discord.ui.View):
             self.terminer_count = updated['terminer_count']
             await self.update_embed(interaction)
         else:
-            await interaction.followup.send("Erreur lors de la mise à jour du compteur.", ephemeral=True)
-
-    async def do_ajouter(self, interaction: discord.Interaction):
-        if interaction.guild is None:
-            await interaction.followup.send("Cette interaction ne peut être utilisée que sur un serveur.", ephemeral=True)
-            return
-
-        updated = await FileCounterService.update_counts(self.server_db_id, self.channel_id, ajouter=True)
-        if updated:
-            self.ajouter_count = updated['ajouter_count']
-            self.terminer_count = updated['terminer_count']
-            await self.update_embed(interaction)
-        else:
-            await interaction.followup.send("Erreur lors de la mise à jour du compteur.", ephemeral=True)
-
+            await interaction.response.send_message("Erreur lors de la mise à jour du compteur.", ephemeral=True)
 
     async def update_embed(self, interaction: discord.Interaction):
         # Calcul du pourcentage de completion

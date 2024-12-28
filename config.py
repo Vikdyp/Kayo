@@ -38,5 +38,6 @@ LOGGING = {
     'rules' : False,
     'assign_rank' : False,
     'rank_service' : False,
+    'rules_service' : False,
     # Ajoutez d'autres modules ici
 }

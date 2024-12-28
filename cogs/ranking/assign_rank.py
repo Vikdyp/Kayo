@@ -16,10 +16,11 @@ from cogs.ranking.services.assign_rank_service import (
     get_or_create_server_record
 )
 from cogs.ranking.services.valorant_service import get_puuid, get_player_rank
-from utils import request_manager
 from utils.database import database
 import logging
 import asyncio
+
+from utils.request_manager import enqueue_button_request, enqueue_request
 
 logger = logging.getLogger("assign_rank")
 
@@ -147,64 +148,28 @@ class EmbedButtonsView(discord.ui.View):
         self.cog = cog
 
     @discord.ui.button(
-        label="Renseigner Pseudo/Tag Valorant",
-        style=discord.ButtonStyle.primary,
-        custom_id="button:pseudo_tag"
+    label="Renseigner Pseudo/Tag Valorant",
+    style=discord.ButtonStyle.primary,
+    custom_id="button:pseudo_tag"
     )
+    @enqueue_button_request("FAST")
     async def pseudo_tag_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # 1) Défère la réponse
-        await interaction.response.defer(ephemeral=True)
-        
-        # 2) Enfile la requête dans le RequestManager
-        await request_manager.enqueue(
-            interaction=interaction,
-            callback=lambda i: self.cog.do_pseudo_tag(i),
-            request_type="PASSIVE"  
-        )
+
+        modal = PseudoTagModal(interaction.user, self.cog)
+
+        if not interaction.response.is_done():
+            await interaction.response.send_modal(modal)
 
     @discord.ui.button(
         label="Effacer mes données Valorant",
         style=discord.ButtonStyle.danger,
         custom_id="button:delete_valo_data"
     )
+    @enqueue_button_request("PASSIVE")
     async def delete_valo_data_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # 1) Défère la réponse
-        await interaction.response.defer(ephemeral=True)
-        
-        # 2) Enfile la requête dans le RequestManager
-        await request_manager.enqueue(
-            interaction=interaction,
-            callback=lambda i: self.cog.do_delete_valo_data(i),
-            request_type="PASSIVE"  
-        )
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
 
-class EmbedButtonsCog(commands.Cog):
-    """Cog pour gérer les boutons d'embed."""
-
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-        logger.info("EmbedButtonsCog initialisé.")
-        # Vous pouvez charger des vues persistantes si nécessaire
-
-    async def do_pseudo_tag(self, interaction: discord.Interaction):
-        """
-        Gère la logique pour renseigner le pseudo/tag Valorant.
-        """
-        try:
-            # Par exemple, ouvrir un modal
-            modal = PseudoTagModal(interaction.user, self)
-            await interaction.followup.send_modal(modal)
-        except Exception as e:
-            logger.exception(f"Erreur dans do_pseudo_tag pour {interaction.user}: {e}")
-            await interaction.followup.send(
-                "Une erreur est survenue lors de la réception de votre pseudo/tag.",
-                ephemeral=True
-            )
-
-    async def do_delete_valo_data(self, interaction: discord.Interaction):
-        """
-        Gère la logique pour effacer les données Valorant.
-        """
         try:
             success = await delete_valo_data(interaction.user.id)
             if success:

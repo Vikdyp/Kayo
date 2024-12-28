@@ -28,6 +28,10 @@ REQUEST_TYPES = {
         "expire_seconds": 24 * 3600,  # 24h
         "base_priority": 1
     },
+    "FAST": {
+        "expire_seconds": 10,  # 24h
+        "base_priority": 5
+    },
 }
 
 
@@ -289,6 +293,42 @@ def enqueue_request(request_type: str = "CLASSIC"):
                 try:
                     await interaction.followup.send(
                         "Impossible d'enregistrer votre demande.",
+                        ephemeral=True
+                    )
+                except:
+                    pass
+
+        return wrapper
+    return decorator
+
+def enqueue_button_request(request_type: str = "CLASSIC"):
+    """
+    Décorateur similaire à enqueue_request, sauf qu'il n'effectue pas de defer()
+    ni de followup automatique dans le décorateur.
+    C'est donc à vous de gérer le defer dans la fonction du bouton.
+    """
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(self, interaction: discord.Interaction, *args, **kwargs):
+            try:
+                # Pas de defer ici : vous devez gérer le defer manuellement si nécessaire.
+                
+                # Ajout direct dans la file
+                logger.debug(
+                    f"Enqueuing (button) request for {func.__name__}, "
+                    f"interaction={interaction.id}, type={request_type}"
+                )
+                await request_manager.enqueue(
+                    interaction,
+                    lambda i: func(self, i, *args, **kwargs),
+                    request_type
+                )
+            except Exception as e:
+                logger.exception(f"Failed to enqueue button request: {e}")
+                # En cas d'erreur, on peut essayer d'informer l'utilisateur
+                try:
+                    await interaction.followup.send(
+                        "Impossible d'enregistrer votre demande (bouton).",
                         ephemeral=True
                     )
                 except:

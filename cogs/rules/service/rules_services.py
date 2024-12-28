@@ -5,7 +5,7 @@ from utils.database import database
 logger = logging.getLogger("rules_service")
 
 # ------------------------------------------------
-# NOUVEAU : get_or_create_server_record
+# 1) Obtenir ou créer un enregistrement de serveur
 # ------------------------------------------------
 async def get_or_create_server_record(discord_guild_id: int, guild_name: str = "Inconnu") -> Optional[int]:
     """
@@ -34,26 +34,26 @@ async def get_or_create_server_record(discord_guild_id: int, guild_name: str = "
         logger.error(f"[get_or_create_server_record] Erreur : {e}")
         return None
 
-# =========================================================
-# 1) Gérer le salon "rules" via channel_configurations
-# =========================================================
+# ------------------------------------------------
+# 2) Gérer le salon "rules"
+# ------------------------------------------------
 async def get_rules_channel_id(discord_guild_id: int, guild_name: str = "Inconnu") -> Optional[int]:
     """
     Récupère l'ID du salon configuré pour l'action 'rules' 
     dans la table channel_configurations (FK: server_id).
     """
-    server_db_id = await get_or_create_server_record(discord_guild_id, guild_name)
-    if not server_db_id:
-        return None
-
-    query = """
-        SELECT channel_id
-          FROM channel_configurations
-         WHERE server_id = $1
-           AND action = 'rules'
-         LIMIT 1
-    """
     try:
+        server_db_id = await get_or_create_server_record(discord_guild_id, guild_name)
+        if not server_db_id:
+            return None
+
+        query = """
+            SELECT channel_id
+              FROM channel_configurations
+             WHERE server_id = $1
+               AND action = 'rules'
+             LIMIT 1
+        """
         channel_id = await database.fetchval(query, server_db_id)
         if channel_id:
             logger.debug(f"[get_rules_channel_id] Salon 'rules' pour server_id={server_db_id}: {channel_id}")
@@ -64,9 +64,9 @@ async def get_rules_channel_id(discord_guild_id: int, guild_name: str = "Inconnu
         logger.error(f"[get_rules_channel_id] Erreur : {e}")
         return None
 
-# =========================================================
-# 2) Gérer les messages persistants (persistent_messages)
-# =========================================================
+# ------------------------------------------------
+# 3) Messages persistants
+# ------------------------------------------------
 async def store_rules_message(discord_guild_id: int,
                              guild_name: str,
                              channel_id: int,
@@ -74,8 +74,6 @@ async def store_rules_message(discord_guild_id: int,
     """
     Stocke (ou met à jour) un message persistant de type 'rules_embed' 
     dans la table persistent_messages.
-    
-    La colonne persistent_messages.guild_id est un FK vers serveur_id.id
     """
     try:
         server_db_id = await get_or_create_server_record(discord_guild_id, guild_name)
@@ -97,11 +95,11 @@ async def store_rules_message(discord_guild_id: int,
         logger.error(f"[store_rules_message] Erreur: {e}")
         return False
 
-async def get_rules_message(discord_guild_id: int,
-                           guild_name: str = "Inconnu") -> Optional[Dict[str, int]]:
+async def get_persistent_message(discord_guild_id: int,
+                                message_type: str,
+                                guild_name: str = "Inconnu") -> Optional[Dict[str, int]]:
     """
-    Récupère le message persistant de type 'rules_embed'.
-    Retourne { 'channel_id': ..., 'message_id': ... } ou None.
+    Récupère les informations d'un message persistant spécifique.
     """
     try:
         server_db_id = await get_or_create_server_record(discord_guild_id, guild_name)
@@ -109,29 +107,33 @@ async def get_rules_message(discord_guild_id: int,
             return None
 
         query = """
-            SELECT channel_id, message_id
-              FROM persistent_messages
+            SELECT channel_id, message_id 
+              FROM persistent_messages 
              WHERE guild_id = $1
-               AND message_type = 'rules_embed'
-             LIMIT 1
+               AND message_type = $2
         """
-        record = await database.fetchrow(query, server_db_id)
+        record = await database.fetchrow(query, server_db_id, message_type)
         if record:
-            return {"channel_id": record["channel_id"], "message_id": record["message_id"]}
-        return None
+            logger.debug(
+                f"[get_persistent_message] Message récupéré: server_db_id={server_db_id}, "
+                f"type={message_type}, channel_id={record['channel_id']}, message_id={record['message_id']}"
+            )
+            return {'channel_id': record['channel_id'], 'message_id': record['message_id']}
+        else:
+            logger.warning(
+                f"[get_persistent_message] Aucun message trouvé pour server_db_id={server_db_id}, type={message_type}."
+            )
+            return None
     except Exception as e:
-        logger.error(f"[get_rules_message] Erreur : {e}")
+        logger.error(f"[get_persistent_message] Erreur : {e}")
         return None
 
-# =========================================================
-# 3) Enregistrer qu'un utilisateur a accepté le règlement
-# =========================================================
+# ------------------------------------------------
+# 4) Enregistrement des utilisateurs
+# ------------------------------------------------
 async def accept_rules_user(discord_id: int) -> bool:
     """
-    Insère l'utilisateur dans la table user_id (colonne discord_id)
-    s'il n'existe pas déjà, indiquant qu'il a accepté le règlement.
-    
-    (Cette table n'a pas besoin de server_id, donc on insère juste le discord_id).
+    Enregistre qu'un utilisateur a accepté le règlement.
     """
     query = """
         INSERT INTO user_id (discord_id)
@@ -145,3 +147,31 @@ async def accept_rules_user(discord_id: int) -> bool:
     except Exception as e:
         logger.error(f"[accept_rules_user] Erreur pour {discord_id}: {e}")
         return False
+
+async def delete_persistent_message(discord_guild_id: int,
+                                   message_type: str,
+                                   guild_name: str = "Inconnu") -> bool:
+    """
+    Supprime les informations d'un message persistant de la base de données.
+
+    :param discord_guild_id: ID Discord brut de la guilde.
+    :param message_type: Type du message.
+    :param guild_name: Nom du serveur, par défaut "Inconnu".
+    :return: True si réussi, False sinon.
+    """
+    try:
+        server_db_id = await get_or_create_server_record(discord_guild_id, guild_name)
+        if not server_db_id:
+            return False
+
+        query = """
+            DELETE FROM persistent_messages 
+             WHERE guild_id = $1
+               AND message_type = $2;
+        """
+        await database.execute(query, server_db_id, message_type)
+        logger.info(f"Message persistant supprimé: server_id={server_db_id}, type={message_type}")
+        return True
+    except Exception as e:
+        logger.error(f"Erreur lors de la suppression du message persistant: {e}")
+        return False 
