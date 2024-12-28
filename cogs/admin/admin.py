@@ -73,24 +73,8 @@ class AdminSync(commands.Cog):
         """Recharge un cog spécifique."""
         logger = logging.getLogger('admin')
 
-        # Liste des chemins de cogs autorisés
-        cog_paths = [
-            'cogs.configuration.channels_configuration',
-            'cogs.configuration.role_mappings_configuration',
-            'cogs.moderation.clean',
-            'cogs.admin.admin',
-            'cogs.moderation.moderation',
-            'cogs.file_counter.file_counter',
-            'cogs.accueil.accueil',
-            'cogs.role_management.game_role',
-            'cogs.ranking.assign_rank',
-            'cogs.rules.rules',
-            'cogs.moderation.unban_requests',
-            'cogs.admin_sync',  # Inclure ce cog pour permettre son propre rechargement
-        ]
-
-        # Vérifier si le cog spécifié est dans la liste autorisée
-        if cog not in [path.split('.')[-1] for path in cog_paths]:
+        # Vérification directe du chemin complet
+        if cog not in cog_paths:
             await interaction.response.send_message(
                 f"❌ Le cog `{cog}` n'est pas autorisé ou n'existe pas.", 
                 ephemeral=True
@@ -98,68 +82,33 @@ class AdminSync(commands.Cog):
             logger.warning(f"Tentative de rechargement d'un cog non autorisé : {cog}")
             return
 
-        cog_full_path = f"cogs.{cog}" if not cog.startswith("cogs.") else cog
-
         try:
-            await self.bot.reload_extension(cog_full_path)
+            await self.bot.reload_extension(cog)
             await interaction.response.send_message(f"✅ Le cog `{cog}` a été rechargé avec succès.", ephemeral=True)
-            logger.info(f"Cog rechargé avec succès : {cog_full_path}")
+            logger.info(f"Cog rechargé avec succès : {cog}")
         except commands.errors.ExtensionNotLoaded:
             try:
-                await self.bot.load_extension(cog_full_path)
+                await self.bot.load_extension(cog)
                 await interaction.response.send_message(f"✅ Le cog `{cog}` a été chargé et rechargé avec succès.", ephemeral=True)
-                logger.info(f"Cog chargé et rechargé avec succès : {cog_full_path}")
+                logger.info(f"Cog chargé et rechargé avec succès : {cog}")
             except Exception as e:
                 await interaction.response.send_message(f"❌ Erreur lors du chargement du cog `{cog}` : {e}", ephemeral=True)
-                logger.error(f"Erreur lors du chargement du cog {cog_full_path} : {e}")
+                logger.error(f"Erreur lors du chargement du cog {cog} : {e}")
         except Exception as e:
             await interaction.response.send_message(f"❌ Erreur lors du rechargement du cog `{cog}` : {e}", ephemeral=True)
-            logger.error(f"Erreur lors du rechargement du cog {cog_full_path} : {e}")
+            logger.error(f"Erreur lors du rechargement du cog {cog} : {e}")
 
-    @app_commands.command(name="reload_all_cogs", description="Recharge tous les cogs.")
-    @app_commands.default_permissions(administrator=True)  # Restreindre aux administrateurs
-    async def reload_all_cogs(self, interaction: discord.Interaction):
-        """Recharge tous les cogs."""
-        logger = logging.getLogger('admin')
+    @reload_cog.autocomplete("cog")
+    async def reload_cog_autocomplete(self, interaction: discord.Interaction, current: str):
+        """Propose des cogs disponibles pour l'autocomplétion."""
 
-        success_reloads = []
-        failed_reloads = []
-
-        for cog_path in cog_paths:
-            try:
-                await self.bot.reload_extension(cog_path)
-                success_reloads.append(cog_path)
-                logger.info(f"Cog rechargé avec succès : {cog_path}")
-            except commands.errors.ExtensionNotLoaded:
-                try:
-                    await self.bot.load_extension(cog_path)
-                    success_reloads.append(cog_path)
-                    logger.info(f"Cog chargé et rechargé avec succès : {cog_path}")
-                except Exception as e:
-                    failed_reloads.append((cog_path, str(e)))
-                    logger.error(f"Erreur lors du chargement du cog {cog_path} : {e}")
-            except Exception as e:
-                failed_reloads.append((cog_path, str(e)))
-                logger.error(f"Erreur lors du rechargement du cog {cog_path} : {e}")
-
-        # Préparer le message de réponse
-        embed = discord.Embed(title="Rechargement des Cogs", color=discord.Color.blue())
-        if success_reloads:
-            embed.add_field(
-                name="✅ Succès",
-                value="\n".join([f"`{cog}`" for cog in success_reloads]),
-                inline=False
-            )
-        if failed_reloads:
-            embed.add_field(
-                name="❌ Échecs",
-                value="\n".join([f"`{cog}` : {error}" for cog, error in failed_reloads]),
-                inline=False
-            )
-
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    ### Fin des commandes de rechargement ###
+        # Conserver les chemins complets pour l'autocomplétion
+        filtered = [
+            cog for cog in cog_paths if current.lower() in cog.lower()
+        ]
+        return [
+            app_commands.Choice(name=cog, value=cog) for cog in filtered
+        ]
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AdminSync(bot))

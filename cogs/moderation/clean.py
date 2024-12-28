@@ -86,6 +86,7 @@ class Clean(commands.Cog):
     @app_commands.choices(action=ACTION_CHOICES)
     @is_admin()
     @enqueue_request("URGENT")
+    @app_commands.default_permissions(administrator=True)
     async def clean_execute(
         self,
         interaction: discord.Interaction,

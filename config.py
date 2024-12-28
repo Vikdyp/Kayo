@@ -31,7 +31,7 @@ LOGGING = {
     'database': False,
     'request_manager': False,
     'rank_updater': False,
-    'admin': False,
+    'admin': True,
     'moderation' : False,
     'rank_roles' : False,
     'valorant_service' : False,

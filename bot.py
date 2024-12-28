@@ -57,6 +57,7 @@ cog_paths = [
     'cogs.ranking.assign_rank',
     'cogs.rules.rules',
     'cogs.moderation.unban_requests',
+    'cogs.troll.quoicoubeh',
 ]
 
 @bot.event

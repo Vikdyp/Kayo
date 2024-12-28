@@ -244,7 +244,7 @@ class DebanManager(commands.Cog):
             color=discord.Color.green(),
             timestamp=datetime.utcnow()
         )
-        embed.add_field(name="Utilisateur", value=f"{user} (`{user.id}`)", inline=False)
+        embed.add_field(name="Utilisateur", value=f"{user.mention} (`{user.id}`)", inline=False)
         embed.add_field(name="Raison de la Demande", value=reason, inline=False)
         embed.add_field(
             name="Détails du Bannissement",
