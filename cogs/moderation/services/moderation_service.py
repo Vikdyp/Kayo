@@ -1,8 +1,8 @@
-# cogs/moderation/services/moderation_service.py
+# cogs\moderation\services\moderation_service.py
 from utils.database import database
 import logging
 from datetime import datetime
-from typing import Optional, List
+from typing import Dict, Optional, List
 
 logger = logging.getLogger("moderation_service")
 
@@ -32,7 +32,7 @@ class ModerationService:
     async def add_ban(user_id: int, ban_type_id: int, reason: str, banned_by: int, ban_end: Optional[datetime]) -> bool:
         """
         Ajoute ou met à jour un bannissement dans la table 'bans'.
-        
+
         Retourne True si l'opération réussit, False sinon.
         """
         try:
@@ -67,7 +67,7 @@ class ModerationService:
     async def remove_ban(user_id: int) -> bool:
         """
         Supprime un bannissement de la table 'bans'.
-        
+
         Retourne True si l'opération réussit, False sinon.
         """
         query = "DELETE FROM bans WHERE user_id = $1;"
@@ -83,7 +83,7 @@ class ModerationService:
     async def get_warnings(user_id: int) -> int:
         """
         Récupère le nombre d'avertissements d'un utilisateur.
-        
+
         Retourne le nombre d'avertissements ou 0 en cas d'erreur.
         """
         query = "SELECT count FROM warnings WHERE user_id = $1;"
@@ -98,7 +98,7 @@ class ModerationService:
     async def add_warning(user_id: int) -> bool:
         """
         Ajoute un avertissement à un utilisateur.
-        
+
         Retourne True si l'opération réussit, False sinon.
         """
         query = """
@@ -119,7 +119,7 @@ class ModerationService:
     async def save_roles_backup(internal_user_id: int, roles: List[int]) -> bool:
         """
         Sauvegarde les rôles d'un utilisateur dans la table 'role_backups'.
-        
+
         Retourne True si l'opération réussit, False sinon.
         """
         query = """
@@ -140,7 +140,7 @@ class ModerationService:
     async def get_roles_backup(internal_user_id: int) -> List[int]:
         """
         Récupère les rôles sauvegardés d'un utilisateur depuis la table 'role_backups'.
-        
+
         Retourne une liste d'IDs de rôles ou une liste vide en cas d'erreur.
         """
         query = "SELECT roles FROM role_backups WHERE user_id = $1;"
@@ -155,7 +155,7 @@ class ModerationService:
     async def delete_roles_backup(internal_user_id: int) -> bool:
         """
         Supprime le backup des rôles d'un utilisateur de la table 'role_backups'.
-        
+
         Retourne True si l'opération réussit, False sinon.
         """
         query = "DELETE FROM role_backups WHERE user_id = $1;"
@@ -171,7 +171,7 @@ class ModerationService:
     async def get_expired_bans(current_time: datetime) -> List[dict]:
         """
         Récupère les bannissements temporaires expirés.
-        
+
         Retourne une liste de dictionnaires contenant 'user_id' et 'ban_end'.
         """
         query = """
@@ -189,24 +189,36 @@ class ModerationService:
     async def get_ban_role_id(guild_id: int) -> Optional[int]:
         """
         Récupère l'ID du rôle 'ban' pour un serveur spécifique à partir de la base de données.
-        
+
         Retourne l'ID du rôle ou None si non trouvé.
         """
+        # Premièrement, obtenir l'ID interne du serveur à partir du guild_id
+        server_id_query = "SELECT id FROM serveur_id WHERE guild_id = $1;"
+        try:
+            internal_server_id = await database.fetchval(server_id_query, guild_id)
+            if not internal_server_id:
+                logger.warning(f"Aucun serveur trouvé avec guild_id {guild_id}.")
+                return None
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération de l'ID interne pour guild_id {guild_id}: {e}")
+            return None
+
+        # Maintenant, récupérer le rôle 'ban' en utilisant l'ID interne du serveur
         query = """
         SELECT role_id
         FROM roles_configurations
-        WHERE guild_id = $1 AND role_name = 'ban';
+        WHERE server_id = $1 AND role_name = 'ban';
         """
         try:
-            result = await database.fetchval(query, guild_id)
-            if result:
-                return result
-            logger.warning(f"Aucun rôle 'ban' trouvé pour le serveur {guild_id}.")
+            role_id = await database.fetchval(query, internal_server_id)
+            if role_id:
+                return role_id
+            logger.warning(f"Aucun rôle 'ban' trouvé pour le serveur avec guild_id {guild_id}.")
             return None
         except Exception as e:
             logger.error(f"Erreur lors de la récupération du rôle 'ban' pour le serveur {guild_id}: {e}")
             return None
-        
+
     @staticmethod
     async def get_or_create_user_id(discord_user_id: int) -> Optional[int]:
         """
@@ -236,7 +248,7 @@ class ModerationService:
     async def get_discord_id(internal_id: int) -> Optional[int]:
         """
         Récupère l'ID Discord d'un utilisateur à partir de son ID interne.
-        
+
         Retourne l'ID Discord ou None si non trouvé.
         """
         query = "SELECT discord_id FROM user_id WHERE id = $1;"
@@ -245,3 +257,168 @@ class ModerationService:
         except Exception as e:
             logger.error(f"Erreur lors de la récupération de l'ID Discord pour l'ID interne {internal_id}: {e}")
             return None
+
+    @staticmethod
+    async def get_internal_server_id(guild_id: int) -> Optional[int]:
+        """
+        Récupère l'ID interne d'un serveur à partir de son ID Discord (guild_id).
+
+        Retourne l'ID interne ou None si non trouvé.
+        """
+        query = "SELECT id FROM serveur_id WHERE guild_id = $1;"
+        try:
+            internal_id = await database.fetchval(query, guild_id)
+            return internal_id
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération de l'ID interne pour guild_id {guild_id}: {e}")
+            return None
+
+    @staticmethod
+    async def get_persistent_message(guild_id: int, message_type: str) -> Optional[Dict[str, int]]:
+        """
+        Récupère les informations d'un message persistant depuis la base de données en fonction du guild_id et du message_type.
+
+        Args:
+            guild_id (int): L'ID interne du serveur.
+            message_type (str): Le type de message persistant à récupérer (ex: 'demande_deban', 'deban_request').
+
+        Returns:
+            Optional[Dict[str, int]]: Un dictionnaire contenant 'channel_id' et 'message_id' si trouvé, sinon None.
+        """
+        query = """
+        SELECT channel_id, message_id
+        FROM persistent_messages
+        WHERE guild_id = $1 AND message_type = $2;
+        """
+        try:
+            result = await database.fetchrow(query, guild_id, message_type)
+            if result:
+                return {
+                    "channel_id": result["channel_id"],
+                    "message_id": result["message_id"]
+                }
+            return None
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération du message persistant pour guild_id {guild_id} et message_type '{message_type}': {e}")
+            return None
+
+    @staticmethod
+    async def get_persistent_messages_by_type(guild_id: int, message_type: str) -> List[Dict[str, int]]:
+        """
+        Récupère toutes les informations des messages persistants d'un certain type.
+
+        Args:
+            guild_id (int): L'ID interne du serveur.
+            message_type (str): Le type de messages persistants à récupérer.
+
+        Returns:
+            List[Dict[str, int]]: Une liste de dictionnaires contenant 'channel_id' et 'message_id'.
+        """
+        query = """
+        SELECT channel_id, message_id
+        FROM persistent_messages
+        WHERE guild_id = $1 AND message_type = $2;
+        """
+        try:
+            results = await database.fetch(query, guild_id, message_type)
+            return [{"channel_id": row["channel_id"], "message_id": row["message_id"]} for row in results]
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération des messages persistants pour guild_id {guild_id} et message_type '{message_type}': {e}")
+            return []
+
+    @staticmethod
+    async def get_requester_id(message_id: int) -> Optional[int]:
+        """
+        Récupère l'ID interne du demandeur à partir du message_id.
+
+        Args:
+            message_id (int): L'ID du message persistant.
+
+        Returns:
+            Optional[int]: L'ID interne du demandeur ou None.
+        """
+        query = """
+        SELECT requester_id
+        FROM persistent_messages
+        WHERE message_id = $1 AND message_type = 'deban_request';
+        """
+        try:
+            return await database.fetchval(query, message_id)
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération du requester_id pour message_id {message_id}: {e}")
+            return None
+
+    @staticmethod
+    async def get_moderation_channel_id(server_id: int) -> Optional[int]:
+        """
+        Récupère l'ID du salon de modération pour un serveur spécifique à partir de la base de données.
+
+        Args:
+            server_id (int): L'ID interne du serveur.
+
+        Returns:
+            Optional[int]: L'ID du salon de modération ou None si non trouvé.
+        """
+        query = """
+        SELECT channel_id
+        FROM channel_configurations
+        WHERE server_id = $1 AND action = 'modération';
+        """
+        try:
+            channel_id = await database.fetchval(query, server_id)
+            if channel_id:
+                return channel_id
+            logger.warning(f"Aucun salon de modération trouvé pour le serveur avec ID interne {server_id}.")
+            return None
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération du salon de modération pour server_id {server_id}: {e}")
+            return None
+
+    @staticmethod
+    async def get_deban_channel_id(server_id: int) -> Optional[int]:
+        """
+        Récupère l'ID du salon de demande-deban pour un serveur spécifique à partir de la base de données.
+
+        Args:
+            server_id (int): L'ID interne du serveur.
+
+        Returns:
+            Optional[int]: L'ID du salon de demande-deban ou None si non trouvé.
+        """
+        query = """
+        SELECT channel_id
+        FROM channel_configurations
+        WHERE server_id = $1 AND action = 'demande-deban';
+        """
+        try:
+            channel_id = await database.fetchval(query, server_id)
+            if channel_id:
+                return channel_id
+            logger.warning(f"Aucun salon de demande-deban trouvé pour le serveur avec ID interne {server_id}.")
+            return None
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération du salon de demande-deban pour server_id {server_id}: {e}")
+            return None
+        
+    @staticmethod
+    async def delete_persistent_message(message_id: int) -> bool:
+        """
+        Supprime un message persistant de la table `persistent_messages` en fonction de son ID.
+
+        Args:
+            message_id (int): L'ID du message à supprimer.
+
+        Returns:
+            bool: True si la suppression réussit, False sinon.
+        """
+        query = """
+        DELETE FROM persistent_messages
+        WHERE message_id = $1;
+        """
+        try:
+            await database.execute(query, message_id)
+            logger.info(f"Message persistant ID {message_id} supprimé de la base de données.")
+            return True
+        except Exception as e:
+            logger.error(f"Erreur lors de la suppression du message persistant ID {message_id}: {e}")
+            return False

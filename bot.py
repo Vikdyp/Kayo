@@ -56,6 +56,7 @@ cog_paths = [
     'cogs.role_management.game_role',
     'cogs.ranking.assign_rank',
     'cogs.rules.rules',
+    'cogs.moderation.unban_requests',
 ]
 
 @bot.event

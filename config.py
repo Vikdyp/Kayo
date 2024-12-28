@@ -39,5 +39,6 @@ LOGGING = {
     'assign_rank' : False,
     'rank_service' : False,
     'rules_service' : False,
+    'deban_manager' : False,
     # Ajoutez d'autres modules ici
 }
