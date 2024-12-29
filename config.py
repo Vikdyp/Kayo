@@ -36,7 +36,7 @@ LOGGING = {
     'rank_roles' : False,
     'valorant_service' : False,
     'rules' : False,
-    'assign_rank' : False,
+    'assign_rank' : True,
     'rank_service' : False,
     'rules_service' : False,
     'deban_manager' : False,

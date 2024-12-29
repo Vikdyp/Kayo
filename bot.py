@@ -58,6 +58,7 @@ cog_paths = [
     'cogs.rules.rules',
     'cogs.moderation.unban_requests',
     'cogs.troll.quoicoubeh',
+    'cogs.role_management.auto_role',
 ]
 
 @bot.event

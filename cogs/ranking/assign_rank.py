@@ -16,6 +16,7 @@ from cogs.ranking.services.assign_rank_service import (
     get_or_create_server_record
 )
 from cogs.ranking.services.valorant_service import get_puuid, get_player_rank
+from cogs.moderation.services.moderation_service import ModerationService
 from utils.database import database
 import logging
 import asyncio
@@ -337,6 +338,20 @@ class EmbedCog(commands.Cog):
                 logger.warning(f"[update_roles_task] Member introuvable pour Discord ID {discord_id}.")
                 continue
 
+            # --- NOUVEAU : Vérification si l'utilisateur a le rôle 'ban' ---
+            try:
+                ban_role_id = await ModerationService.get_ban_role_id(member.guild.id)  # Remplacez 'YourClass' par le nom de votre classe contenant la méthode
+                if ban_role_id:
+                    ban_role = member.guild.get_role(ban_role_id)
+                    if ban_role and ban_role in member.roles:
+                        logger.info(f"[update_roles_task] Skipping {member.display_name} car il a le rôle 'ban'.")
+                        continue  # Passer à l'utilisateur suivant
+                else:
+                    logger.warning(f"[update_roles_task] Aucun rôle 'ban' configuré pour guild_id={member.guild.id}.")
+            except Exception as e:
+                logger.error(f"[update_roles_task] Erreur lors de la vérification du rôle 'ban' pour {member.display_name}: {e}")
+                continue  # Optionnel : décider de continuer ou non en cas d'erreur
+
             # Vérifier/récupérer puuid/region si manquants
             if not puuid or not region:
                 valo_info = await get_puuid(pseudo, tag)
@@ -419,6 +434,7 @@ class EmbedCog(commands.Cog):
                     logger.error(f"[update_roles_task] Erreur lors de l'ajout du rôle '{desired_role.name}' à {member.display_name}: {e}")
 
         logger.info("Fin de la tâche de mise à jour des rôles Valorant.")
+
 
     @tasks.loop(hours=1)
     async def refresh_roles_cache_task(self):

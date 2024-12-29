@@ -25,7 +25,7 @@ class RolesConfiguration(commands.Cog):
         "immortel", "radiant", "sentinel", "duelist", "controller", "initiator", "fill",
         "valorant", "valorant e-sports", "valorant tryhard", "valorant chill",
         "rocket league", "rocket league tryhard", "rocket league chill",
-        "tryhard", "e-sports", "chill"
+        "tryhard", "e-sports", "chill", "tester"
     ]
 
     @app_commands.command(name="roles", description="Exécute des actions sur la configuration des rôles.")

@@ -71,13 +71,14 @@ class AdminSync(commands.Cog):
         """Gère les cogs dynamiquement."""
         logger = logging.getLogger('admin')
 
-        if action not in ["load", "reload", "unload"]:
+        if action not in ["load", "reload", "unload", "check"]:
             await interaction.response.send_message(
                 "❌ Action invalide. Utilisez `load`, `reload`, ou `unload`.", ephemeral=True
             )
             return
-
-        if cog not in cog_paths:
+        
+        #decommenter si besoin
+        #if cog not in cog_paths:
             await interaction.response.send_message(
                 f"❌ Le cog `{cog}` n'est pas autorisé ou n'existe pas.", 
                 ephemeral=True
@@ -101,6 +102,22 @@ class AdminSync(commands.Cog):
                 await interaction.response.send_message(f"✅ Le cog `{cog}` a été déchargé avec succès.", ephemeral=True)
                 logger.info(f"Cog déchargé avec succès : {cog}")
 
+            elif action == "check":
+                cog_statuses = []
+                for cog_path in cog_paths:
+                    if cog_path in self.bot.extensions:
+                        cog_statuses.append(f"✅ {cog_path}")
+                    else:
+                        cog_statuses.append(f"❌ {cog_path}")
+
+                if cog_statuses:
+                    await interaction.response.send_message(
+                        f"**Statut des Cogs :**\n- " + "\n- ".join(cog_statuses),
+                        ephemeral=True
+                    )
+                else:
+                    await interaction.response.send_message("Aucun cog autorisé n'a été trouvé.", ephemeral=True)
+
         except Exception as e:
             await interaction.response.send_message(f"❌ Erreur lors de l'action `{action}` sur le cog `{cog}` : {e}", ephemeral=True)
             logger.error(f"Erreur lors de l'action `{action}` sur le cog `{cog}` : {e}")
@@ -108,7 +125,7 @@ class AdminSync(commands.Cog):
     @manage_cog.autocomplete("action")
     async def manage_cog_action_autocomplete(self, interaction: discord.Interaction, current: str):
         """Propose les actions disponibles pour la commande manage_cog."""
-        actions = ["load", "reload", "unload"]
+        actions = ["load", "reload", "unload", "check"]
         return [
             app_commands.Choice(name=action, value=action) for action in actions if current.lower() in action.lower()
         ]

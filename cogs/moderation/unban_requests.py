@@ -13,6 +13,10 @@ from utils.request_manager import enqueue_button_request
 
 logger = logging.getLogger("deban_manager")
 
+# IDs requis
+CATEGORY_ID = 1136367092870942842
+SPECIFIC_ROLE_ID = 1236375048252817418
+
 # Vue pour l'embed principal de demande de débannissement
 class DebanManagerView(View):
     def __init__(self, cog):
@@ -49,11 +53,12 @@ class DebanRequestModal(Modal):
 
 # Vue pour les actions des demandes individuelles
 class DebanRequestActionView(View):
-    def __init__(self, cog, user_id: int, requester_id: int):
+    def __init__(self, cog, user_id: int, requester_id: int, channel_id: int):
         super().__init__(timeout=None)
         self.cog = cog
         self.user_id = user_id
         self.requester_id = requester_id
+        self.channel_id = channel_id
 
     @discord.ui.button(label="Accepter", style=discord.ButtonStyle.success, custom_id="deban_request:accept")
     @enqueue_button_request("URGENT")
@@ -183,22 +188,38 @@ class DebanManager(commands.Cog):
             await interaction.followup.send("Erreur interne. Veuillez contacter un administrateur.", ephemeral=True)
             return
 
-        # Récupérer le salon de modération
-        try:
-            moderation_channel_id = await ModerationService.get_moderation_channel_id(internal_server_id)
-            if not moderation_channel_id:
-                logger.error(f"Aucun salon de modération configuré pour le serveur {guild.id}.")
-                await interaction.followup.send("Aucun salon de modération configuré. Veuillez contacter un administrateur.", ephemeral=True)
-                return
-        except Exception as e:
-            logger.error(f"Erreur lors de la récupération du salon de modération: {e}")
-            await interaction.followup.send("Erreur interne. Veuillez contacter un administrateur.", ephemeral=True)
-            return
+        # Créer un nom de salon unique basé sur le nom de l'utilisateur et un timestamp pour éviter les conflits
+        timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        sanitized_username = discord.utils.escape_markdown(user.name).replace(" ", "-").lower()
+        channel_name = f"demande-deban-{sanitized_username}-{timestamp}"
 
-        moderation_channel = guild.get_channel(moderation_channel_id)
-        if not moderation_channel:
-            logger.error(f"Salon de modération avec l'ID {moderation_channel_id} introuvable.")
-            await interaction.followup.send("Erreur interne. Veuillez contacter un administrateur.", ephemeral=True)
+        # Créer le salon spécifique pour cette demande
+        try:
+            category = guild.get_channel(CATEGORY_ID)
+            if not category or not isinstance(category, discord.CategoryChannel):
+                await interaction.followup.send("Catégorie spécifiée introuvable. Veuillez contacter un administrateur.", ephemeral=True)
+                return
+
+            # Définir les permissions spécifiques pour ce salon
+            overwrites = {
+                guild.default_role: discord.PermissionOverwrite(read_messages=False),
+                guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+                guild.get_role(SPECIFIC_ROLE_ID): discord.PermissionOverwrite(read_messages=True, send_messages=True),
+                user: discord.PermissionOverwrite(read_messages=True, send_messages=True)  # Permission pour l'utilisateur demandeur
+            }
+
+            # Créer le salon
+            request_channel = await guild.create_text_channel(
+                name=channel_name,
+                category=category,
+                overwrites=overwrites,
+                reason=f"Demande de débannissement de {user}"
+            )
+            logger.info(f"Salon '{channel_name}' créé pour la demande de débannissement de {user}.")
+
+        except Exception as e:
+            logger.error(f"Erreur lors de la création du salon spécifique pour la demande de débannissement: {e}")
+            await interaction.followup.send("Erreur lors de la création du salon de demande de débannissement. Veuillez réessayer plus tard.", ephemeral=True)
             return
 
         # Vérifier si l'utilisateur a déjà une demande en cours
@@ -216,6 +237,12 @@ class DebanManager(commands.Cog):
                         "Vous avez déjà une demande de débannissement en cours. Veuillez attendre qu'elle soit traitée avant d'en soumettre une nouvelle.",
                         ephemeral=True
                     )
+                    # Supprimer le salon créé précédemment car la demande ne peut pas être traitée
+                    try:
+                        await request_channel.delete(reason="Demande de débannissement en double.")
+                        logger.info(f"Salon '{channel_name}' supprimé car l'utilisateur a déjà une demande en cours.")
+                    except Exception as delete_error:
+                        logger.error(f"Erreur lors de la suppression du salon '{channel_name}': {delete_error}")
                     return
         except Exception as e:
             logger.error(f"Erreur lors de la vérification des demandes en cours: {e}")
@@ -226,6 +253,12 @@ class DebanManager(commands.Cog):
         ban_info = await ModerationService.get_ban_info(user.id)
         if not ban_info:
             await interaction.followup.send("Vous n'êtes actuellement pas banni.", ephemeral=True)
+            # Supprimer le salon créé car la demande n'est pas valide
+            try:
+                await request_channel.delete(reason="Demande de débannissement invalide (utilisateur non banni).")
+                logger.info(f"Salon '{channel_name}' supprimé car l'utilisateur n'est pas banni.")
+            except Exception as delete_error:
+                logger.error(f"Erreur lors de la suppression du salon '{channel_name}': {delete_error}")
             return
 
         # Récupérer les détails du bannissement
@@ -260,14 +293,20 @@ class DebanManager(commands.Cog):
         embed.set_footer(text=f"Demande par {interaction.user}", icon_url=interaction.user.avatar.url if interaction.user.avatar else None)
 
         # Créer la vue avec les boutons Accepter et Refuser
-        view = DebanRequestActionView(self, user_id=user.id, requester_id=requester_internal_id)
+        view = DebanRequestActionView(self, user_id=user.id, requester_id=requester_internal_id, channel_id=request_channel.id)
 
-        # Envoyer l'embed dans le salon de modération
+        # Envoyer l'embed dans le salon spécifique
         try:
-            message = await moderation_channel.send(embed=embed, view=view)
+            message = await request_channel.send(embed=embed, view=view)
         except Exception as e:
             logger.error(f"Erreur lors de l'envoi de la demande de débannissement individuelle: {e}")
             await interaction.followup.send("Erreur lors de l'envoi de la demande. Veuillez réessayer plus tard.", ephemeral=True)
+            # Supprimer le salon créé car l'envoi a échoué
+            try:
+                await request_channel.delete(reason="Erreur lors de l'envoi de la demande de débannissement.")
+                logger.info(f"Salon '{channel_name}' supprimé car l'envoi de la demande a échoué.")
+            except Exception as delete_error:
+                logger.error(f"Erreur lors de la suppression du salon '{channel_name}': {delete_error}")
             return
 
         # Enregistrer la demande individuelle dans la table `persistent_messages` avec message_type = 'deban_request'
@@ -276,11 +315,17 @@ class DebanManager(commands.Cog):
         VALUES ($1, $2, 'deban_request', NOW(), $3, $4)
         """
         try:
-            await database.execute(insert_query, moderation_channel_id, message.id, internal_server_id, requester_internal_id)
-            logger.info(f"Demande de débannissement individuelle envoyée et persistée avec ID {message.id} dans le canal {moderation_channel.name}")
+            await database.execute(insert_query, request_channel.id, message.id, internal_server_id, requester_internal_id)
+            logger.info(f"Demande de débannissement individuelle envoyée et persistée avec ID {message.id} dans le canal {request_channel.name}")
         except Exception as e:
             logger.error(f"Erreur lors de l'enregistrement de la demande individuelle dans `persistent_messages`: {e}")
             await interaction.followup.send("Erreur lors de l'enregistrement de la demande. Veuillez réessayer plus tard.", ephemeral=True)
+            # Supprimer le salon créé car l'enregistrement a échoué
+            try:
+                await request_channel.delete(reason="Erreur lors de l'enregistrement de la demande de débannissement.")
+                logger.info(f"Salon '{channel_name}' supprimé car l'enregistrement de la demande a échoué.")
+            except Exception as delete_error:
+                logger.error(f"Erreur lors de la suppression du salon '{channel_name}': {delete_error}")
             return
 
         # Envoyer une confirmation à l'utilisateur
