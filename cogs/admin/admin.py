@@ -1,5 +1,3 @@
-# cogs/admin_sync.py
-
 import asyncpg
 import discord
 from discord.ext import commands
@@ -65,50 +63,83 @@ class AdminSync(commands.Cog):
             logger.error(f"Erreur lors de l'obtention du statut du pool de connexions : {e}")
             await interaction.followup.send(f"Erreur : {e}", ephemeral=True)
 
-    ### Ajout des commandes de rechargement des cogs ###
+    ### Ajout des commandes dynamiques pour gérer les cogs ###
 
-    @app_commands.command(name="reload_cog", description="Recharge un cog spécifique.")
+    @app_commands.command(name="manage_cogs", description="Gère les cogs dynamiquement (load, reload, unload).")
     @app_commands.default_permissions(administrator=True)  # Restreindre aux administrateurs
-    async def reload_cog(self, interaction: discord.Interaction, cog: str):
-        """Recharge un cog spécifique."""
+    async def manage_cog(self, interaction: discord.Interaction, action: str, cog: str):
+        """Gère les cogs dynamiquement."""
         logger = logging.getLogger('admin')
 
-        # Vérification directe du chemin complet
+        if action not in ["load", "reload", "unload"]:
+            await interaction.response.send_message(
+                "❌ Action invalide. Utilisez `load`, `reload`, ou `unload`.", ephemeral=True
+            )
+            return
+
         if cog not in cog_paths:
             await interaction.response.send_message(
                 f"❌ Le cog `{cog}` n'est pas autorisé ou n'existe pas.", 
                 ephemeral=True
             )
-            logger.warning(f"Tentative de rechargement d'un cog non autorisé : {cog}")
+            logger.warning(f"Tentative de gestion d'un cog non autorisé : {cog}")
             return
 
         try:
-            await self.bot.reload_extension(cog)
-            await interaction.response.send_message(f"✅ Le cog `{cog}` a été rechargé avec succès.", ephemeral=True)
-            logger.info(f"Cog rechargé avec succès : {cog}")
-        except commands.errors.ExtensionNotLoaded:
-            try:
+            if action == "load":
                 await self.bot.load_extension(cog)
-                await interaction.response.send_message(f"✅ Le cog `{cog}` a été chargé et rechargé avec succès.", ephemeral=True)
-                logger.info(f"Cog chargé et rechargé avec succès : {cog}")
-            except Exception as e:
-                await interaction.response.send_message(f"❌ Erreur lors du chargement du cog `{cog}` : {e}", ephemeral=True)
-                logger.error(f"Erreur lors du chargement du cog {cog} : {e}")
+                await interaction.response.send_message(f"✅ Le cog `{cog}` a été chargé avec succès.", ephemeral=True)
+                logger.info(f"Cog chargé avec succès : {cog}")
+
+            elif action == "reload":
+                await self.bot.reload_extension(cog)
+                await interaction.response.send_message(f"✅ Le cog `{cog}` a été rechargé avec succès.", ephemeral=True)
+                logger.info(f"Cog rechargé avec succès : {cog}")
+
+            elif action == "unload":
+                await self.bot.unload_extension(cog)
+                await interaction.response.send_message(f"✅ Le cog `{cog}` a été déchargé avec succès.", ephemeral=True)
+                logger.info(f"Cog déchargé avec succès : {cog}")
+
         except Exception as e:
-            await interaction.response.send_message(f"❌ Erreur lors du rechargement du cog `{cog}` : {e}", ephemeral=True)
-            logger.error(f"Erreur lors du rechargement du cog {cog} : {e}")
+            await interaction.response.send_message(f"❌ Erreur lors de l'action `{action}` sur le cog `{cog}` : {e}", ephemeral=True)
+            logger.error(f"Erreur lors de l'action `{action}` sur le cog `{cog}` : {e}")
 
-    @reload_cog.autocomplete("cog")
-    async def reload_cog_autocomplete(self, interaction: discord.Interaction, current: str):
+    @manage_cog.autocomplete("action")
+    async def manage_cog_action_autocomplete(self, interaction: discord.Interaction, current: str):
+        """Propose les actions disponibles pour la commande manage_cog."""
+        actions = ["load", "reload", "unload"]
+        return [
+            app_commands.Choice(name=action, value=action) for action in actions if current.lower() in action.lower()
+        ]
+
+    @manage_cog.autocomplete("cog")
+    async def manage_cog_cog_autocomplete(self, interaction: discord.Interaction, current: str):
         """Propose des cogs disponibles pour l'autocomplétion."""
-
-        # Conserver les chemins complets pour l'autocomplétion
         filtered = [
             cog for cog in cog_paths if current.lower() in cog.lower()
         ]
         return [
             app_commands.Choice(name=cog, value=cog) for cog in filtered
         ]
+    
+
+    @app_commands.command(name="sync_commands", description="Synchronise les commandes slash avec Discord.")
+    @app_commands.default_permissions(administrator=True)  # Restreindre aux administrateurs
+    async def sync_commands(self, interaction: discord.Interaction):
+        """Synchronise les commandes slash avec Discord."""
+        try:
+            # Synchroniser globalement
+            synced = await self.bot.tree.sync()
+            await interaction.response.send_message(
+                f"✅ Commandes synchronisées globalement : {len(synced)} commandes mises à jour.", ephemeral=True
+            )
+            logger.info(f"{len(synced)} commandes synchronisées globalement.")
+        except Exception as e:
+            await interaction.response.send_message(
+                f"❌ Une erreur est survenue lors de la synchronisation : {e}", ephemeral=True
+            )
+            logger.error(f"Erreur lors de la synchronisation des commandes : {e}")
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AdminSync(bot))

@@ -378,7 +378,7 @@ class Moderation(commands.Cog):
         embed.add_field(
             name="C'est fini",
             value=(
-                f"Bonne nouvelle, vous êtes libre comme l’air. On est content de vous revoir parmi nous, mais faites gaffe cette fois, hein ? 😉 Profitez bien et bon retour !."
+                f"Bonne nouvelle, vous êtes libre comme l’air. On est content de vous revoir parmi nous, mais faites gaffe cette fois, hein ? 😉 Profitez bien et bon retour !"
             ),
             inline=False
         )
