@@ -15,9 +15,10 @@ class QueueView(View):
         self.cog = cog
         self.guild_id = guild_id
 
-        # Ajouter les boutons Solo et Équipe avec des IDs persistants
+        # Ajouter les boutons Solo, Équipe et Quitter la Queue avec des IDs persistants
         self.add_item(self.create_solo_button())
         self.add_item(self.create_team_button())
+        self.add_item(self.create_leave_queue_button())  # Nouveau bouton ajouté ici
 
     def create_solo_button(self):
         button = Button(label="Solo", style=discord.ButtonStyle.primary, custom_id=f"solo_button_{self.guild_id}")
@@ -27,6 +28,11 @@ class QueueView(View):
     def create_team_button(self):
         button = Button(label="Équipe", style=discord.ButtonStyle.secondary, custom_id=f"team_button_{self.guild_id}")
         button.callback = self.team_button_callback
+        return button
+
+    def create_leave_queue_button(self):
+        button = Button(label="Quitter la Queue", style=discord.ButtonStyle.danger, custom_id=f"leave_queue_button_{self.guild_id}")
+        button.callback = self.leave_queue_button_callback
         return button
 
     async def solo_button_callback(self, interaction: discord.Interaction):
@@ -86,6 +92,27 @@ class QueueView(View):
             await interaction.response.send_message("Erreur : Serveur non configuré.", ephemeral=True)
             return
         await interaction.response.send_modal(TeamModal(self.cog, self.guild_id, server_id))
+
+    async def leave_queue_button_callback(self, interaction: discord.Interaction):
+        try:
+            await interaction.response.defer(ephemeral=True)
+            user = interaction.user
+
+            server_id = await MatchmakingService.get_server_id(self.guild_id)
+            if not server_id:
+                await interaction.followup.send("Erreur : Serveur non configuré.", ephemeral=True)
+                return
+
+            success, message = await self.cog.remove_from_queue(user, server_id)
+            if success:
+                await interaction.followup.send(message, ephemeral=True)
+                await self.cog.update_queue_status_embed(self.guild_id)
+            else:
+                await interaction.followup.send(message, ephemeral=True)
+
+        except Exception as e:
+            logger.error(f"Erreur inattendue dans leave_queue_button_callback : {e}")
+            await interaction.followup.send("Une erreur inattendue s'est produite.", ephemeral=True)
 
 
 class TeamModal(Modal):

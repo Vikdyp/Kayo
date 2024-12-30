@@ -607,6 +607,69 @@ class Matchmaking(commands.Cog):
         if len(languages) == 1:
             return languages.pop()
         return "mixte"
+    
+    async def remove_from_queue(self, user: discord.User, server_id: int) -> Tuple[bool, str]:
+        """
+        Retire un utilisateur de la queue, que ce soit en tant que solo ou membre d'une équipe.
+
+        Args:
+            user (discord.User): L'utilisateur à retirer.
+            server_id (int): L'ID interne du serveur.
+
+        Returns:
+            Tuple[bool, str]: (Succès, Message)
+        """
+        removed = False
+        message = ""
+
+        # Parcourir la queue pour trouver le membre
+        for entry in list(self.main_queue):
+            if entry["type"] == "solo" and entry["discord_member"].id == user.id:
+                self.main_queue.remove(entry)
+                removed = True
+                message = "Vous avez été retiré de la queue Solo."
+                logger.info(f"{user.display_name} a été retiré de la queue Solo.")
+                break  # Supposer qu'un utilisateur ne peut être en queue qu'une seule fois
+
+            elif entry["type"] == "team":
+                for member in entry["discord_members"]:
+                    if member.id == user.id:
+                        entry["discord_members"].remove(member)
+                        removed = True
+                        message = "Vous avez été retiré de l'équipe dans la queue."
+                        logger.info(f"{user.display_name} a été retiré de l'équipe dans la queue.")
+
+                        # Si l'équipe a maintenant moins de 5 membres, elle reste dans la queue
+                        # Vous pouvez également décider de la retirer ou de la mettre à jour
+                        break  # Sortir de la boucle interne
+
+                if removed:
+                    # Si l'équipe n'a plus aucun membre, la retirer de la queue
+                    if len(entry["discord_members"]) == 0:
+                        self.main_queue.remove(entry)
+                        logger.info(f"Équipe vide retirée de la queue.")
+                    else:
+                        # Mettre à jour les rôles et les MMR si nécessaire
+                        roles = []
+                        mmrs = []
+                        for m in entry["discord_members"]:
+                            user_info = await MatchmakingService.get_user_info(m.id)
+                            if user_info:
+                                mmrs.append(user_info["elo"])
+                                roles.extend(await self.get_user_primary_role(m, server_id))
+                        if mmrs:
+                            entry["mmr_average"] = sum(mmrs) / len(mmrs)
+                            entry["mmr_low"] = min(mmrs)
+                            entry["mmr_high"] = max(mmrs)
+                        entry["roles"] = roles
+                        logger.info(f"Équipe mise à jour après le retrait de {user.display_name}.")
+                    break  # Sortir de la boucle principale après avoir trouvé le membre
+
+        if not removed:
+            message = "Vous n'êtes actuellement dans aucune queue."
+            logger.info(f"{user.display_name} a tenté de quitter la queue, mais il n'était dans aucune queue.")
+
+        return removed, message
 
     async def setup_voice_view(self, guild_id: int):
         """
