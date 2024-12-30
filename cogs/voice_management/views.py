@@ -130,7 +130,7 @@ class TeamModal(Modal):
         self.server_id = server_id
 
         self.member1 = TextInput(label="Membre 1 (ID ou mention)", required=True, max_length=100)
-        self.member2 = TextInput(label="Membre 2 (ID ou mention)", required=True, max_length=100)
+        self.member2 = TextInput(label="Membre 2 (ID ou mention)", required=False, max_length=100)
         self.member3 = TextInput(label="Membre 3 (Optionnel)", required=False, max_length=100)
         self.member4 = TextInput(label="Membre 4 (Optionnel)", required=False, max_length=100)
 

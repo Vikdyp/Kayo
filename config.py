@@ -40,6 +40,6 @@ LOGGING = {
     'rank_service' : False,
     'rules_service' : False,
     'deban_manager' : False,
-    'five_stack' : True,
+    'five_stack' : False,
     # Ajoutez d'autres modules ici
 }

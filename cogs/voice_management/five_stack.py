@@ -605,14 +605,14 @@ class Matchmaking(commands.Cog):
 
         embed = discord.Embed(
             title="Rejoignez la Queue Valorant",
-            description="Choisissez votre mode de jeu en cliquant sur un des boutons ci-dessous.",
+            description="Choisissez si vous voulez jouer en solo ou avec des amis.",
             color=discord.Color.blue()
         )
         embed.add_field(name="Solo en Attente", value=str(solo_count), inline=True)
         embed.add_field(name="Équipes en Attente", value=str(team_count), inline=True)
         embed.add_field(name="Membres Totaux", value=str(total_members), inline=True)
         embed.add_field(name="Prochain Match", value=next_match_in, inline=True)
-        embed.set_footer(text="Mise à jour automatique toutes les 30 secondes.")
+        embed.set_footer(text="Mise à jour automatique toutes les 15 secondes.")
 
         return embed
 
