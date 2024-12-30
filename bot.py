@@ -61,6 +61,7 @@ cog_paths = [
     'cogs.role_management.auto_role',
     #'cogs.role_management.language_role',
     'cogs.voice_management.five_stack',
+    'cogs.voice_management.voice_cleaner',
 ]
 
 @bot.event

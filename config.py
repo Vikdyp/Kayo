@@ -41,5 +41,6 @@ LOGGING = {
     'rules_service' : False,
     'deban_manager' : False,
     'five_stack' : False,
+    'voice_cleaner' : False,
     # Ajoutez d'autres modules ici
 }
