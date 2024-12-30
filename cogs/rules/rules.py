@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from utils.request_manager import enqueue_button_request
 from utils.database import database
 import logging
@@ -53,26 +53,33 @@ class RulesCog(commands.Cog):
         """
         Envoie l'embed du règlement et enregistre le message pour qu'il soit persistant.
         """
+        logger.debug("Commande setup_rules exécutée.")
         guild_id = ctx.guild.id
         guild_name = ctx.guild.name
+        logger.debug(f"Guild ID: {guild_id}, Guild Name: {guild_name}")
 
         # Récupérer ou configurer le salon des règles
         channel_id = await get_rules_channel_id(guild_id, guild_name)
+        logger.debug(f"Channel ID récupéré: {channel_id}")
         if not channel_id:
             await ctx.send("Aucun salon 'rules' configuré pour cette guilde.", delete_after=10)
+            logger.warning("Salon 'rules' non configuré.")
             return
 
         channel = self.bot.get_channel(channel_id)
         if not channel:
             await ctx.send("Le salon configuré pour les règles est introuvable.", delete_after=10)
+            logger.error("Salon 'rules' introuvable.")
             return
 
         # Vérifier s'il existe déjà un message persistant
-        existing_message = await get_persistent_message(guild_id, 'rules_embed', guild_name)  # Correction ici
+        existing_message = await get_persistent_message(guild_id, 'rules_embed', guild_name)
+        logger.debug(f"Message persistant existant: {existing_message}")
         if existing_message:
             try:
                 await channel.fetch_message(existing_message["message_id"])
                 await ctx.send("Le règlement est déjà configuré dans ce salon.", delete_after=10)
+                logger.info("Règlement déjà configuré.")
                 return
             except discord.NotFound:
                 logger.warning("Message persistant introuvable, en recréation...")
@@ -80,15 +87,30 @@ class RulesCog(commands.Cog):
         # Créer l'embed des règles
         embed = discord.Embed(
             title="Règlement du Serveur",
-            description="Veuillez lire les règles et cliquer sur le bouton pour les accepter.",
+            description=(
+                "1. **Respect et courtoisie**\n"
+                "   - Traitez tous les membres avec respect.\n"
+                "2. **Pas de contenu interdit**\n"
+                "   - Aucun contenu NSFW, harcèlement ou spamming n'est autorisé.\n"
+                "3. **Le staff a toujours raison**\n"
+                "   - Respectez les décisions du staff.\n\n"
+                "**En cliquant sur 'Accepter le règlement', vous acceptez les conditions générales d'utilisation.**"
+            ),
             color=discord.Color.green()
         )
-        embed.set_footer(text="Règlement mis à jour automatiquement.")
+        avatar_url = self.bot.user.avatar.url if self.bot.user.avatar else None
+        embed.set_footer(
+            text="N'hésite pas à demander de l'aide si tu as des questions !",
+            icon_url=avatar_url
+        )
+        logger.debug("Embed des règles créé.")
+
         view = AcceptRulesView(self)
 
         # Envoyer l'embed avec le bouton
         try:
             message = await channel.send(embed=embed, view=view)
+            logger.info(f"Message des règles envoyé avec ID: {message.id}")
         except discord.Forbidden:
             await ctx.send("Je n'ai pas les permissions nécessaires pour envoyer des messages dans ce salon.", delete_after=10)
             logger.error("Permission manquante pour envoyer un message dans le salon 'rules'.")
@@ -102,8 +124,10 @@ class RulesCog(commands.Cog):
         success = await store_rules_message(guild_id, guild_name, channel.id, message.id)
         if success:
             await ctx.send(f"Règlement envoyé dans {channel.mention}.", delete_after=10)
+            logger.info("Message des règles enregistré dans la base de données.")
         else:
             await ctx.send("Le règlement a été envoyé, mais une erreur est survenue lors de l'enregistrement.", delete_after=10)
+            logger.error("Erreur lors de l'enregistrement du message des règles dans la base de données.")
 
     async def reload_persistent_views(self):
         """
@@ -117,7 +141,7 @@ class RulesCog(commands.Cog):
             guild_name = guild.name
 
             # Récupérer le message persistant
-            message_data = await get_persistent_message(guild_id, 'rules_embed', guild_name)  # Correction ici
+            message_data = await get_persistent_message(guild_id, 'rules_embed', guild_name)
             if not message_data:
                 continue
 

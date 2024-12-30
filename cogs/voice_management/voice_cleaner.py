@@ -43,6 +43,6 @@ class VoiceManagement(commands.Cog):
         await self.bot.wait_until_ready()
         logger.info("Tâche de vérification des salons vocaux vides démarrée.")
 
-def setup(bot: commands.Bot):
-    bot.add_cog(VoiceManagement(bot))
+async def setup(bot):
+    await bot.add_cog(VoiceManagement(bot))
     logger.info("VoiceManagement Cog chargé.")
