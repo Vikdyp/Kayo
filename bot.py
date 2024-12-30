@@ -59,6 +59,8 @@ cog_paths = [
     'cogs.moderation.unban_requests',
     'cogs.troll.quoicoubeh',
     'cogs.role_management.auto_role',
+    #'cogs.role_management.language_role',
+    'cogs.voice_management.five_stack',
 ]
 
 @bot.event

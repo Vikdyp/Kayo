@@ -36,9 +36,10 @@ LOGGING = {
     'rank_roles' : False,
     'valorant_service' : False,
     'rules' : False,
-    'assign_rank' : True,
+    'assign_rank' : False,
     'rank_service' : False,
     'rules_service' : False,
     'deban_manager' : False,
+    'five_stack' : True,
     # Ajoutez d'autres modules ici
 }
