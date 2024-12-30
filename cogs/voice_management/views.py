@@ -49,6 +49,11 @@ class QueueView(View):
                 await interaction.followup.send("Vous ne pouvez pas rejoindre la queue car vous avez le rôle 'ban'.", ephemeral=True)
                 return
 
+            # Vérifier si l'utilisateur est déjà dans la queue
+            if await self.cog.is_user_in_queue(user):
+                await interaction.followup.send("Vous êtes déjà dans la queue.", ephemeral=True)
+                return
+
             user_info = await self.cog.MatchmakingService.get_user_info(user.id)
             if not user_info:
                 await interaction.followup.send("Erreur : Impossible de récupérer vos informations Valorant.", ephemeral=True)
@@ -82,6 +87,8 @@ class QueueView(View):
             await interaction.followup.send("Vous avez été ajouté à la queue Solo!", ephemeral=True)
             await self.cog.update_queue_status_embed(self.guild_id)
 
+        except ValueError as ve:
+            await interaction.followup.send(str(ve), ephemeral=True)
         except Exception as e:
             logger.error(f"Erreur inattendue dans solo_button_callback : {e}")
             await interaction.followup.send("Une erreur inattendue s'est produite.", ephemeral=True)
@@ -144,12 +151,37 @@ class TeamModal(Modal):
             if self.member4.value:
                 member_inputs.append(self.member4.value)
 
+            # Vérifier si le leader est déjà dans la queue
+            if await self.cog.is_user_in_queue(leader):
+                await interaction.followup.send("Vous êtes déjà dans la queue.", ephemeral=True)
+                return
+
+            # Vérifier si les membres de l'équipe sont déjà dans la queue
+            for member_input in member_inputs:
+                try:
+                    if member_input.startswith('<@') and member_input.endswith('>'):
+                        member_id = int(member_input[2:-1].replace('!', ''))
+                    else:
+                        member_id = int(member_input)
+                    member = interaction.guild.get_member(member_id)
+                    if not member:
+                        await interaction.followup.send(f"Erreur : Membre {member_input} introuvable dans le serveur.", ephemeral=True)
+                        return
+                    if await self.cog.is_user_in_queue(member):
+                        await interaction.followup.send(f"Erreur : {member.display_name} est déjà dans la queue.", ephemeral=True)
+                        return
+                except ValueError:
+                    await interaction.followup.send(f"Erreur : Entrée invalide pour {member_input}.", ephemeral=True)
+                    return
+
             success, message = await self.cog.create_team(leader, member_inputs, self.server_id)
             if success:
                 await interaction.followup.send("Équipe créée et ajoutée à la queue!", ephemeral=True)
                 await self.cog.update_queue_status_embed(self.guild_id)
             else:
                 await interaction.followup.send(f"Erreur: {message}", ephemeral=True)
+        except ValueError as ve:
+            await interaction.followup.send(str(ve), ephemeral=True)
         except Exception as e:
             logger.error(f"Erreur inattendue dans on_submit : {e}")
             try:

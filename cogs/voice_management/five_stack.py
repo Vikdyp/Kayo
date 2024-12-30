@@ -421,6 +421,27 @@ class Matchmaking(commands.Cog):
             logger.error(f"Entrée invalide ajoutée à la file : {entry}")
             raise KeyError("Champ 'type' manquant ou invalide dans l'entrée.")
         
+        # Empêcher les doublons
+        if entry['type'] == 'solo':
+            user_id = entry['discord_member'].id
+            for existing_entry in self.main_queue:
+                if existing_entry['type'] == 'solo' and existing_entry['discord_member'].id == user_id:
+                    logger.warning(f"Utilisateur {entry['discord_member'].display_name} est déjà dans la queue Solo.")
+                    raise ValueError("Vous êtes déjà dans la queue Solo.")
+                elif existing_entry['type'] == 'team' and any(member.id == user_id for member in existing_entry['discord_members']):
+                    logger.warning(f"Utilisateur {entry['discord_member'].display_name} est déjà dans une équipe dans la queue.")
+                    raise ValueError("Vous êtes déjà dans une équipe dans la queue.")
+        elif entry['type'] == 'team':
+            for member in entry['discord_members']:
+                user_id = member.id
+                for existing_entry in self.main_queue:
+                    if existing_entry['type'] == 'solo' and existing_entry['discord_member'].id == user_id:
+                        logger.warning(f"Utilisateur {member.display_name} est déjà dans la queue Solo.")
+                        raise ValueError(f"{member.display_name} est déjà dans la queue Solo.")
+                    elif existing_entry['type'] == 'team' and any(m.id == user_id for m in existing_entry['discord_members']):
+                        logger.warning(f"Utilisateur {member.display_name} est déjà dans une équipe dans la queue.")
+                        raise ValueError(f"{member.display_name} est déjà dans une équipe dans la queue.")
+
         # Ajout à la file d'attente
         self.main_queue.append(entry)
         if entry['type'] == 'solo':
@@ -608,6 +629,29 @@ class Matchmaking(commands.Cog):
             return languages.pop()
         return "mixte"
     
+    async def is_user_in_queue(self, user: discord.User) -> bool:
+        """
+        Vérifie si un utilisateur est déjà dans la queue, que ce soit en tant que solo ou membre d'une équipe.
+
+        Args:
+            user (discord.User): L'utilisateur à vérifier.
+
+        Returns:
+            bool: True si l'utilisateur est dans la queue, sinon False.
+        """
+        # Vérifier si l'utilisateur est en solo
+        for entry in self.main_queue:
+            if entry["type"] == "solo" and entry["discord_member"].id == user.id:
+                return True
+
+            # Vérifier si l'utilisateur est dans une équipe
+            if entry["type"] == "team":
+                for member in entry["discord_members"]:
+                    if member.id == user.id:
+                        return True
+
+        return False
+
     async def remove_from_queue(self, user: discord.User, server_id: int) -> Tuple[bool, str]:
         """
         Retire un utilisateur de la queue, que ce soit en tant que solo ou membre d'une équipe.
