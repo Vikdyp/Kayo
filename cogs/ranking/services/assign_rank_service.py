@@ -230,6 +230,29 @@ async def get_all_users_with_valo_info() -> list:
         logger.error(f"Erreur lors de la récupération des utilisateurs pour la mise à jour Valorant: {e}")
         return []
 
+async def get_user_by_pseudo_tag(pseudo: str, tag: str) -> Optional[int]:
+    """
+    Vérifie si un pseudo + tag est déjà enregistré.
+    Retourne le discord_id de l'utilisateur existant ou None s'il n'y a pas de doublon.
+    """
+    query = """
+        SELECT discord_id
+        FROM user_id
+        WHERE valorant_pseudo = $1
+          AND valorant_tag = $2
+        LIMIT 1;
+    """
+    try:
+        record = await database.fetchrow(query, pseudo, tag)
+        if record:
+            logger.info(f"Doublon trouvé pour {pseudo}#{tag} avec Discord ID {record['discord_id']}.")
+            return record['discord_id']
+        else:
+            logger.info(f"Aucun doublon trouvé pour {pseudo}#{tag}.")
+            return None
+    except Exception as e:
+        logger.error(f"[get_user_by_pseudo_tag] Erreur : {e}")
+        return None
 # ------------------------------------------------
 # RÔLES : gestion + cache local
 # ------------------------------------------------

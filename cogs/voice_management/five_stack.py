@@ -23,6 +23,17 @@ class Matchmaking(commands.Cog):
         self.last_match_time = {}  # guild_id: datetime of last match formation
         self.MatchmakingService = MatchmakingService
 
+        # Compteurs de rôles
+        self.role_counters = {
+            "duelist": 0,
+            "controller": 0,
+            "sentinel": 0,
+            "initiator": 0,
+            "fill": 0
+        }
+
+        self.total_teams_created = 0
+
         # Initialiser et démarrer la tâche de traitement de la queue
         self.process_queue_task_loop.start()
 
@@ -227,7 +238,7 @@ class Matchmaking(commands.Cog):
                             logger.info(f"Solo retiré de la queue : {solo['discord_member'].display_name}")
                         
                         logger.info(f"Équipe complétée : {[member.display_name for member in entry['discord_members']]}")
-
+                        
                         # Créer le salon vocal pour l'équipe complétée
                         group = entry["discord_members"]
                         guild_id = group[0].guild.id
@@ -235,6 +246,8 @@ class Matchmaking(commands.Cog):
                         channel = await self.create_voice_channel(group, embed_channel)
                         if channel:
                             logger.info(f"Salon vocal créé pour l'équipe : {channel}")
+                            self.total_teams_created += 1  # Incrémenter le compteur
+                            logger.info(f"Total des équipes créées : {self.total_teams_created}")
                         else:
                             logger.error("Erreur lors de la création du salon vocal.")
                         
@@ -252,6 +265,8 @@ class Matchmaking(commands.Cog):
                 channel = await self.create_voice_channel(group, embed_channel)
                 if channel:
                     logger.info(f"Salon vocal créé : {channel}")
+                    self.total_teams_created += 1  # Incrémenter le compteur
+                    logger.info(f"Total des équipes créées : {self.total_teams_created}")
                 else:
                     logger.error("Erreur lors de la création du salon vocal.")
             else:
@@ -303,8 +318,14 @@ class Matchmaking(commands.Cog):
 
             all_members = [leader] + members
             logger.info(f"Liste complète des membres : {[m.display_name for m in all_members]}.")
+            
+            # Collecter les rôles
+            roles = []
+            for member in all_members:
+                role = await self.get_user_primary_role(member, server_id)
+                roles.append(role)
 
-            regions, mmrs, roles, languages = set(), [], [], set()
+            regions, mmrs, languages = set(), [], set()
             for member in all_members:
                 is_banned = await self.is_user_banned(member, server_id)
                 if is_banned:
@@ -314,7 +335,6 @@ class Matchmaking(commands.Cog):
                     return False, f"Impossible de récupérer les infos pour {member.display_name}."
                 regions.add(user_info["region"])
                 mmrs.append(user_info["elo"])
-                roles.append(await self.get_user_primary_role(member, server_id))
                 language = await self.get_user_language(member, server_id)
                 if not language:
                     return False, f"{member.display_name} n'a pas de langue valide."
@@ -331,7 +351,7 @@ class Matchmaking(commands.Cog):
                 return False, "Pas plus de 2 rôles 'fill' par équipe."
             non_fill_roles = [role for role in roles if role != 'fill']
             if len(non_fill_roles) != len(set(non_fill_roles)):
-                return False, "Les rôles doivent être uniques, hors 'fill'."
+                return False, "Les membres ne peuvent pas avoir le même rôle. Seul le rôle <@&1236463297243512843> est autorisé deux fois dans la même équipe."
 
             # Créer et ajouter à la queue
             team_entry = {
@@ -441,15 +461,25 @@ class Matchmaking(commands.Cog):
                     elif existing_entry['type'] == 'team' and any(m.id == user_id for m in existing_entry['discord_members']):
                         logger.warning(f"Utilisateur {member.display_name} est déjà dans une équipe dans la queue.")
                         raise ValueError(f"{member.display_name} est déjà dans une équipe dans la queue.")
-
+        
         # Ajout à la file d'attente
         self.main_queue.append(entry)
         if entry['type'] == 'solo':
             identifier = entry['discord_member'].display_name
+            # Incrémenter le compteur de rôle
+            primary_role = entry['roles'][0]
+            if primary_role in self.role_counters:
+                self.role_counters[primary_role] += 1
         else:
             identifier = ', '.join([m.display_name for m in entry['discord_members']])
+            # Incrémenter les compteurs de rôles pour chaque membre de l'équipe
+            for role in entry['roles']:
+                if role in self.role_counters:
+                    self.role_counters[role] += 1
+
         logger.info(f"Entrée ajoutée à la queue : {entry['type']} - {identifier}")
         logger.debug(f"Queue actuelle : {list(self.main_queue)}")
+        logger.debug(f"Compteurs de rôles actuels : {self.role_counters}")
 
     async def update_queue_status_embed(self, guild_id: int):
         """
@@ -591,18 +621,7 @@ class Matchmaking(commands.Cog):
                         sum(len(entry['discord_members']) for entry in self.main_queue if entry['type'] == 'team')
         active_groups = 0  # À implémenter selon votre système
 
-        # Calculer le temps d'attente depuis la dernière équipe formée
-        last_match = self.last_match_time.get(guild_id)
-        if last_match:
-            time_since_last_match = datetime.datetime.utcnow() - last_match
-            seconds_remaining = 30 - time_since_last_match.total_seconds()
-            if seconds_remaining > 0:
-                next_match_in = str(datetime.timedelta(seconds=int(seconds_remaining)))
-            else:
-                next_match_in = "Disponible maintenant"
-        else:
-            next_match_in = "Disponible maintenant"
-
+        # Créer l'embed
         embed = discord.Embed(
             title="Rejoignez la Queue Valorant",
             description="Choisissez si vous voulez jouer en solo ou avec des amis.",
@@ -611,7 +630,15 @@ class Matchmaking(commands.Cog):
         embed.add_field(name="Solo en Attente", value=str(solo_count), inline=True)
         embed.add_field(name="Équipes en Attente", value=str(team_count), inline=True)
         embed.add_field(name="Membres Totaux", value=str(total_members), inline=True)
-        embed.add_field(name="Prochain Match", value=next_match_in, inline=True)
+        embed.add_field(name="Total des équipes créées", value=str(self.total_teams_created), inline=True)
+
+        # Déterminer le rôle prioritaire (celui avec le moins de joueurs)
+        if self.role_counters:
+            priority_role = min(self.role_counters, key=self.role_counters.get)
+            embed.add_field(name="Role Prioritaire", value=priority_role.capitalize(), inline=False)
+        else:
+            embed.add_field(name="Role Prioritaire", value="N/A", inline=False)
+
         embed.set_footer(text="Mise à jour automatique toutes les 15 secondes.")
 
         return embed
@@ -651,7 +678,7 @@ class Matchmaking(commands.Cog):
                         return True
 
         return False
-
+    
     async def remove_from_queue(self, user: discord.User, server_id: int) -> Tuple[bool, str]:
         """
         Retire un utilisateur de la queue, que ce soit en tant que solo ou membre d'une équipe.
@@ -673,6 +700,12 @@ class Matchmaking(commands.Cog):
                 removed = True
                 message = "Vous avez été retiré de la queue Solo."
                 logger.info(f"{user.display_name} a été retiré de la queue Solo.")
+
+                # Décrémenter le compteur de rôle
+                primary_role = entry['roles'][0]
+                if primary_role in self.role_counters:
+                    self.role_counters[primary_role] -= 1
+                    logger.debug(f"Décrémenté le compteur pour le rôle {primary_role}. Nouveau compteur : {self.role_counters[primary_role]}")
                 break  # Supposer qu'un utilisateur ne peut être en queue qu'une seule fois
 
             elif entry["type"] == "team":
@@ -682,6 +715,12 @@ class Matchmaking(commands.Cog):
                         removed = True
                         message = "Vous avez été retiré de l'équipe dans la queue."
                         logger.info(f"{user.display_name} a été retiré de l'équipe dans la queue.")
+
+                        # Décrémenter le compteur de rôle
+                        user_role = await self.get_user_primary_role(member, server_id)
+                        if user_role in self.role_counters:
+                            self.role_counters[user_role] -= 1
+                            logger.debug(f"Décrémenté le compteur pour le rôle {user_role}. Nouveau compteur : {self.role_counters[user_role]}")
 
                         # Si l'équipe a maintenant moins de 5 membres, elle reste dans la queue
                         # Vous pouvez également décider de la retirer ou de la mettre à jour
@@ -700,13 +739,16 @@ class Matchmaking(commands.Cog):
                             user_info = await MatchmakingService.get_user_info(m.id)
                             if user_info:
                                 mmrs.append(user_info["elo"])
-                                roles.extend(await self.get_user_primary_role(m, server_id))
+                                roles.append(await self.get_user_primary_role(m, server_id))
                         if mmrs:
                             entry["mmr_average"] = sum(mmrs) / len(mmrs)
                             entry["mmr_low"] = min(mmrs)
                             entry["mmr_high"] = max(mmrs)
                         entry["roles"] = roles
                         logger.info(f"Équipe mise à jour après le retrait de {user.display_name}.")
+
+                        # Décrémenter les compteurs pour les rôles retirés
+                        # (Si nécessaire, en fonction de votre logique)
                     break  # Sortir de la boucle principale après avoir trouvé le membre
 
         if not removed:

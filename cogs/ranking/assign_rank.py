@@ -13,7 +13,8 @@ from cogs.ranking.services.assign_rank_service import (
     delete_valo_data,
     user_exists_in_db,
     get_role_id_for_config,
-    get_or_create_server_record
+    get_or_create_server_record,
+    get_user_by_pseudo_tag
 )
 from cogs.ranking.services.valorant_service import get_puuid, get_player_rank
 from cogs.moderation.services.moderation_service import ModerationService
@@ -104,6 +105,34 @@ class PseudoTagModal(discord.ui.Modal, title="Renseignez votre Pseudo et Tag Val
                 ephemeral=True
             )
             return
+
+        # Vérifier si le pseudo + tag est déjà utilisé
+        existing_discord_id = await get_user_by_pseudo_tag(pseudo, tag)
+        if existing_discord_id:
+            if existing_discord_id == self.user.id:
+                # L'utilisateur essaie de réenregistrer les mêmes informations
+                await interaction.response.send_message(
+                    "Vous avez déjà enregistré ce pseudo et tag Valorant.",
+                    ephemeral=True
+                )
+                return
+            else:
+                # Doublon trouvé avec un autre utilisateur
+                existing_user = self.cog.bot.get_user(existing_discord_id)
+                if not existing_user:
+                    # Si l'utilisateur n'est pas dans le cache, récupérons-le
+                    existing_user = await self.cog.bot.fetch_user(existing_discord_id)
+
+                # Envoyer un message éphémère à l'utilisateur actuel
+                await interaction.response.send_message(
+                    "Ce pseudo et tag Valorant sont déjà utilisés par un autre utilisateur.",
+                    ephemeral=True
+                )
+
+                # Envoyer un embed dans le salon spécifique
+                await self.cog.notify_duplicate_pseudo_tag(existing_user, self.user, pseudo, tag)
+
+                return
 
         # Vérifier si l'utilisateur existe déjà dans user_id
         exists = await user_exists_in_db(interaction.user.id)
@@ -278,7 +307,13 @@ class EmbedCog(commands.Cog):
                 "Ce message vous permet de **renseigner** ou d'**effacer** vos données Valorant.\n\n"
                 "**Bouton bleu** : Enregistrer votre pseudo et votre tag Valorant.\n"
                 "**Bouton rouge** : Supprimer vos informations Valorant de la base.\n\n"
-                "*Note : Vous devez d'abord accepter le règlement si vous n'êtes pas encore enregistré.*"
+                "**Instructions :**\n"
+                "1. Cliquez sur le bouton bleu pour lier votre compte Valorant.\n"
+                "2. Un formulaire s'ouvrira où vous devrez entrer :\n"
+                "   - **Pseudo** : Votre pseudo Valorant (exemple : `globeX`).\n"
+                "   - **Tag** : Votre tag Valorant sans le `#` (exemple : `meow`).\n\n"
+                "*Note : Vous devez d'abord accepter le règlement si vous n'êtes pas encore enregistré.*\n\n"
+                "*Les rôles correspondant à votre rang Valorant sont mis à jour toutes les heures.*"
             ),
             color=discord.Color.blue()
         )
@@ -297,6 +332,35 @@ class EmbedCog(commands.Cog):
         except Exception as e:
             logger.error(f"Erreur lors de l'envoi de l'embed : {e}")
             await ctx.send("Une erreur est survenue lors de l'envoi de l'embed.", delete_after=10)
+
+    async def notify_duplicate_pseudo_tag(self, existing_user: discord.User, current_user: discord.User, pseudo: str, tag: str):
+        """
+        Envoie un embed dans le salon spécifique pour informer d'un doublon de pseudo + tag Valorant.
+        """
+        channel_id = 1315770052431188069  # Remplacez par l'ID de votre salon
+        channel = self.bot.get_channel(channel_id)
+        if not channel:
+            logger.error(f"Salon avec l'ID {channel_id} introuvable.")
+            return
+
+        embed = discord.Embed(
+            title="Doublon de Pseudo Valorant Détecté",
+            description=(
+                f"Un doublon a été détecté pour le pseudo et tag Valorant : **{pseudo}#{tag}**.\n\n"
+                f"**Utilisateur 1 :** {existing_user.mention} (ID: {existing_user.id})\n"
+                f"**Utilisateur 2 :** {current_user.mention} (ID: {current_user.id})\n\n"
+                "Veuillez résoudre ce doublon en modifiant les informations de l'un des utilisateurs."
+            ),
+            color=discord.Color.red(),
+            timestamp=discord.utils.utcnow()
+        )
+        embed.set_footer(text="Gestion des Doublons de Pseudo Valorant")
+
+        try:
+            await channel.send(embed=embed)
+            logger.info(f"Embed de doublon envoyé dans le salon {channel_id} pour {current_user} et {existing_user}.")
+        except Exception as e:
+            logger.error(f"Erreur lors de l'envoi de l'embed de doublon : {e}")
 
     @send_embed.error
     async def send_embed_error(self, ctx: commands.Context, error):

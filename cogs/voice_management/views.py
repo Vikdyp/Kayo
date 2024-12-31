@@ -84,7 +84,8 @@ class QueueView(View):
             }
 
             await self.cog.add_to_main_queue(solo_entry)
-            await interaction.followup.send("Vous avez été ajouté à la queue Solo!", ephemeral=True)
+            confirmation_message = f"Vous avez été ajouté à la queue Solo en tant que **{role_name.capitalize()}**!"
+            await interaction.followup.send(confirmation_message, ephemeral=True)
             await self.cog.update_queue_status_embed(self.guild_id)
 
         except ValueError as ve:
