@@ -624,7 +624,7 @@ class Matchmaking(commands.Cog):
         # Créer l'embed
         embed = discord.Embed(
             title="Rejoignez la Queue Valorant",
-            description="Choisissez si vous voulez jouer en solo ou avec des amis.",
+            description="Choisissez si vous êtes seul ou en equipe pour rejoindre la queue.",
             color=discord.Color.blue()
         )
         embed.add_field(name="Solo en Attente", value=str(solo_count), inline=True)

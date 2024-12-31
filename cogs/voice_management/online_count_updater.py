@@ -11,6 +11,7 @@ logger = logging.getLogger("rank_updater")
 class RankUpdater:
     def __init__(self, bot: discord.Client):
         self.bot = bot
+        self.rank_service = RankService()  # Création d'une instance de RankService
         self.task = self._task_loop  # Référence à la tâche
 
     def start(self):
@@ -30,7 +31,10 @@ class RankUpdater:
         """Tâche principale pour mettre à jour les salons des rangs."""
         logger.info("Exécution de la tâche de mise à jour des salons.")
         for guild in self.bot.guilds:
-            config = await RankService.get_config(guild.id)
+            guild_id = guild.id
+            guild_name = guild.name
+
+            config = await self.rank_service.get_config(guild_id, guild_name)
             roles_config = config.get("roles", {})
             channels_config = config.get("channels", {})
 
@@ -41,20 +45,21 @@ class RankUpdater:
                 channel_id = channels_config.get(rank)
 
                 if not role_id or not channel_id:
-                    logger.warning(f"Rang {rank.capitalize()} : rôle ou salon non configuré pour le serveur {guild.id}.")
+                    logger.warning(f"Rang {rank.capitalize()} : rôle ou salon non configuré pour le serveur {guild_id}.")
                     continue
 
                 role = guild.get_role(role_id)
                 channel = guild.get_channel(channel_id)
 
                 if not role:
-                    logger.warning(f"Rôle {rank.capitalize()} introuvable dans le serveur {guild.id}.")
+                    logger.warning(f"Rôle {rank.capitalize()} introuvable dans le serveur {guild_id}.")
                     continue
 
                 if not channel:
-                    logger.warning(f"Salon {rank.capitalize()} introuvable dans le serveur {guild.id}.")
+                    logger.warning(f"Salon {rank.capitalize()} introuvable dans le serveur {guild_id}.")
                     continue
 
+                # Filtrer les membres en ligne avec le rôle spécifique
                 online_members = [member for member in role.members if member.status != discord.Status.offline]
                 online_count = len(online_members)
 
@@ -62,9 +67,9 @@ class RankUpdater:
                 if channel.name != new_channel_name:
                     try:
                         await channel.edit(name=new_channel_name)
-                        logger.info(f"Nom du salon {channel.name} mis à jour pour le serveur {guild.id}: {new_channel_name}.")
+                        logger.info(f"Nom du salon mis à jour pour le serveur {guild_id}: {new_channel_name}.")
                     except Exception as e:
-                        logger.error(f"Erreur lors de la mise à jour du salon {channel.name} pour le serveur {guild.id} : {e}")
+                        logger.error(f"Erreur lors de la mise à jour du salon {channel.name} pour le serveur {guild_id} : {e}")
                 else:
                     logger.debug(f"Nom du salon {channel.name} déjà à jour.")
 
@@ -80,6 +85,7 @@ rank_updater = RankUpdater(None)
 def setup_rank_updater(bot: discord.Client):
     """Initialise et démarre le RankUpdater avec le bot."""
     rank_updater.bot = bot
+    rank_updater.rank_service = RankService()  # Assurez-vous que RankService est initialisé avec l'instance
     rank_updater.start()
     logger.info("RankUpdater setup complete.")
 

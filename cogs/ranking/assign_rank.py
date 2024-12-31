@@ -1,3 +1,4 @@
+import re
 from typing import Optional
 import discord
 from discord.ext import commands, tasks
@@ -91,10 +92,13 @@ class PseudoTagModal(discord.ui.Modal, title="Renseignez votre Pseudo et Tag Val
         pseudo = self.pseudo.value.strip()
         tag = self.tag.value.strip()
 
-        # Vérifications basiques
-        if not pseudo.isalnum():
+        # Définir le motif regex pour le pseudo (lettres, chiffres et espaces)
+        pseudo_pattern = re.compile(r'^[A-Za-z0-9 ]+$')
+
+        # Vérifications basiques avec espace autorisé dans le pseudo
+        if not pseudo_pattern.match(pseudo):
             await interaction.response.send_message(
-                "Le pseudo ne doit contenir que des lettres et des chiffres.",
+                "Le pseudo ne doit contenir que des lettres, des chiffres et des espaces.",
                 ephemeral=True
             )
             return
@@ -171,7 +175,7 @@ class PseudoTagModal(discord.ui.Modal, title="Renseignez votre Pseudo et Tag Val
                 "Veuillez réessayer plus tard.",
                 ephemeral=True
             )
-
+            
 class EmbedButtonsView(discord.ui.View):
     def __init__(self, cog):
         super().__init__(timeout=None)

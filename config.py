@@ -30,7 +30,7 @@ LOGGING = {
     'channels_configuration': False,
     'database': False,
     'request_manager': False,
-    'rank_updater': False,
+    'rank_updater': True,
     'admin': True,
     'moderation' : False,
     'rank_roles' : False,
