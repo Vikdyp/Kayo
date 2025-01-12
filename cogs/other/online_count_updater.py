@@ -4,7 +4,7 @@ import discord
 import logging
 from discord.ext import tasks
 
-from cogs.voice_management.services.rank_service import RankService
+from cogs.other.service.rank_service import RankService
 
 logger = logging.getLogger("rank_updater")
 

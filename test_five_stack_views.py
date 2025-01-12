@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 from discord import Interaction, Member
-from cogs.voice_management.views import QueueView, TeamModal
+from cogs.voice_management.queue_views import QueueView, TeamModal
 
 
 @pytest.mark.asyncio
