@@ -168,11 +168,15 @@ class TeamSizeSelect(Select):
         self.entry_type = entry_type
 
     async def callback(self, interaction: Interaction):
-        user = interaction.user
-        selected_value = self.values[0]
-        team_size = int(selected_value)
-
         try:
+            # Immediately acknowledge to extend the response window.
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
+
+            user = interaction.user
+            selected_value = self.values[0]
+            team_size = int(selected_value)
+
             # Vérifier si déjà dans la queue
             in_queue = await MatchmakingService.is_player_in_queue(user.id)
             if in_queue:
@@ -230,7 +234,7 @@ class TeamSizeSelect(Select):
 
             # Si tout est OK, on gère la confirmation MMR
             if team_size in [5, 0]:
-                from .queue_views import MMRConfirmationView  # ou importez en haut
+                from .queue_views import MMRConfirmationView  # or import at the top
                 mmr_view = MMRConfirmationView(
                     cog=self.cog,
                     guild_id=self.guild_id,
@@ -243,13 +247,12 @@ class TeamSizeSelect(Select):
                     roles=roles,
                     entry_type=self.entry_type
                 )
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     "Acceptez-vous le -25% ?",
                     view=mmr_view,
                     ephemeral=True
                 )
             else:
-                # Pas de MMR confirmation => inscription directe
                 if self.entry_type == "solo":
                     await self.cog.add_solo_to_queue(
                         user=user,
@@ -261,12 +264,8 @@ class TeamSizeSelect(Select):
                         elo=elo,
                         roles=roles
                     )
-                    await interaction.response.send_message(
-                        "Vous avez rejoint la queue.",
-                        ephemeral=True
-                    )
+                    await interaction.followup.send("Vous avez rejoint la queue.", ephemeral=True)
                 else:
-                    # entry_type=team
                     await self.cog.add_preformed_team_to_queue(
                         leader=user,
                         desired_size=team_size,
@@ -276,18 +275,20 @@ class TeamSizeSelect(Select):
                         platform=platform,
                         roles=roles
                     )
-                    await interaction.response.send_message(
-                        "Votre équipe est inscrite dans la queue.",
-                        ephemeral=True
-                    )
+                    await interaction.followup.send("Votre équipe est inscrite dans la queue.", ephemeral=True)
 
         except Exception as e:
             logger.error(f"[TeamSizeSelect callback] Erreur: {e}")
-            await interaction.response.send_message(
-                f"Erreur lors de la sélection de la taille d'équipe: {e}",
-                ephemeral=True
-            )
-
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    f"Erreur lors de la sélection de la taille d'équipe: {e}",
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send(
+                    f"Erreur lors de la sélection de la taille d'équipe: {e}",
+                    ephemeral=True
+                )
 # -------------------------
 # Vue Principale de la Queue
 # -------------------------
