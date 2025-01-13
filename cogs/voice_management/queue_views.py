@@ -79,7 +79,7 @@ class MMRConfirmationView(View):
                 )
 
             await interaction.response.send_message(
-                f"Votre équipe (ou vous en solo) avez rejoint la queue en mmr_extended=True.",
+                f"Vous avez rejoint la queue.",
                 ephemeral=True
             )
             logger.info(
@@ -123,7 +123,7 @@ class MMRConfirmationView(View):
                 )
 
             await interaction.response.send_message(
-                "Inscription en queue sans extension de MMR.",
+                "Vous avez rejoint la queue.",
                 ephemeral=True
             )
             logger.info(
@@ -221,7 +221,7 @@ class TeamSizeSelect(Select):
                     entry_type=self.entry_type
                 )
                 await interaction.response.send_message(
-                    "Acceptez-vous l'extension MMR (jusqu'à 300 de différence) ?",
+                    "Acceptez-vous le -25% ?",
                     view=mmr_view,
                     ephemeral=True
                 )
@@ -239,7 +239,7 @@ class TeamSizeSelect(Select):
                         roles=roles
                     )
                     await interaction.response.send_message(
-                        f"Vous avez rejoint la queue en solo (team_size={team_size}).",
+                        f"Vous avez rejoint la queue.",
                         ephemeral=True
                     )
                 else:
@@ -254,7 +254,7 @@ class TeamSizeSelect(Select):
                         roles=roles
                     )
                     await interaction.response.send_message(
-                        f"Votre équipe est inscrite dans la queue (team_size={team_size}, mmr_extended=False).",
+                        f"Votre équipe est inscrite dans la queue.",
                         ephemeral=True
                     )
 
@@ -292,7 +292,7 @@ class QueueView(View):
             v = View(timeout=60)
             v.add_item(select)
             await interaction.response.send_message(
-                "Sélectionnez la taille de votre équipe (2 ou 3 pour éviter la confirmation MMR, 5 ou 0 = MMR confirmation) :", 
+                "Sélectionnez si vous souhaitez jouer en duo, trio, etc", 
                 view=v, 
                 ephemeral=True
             )
@@ -317,7 +317,7 @@ class QueueView(View):
             v = View(timeout=60)
             v.add_item(select)
             await interaction.response.send_message(
-                "Sélectionnez la taille finale souhaitée (2,3,5,0) pour votre équipe préformée :", 
+                "Sélectionnez si vous souhaitez jouer en duo, trio, etc", 
                 view=v, 
                 ephemeral=True
             )

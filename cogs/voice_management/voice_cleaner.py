@@ -13,7 +13,7 @@ class VoiceManagement(commands.Cog):
         self.bot = bot
         self.category_id = 1323077627413794847  # ID de la catégorie à surveiller
         self.afk_channel_id = 123456789012345678  # Remplacez par l'ID de votre salon AFK
-        self.inactivity_threshold = 600  # 10 minutes en secondes
+        self.inactivity_threshold = 300  # 10 minutes en secondes
         self.last_active = {}  # Dictionnaire pour stocker les timestamps d'activité des membres
 
         self.check_empty_voice_channels.start()

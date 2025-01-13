@@ -1,4 +1,3 @@
-#cogs\accueil\accueil.py
 import discord
 from discord.ext import commands
 from cogs.accueil.services.accueil_services import get_welcome_channel_id, get_channel_ids
@@ -33,19 +32,31 @@ class WelcomeCog(commands.Cog):
         rules_channel = f"<#{channels['rules']}>" if 'rules' in channels else "le canal des règles"
         introductions_channel = f"<#{channels['introductions']}>" if 'introductions' in channels else "le canal de présentation"
 
-        # Créer l'embed de bienvenue
+        # Récupérer le pseudo à afficher (display_name utilise le nickname s'il existe)
+        username = member.display_name
+
+        # Créer l'embed de bienvenue avec le pseudo affiché en gras par exemple
         embed = discord.Embed(
             title="🎉 Bienvenue sur le serveur ! 🎉",
             description=(
-                f"Salut {member.mention} ! Nous sommes ravis de t'accueillir parmi nous. 🎉\n\n"
+                f"Salut **{username}** ! Nous sommes ravis de t'accueillir parmi nous. 🎉\n\n"
                 "Pour bien démarrer, voici quelques informations importantes :\n"
-                f"• **Règles du serveur** : Assure-toi de lire le {rules_channel}.\n"
+                f"• **Règles du serveur** : Assure-toi de lire {rules_channel}.\n"
                 f"• **Découvre le serveur** : Va dans {introductions_channel} pour en apprendre davantage sur notre communauté.\n\n"
             ),
             color=discord.Color.blue()
         )
-        embed.set_thumbnail(url=member.avatar.url if member.avatar else member.default_avatar.url)
-        embed.set_footer(text="N'hésite pas à demander de l'aide si tu as des questions !", icon_url=self.bot.user.avatar.url)
+
+        # Gérer l'image de l'avatar (avatar moderne et avatar par défaut)
+        if member.avatar:
+            embed.set_thumbnail(url=member.avatar.url)
+        else:
+            embed.set_thumbnail(url=member.default_avatar.url)
+
+        embed.set_footer(
+            text="N'hésite pas à demander de l'aide si tu as des questions !",
+            icon_url=self.bot.user.avatar.url
+        )
 
         try:
             await welcome_channel.send(embed=embed)
