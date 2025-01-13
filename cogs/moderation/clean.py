@@ -49,7 +49,8 @@ class Clean(commands.Cog):
         confirm_label: str = "Confirmer",
         confirm_style: discord.ButtonStyle = discord.ButtonStyle.green,
         cancel_label: str = "Annuler",
-        cancel_style: discord.ButtonStyle = discord.ButtonStyle.grey
+        cancel_style: discord.ButtonStyle = discord.ButtonStyle.grey,
+        is_ephemeral: bool = False  # Ajout de ce paramètre
     ) -> Optional[bool]:
         """Pose une question de confirmation à l'utilisateur."""
         view = ConfirmationView(
@@ -58,9 +59,10 @@ class Clean(commands.Cog):
             confirm_label=confirm_label,
             confirm_style=confirm_style,
             cancel_label=cancel_label,
-            cancel_style=cancel_style
+            cancel_style=cancel_style,
+            is_ephemeral=is_ephemeral  # Passer la valeur
         )
-        await interaction.followup.send(message, view=view, ephemeral=True)
+        await interaction.followup.send(message, view=view, ephemeral=is_ephemeral)
         await view.wait()
         return view.value
     
@@ -85,7 +87,8 @@ class Clean(commands.Cog):
     )
     @app_commands.choices(action=ACTION_CHOICES)
     @is_admin()
-    @enqueue_request()
+    @enqueue_request("URGENT")
+    @app_commands.default_permissions(administrator=True)
     async def clean_execute(
         self,
         interaction: discord.Interaction,
@@ -133,7 +136,8 @@ class Clean(commands.Cog):
                     f"Confirmez-vous la suppression de **tous** les messages dans {channel.mention} ?",
                     confirmation_callback,
                     confirm_label="Supprimer",
-                    confirm_style=discord.ButtonStyle.red
+                    confirm_style=discord.ButtonStyle.red,
+                    is_ephemeral=True
                 )
 
             elif action.value == "user":
@@ -156,7 +160,8 @@ class Clean(commands.Cog):
                     f"Confirmez-vous la suppression des messages de {user.mention} dans {channel.mention} ?",
                     confirmation_callback,
                     confirm_label="Supprimer",
-                    confirm_style=discord.ButtonStyle.red
+                    confirm_style=discord.ButtonStyle.red,
+                    is_ephemeral=True
                 )
 
             elif action.value == "number":
@@ -166,7 +171,8 @@ class Clean(commands.Cog):
 
                 async def confirmation_callback(value: Optional[bool]):
                     if value:
-                        deleted_count = await channel.purge(limit=count)
+                        deleted_messages = await channel.purge(limit=count)
+                        deleted_count = len(deleted_messages)  # Obtenir le nombre de messages supprimés
                         await interaction.followup.send(
                             f"{deleted_count} derniers messages supprimés dans {channel.mention}.",
                             ephemeral=True
@@ -179,7 +185,8 @@ class Clean(commands.Cog):
                     f"Confirmez-vous la suppression des {count} derniers messages dans {channel.mention} ?",
                     confirmation_callback,
                     confirm_label="Supprimer",
-                    confirm_style=discord.ButtonStyle.red
+                    confirm_style=discord.ButtonStyle.red,
+                    is_ephemeral=True
                 )
 
             elif action.value == "from":
@@ -208,7 +215,8 @@ class Clean(commands.Cog):
                     f"Confirmez-vous la suppression des messages après le message {message_id} dans {channel.mention} ?",
                     confirmation_callback,
                     confirm_label="Supprimer",
-                    confirm_style=discord.ButtonStyle.red
+                    confirm_style=discord.ButtonStyle.red,
+                    is_ephemeral=True
                 )
 
             elif action.value == "history":

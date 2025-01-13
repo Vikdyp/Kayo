@@ -1,3 +1,5 @@
+# cogs/configuration/channels_configuration.py
+
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -6,10 +8,10 @@ from typing import Dict, Optional
 
 from utils.request_manager import enqueue_request
 from utils.confirmation_view import ConfirmationView
-from cogs.configuration.services.channel_service import ChannelService
+# On importe le nouveau service combiné
+from cogs.configuration.services.channel_service import ServerChannelService
 
 logger = logging.getLogger('channels_configuration')
-
 
 class ChannelsConfiguration(commands.Cog):
     """Cog pour gérer la configuration des salons."""
@@ -37,6 +39,8 @@ class ChannelsConfiguration(commands.Cog):
         ("welcome", "Salon d'acceuil"),
         ("rules", "Salon des regle du serveur"),
         ("introductions", "salon pour la presentation du serveur"),
+        ("modération", "salon de modération"),
+        ("rang", "salon pour definir les rang"),
     ]
 
     ACTION_CHOICES = [
@@ -57,7 +61,8 @@ class ChannelsConfiguration(commands.Cog):
         channel="Salon Discord (nécessaire pour 'set')"
     )
     @app_commands.choices(action=ACTION_CHOICES, salon_action=SALON_ACTION_CHOICES)
-    @enqueue_request()
+    @enqueue_request("URGENT")
+    @app_commands.default_permissions(administrator=True)
     async def channels_execute(
         self, 
         interaction: discord.Interaction, 
@@ -75,10 +80,14 @@ class ChannelsConfiguration(commands.Cog):
                 )
                 return
 
+            guild_id = interaction.guild.id
+            guild_name = interaction.guild.name
+
             action_lower = action.value.lower()
 
+            # =========== GET ===========
             if action_lower == "get":
-                channels = await ChannelService.get_channels_config(interaction.guild.id)
+                channels = await ServerChannelService.get_channels_config(guild_id, guild_name)
                 if not channels:
                     await interaction.followup.send("Aucun salon configuré.", ephemeral=True)
                     return
@@ -94,15 +103,17 @@ class ChannelsConfiguration(commands.Cog):
 
                 await interaction.followup.send(embed=embed, ephemeral=True)
 
+            # =========== SET ===========
             elif action_lower == "set":
                 if not salon_action or not channel:
                     await interaction.followup.send(
-                        "Veuillez spécifier le type de salon (`salon_action`) et un salon Discord (`channel`).", ephemeral=True
+                        "Veuillez spécifier le type de salon (`salon_action`) et un salon Discord (`channel`).", 
+                        ephemeral=True
                     )
                     return
 
-                success = await ChannelService.set_channel_for_action(
-                    interaction.guild.id, salon_action.value, channel.id
+                success = await ServerChannelService.set_channel_for_action(
+                    guild_id, guild_name, salon_action.value, channel.id
                 )
                 if success:
                     await interaction.followup.send(
@@ -114,6 +125,7 @@ class ChannelsConfiguration(commands.Cog):
                         "Une erreur est survenue lors de la configuration du salon.", ephemeral=True
                     )
 
+            # =========== REMOVE ===========
             elif action_lower == "remove":
                 if not salon_action:
                     await interaction.followup.send(
@@ -121,7 +133,7 @@ class ChannelsConfiguration(commands.Cog):
                     )
                     return
 
-                channels = await ChannelService.get_channels_config(interaction.guild.id)
+                channels = await ServerChannelService.get_channels_config(guild_id, guild_name)
                 if salon_action.value not in channels:
                     await interaction.followup.send(
                         f"Aucune configuration trouvée pour **{self.get_action_display_name(salon_action.value)}**.",
@@ -129,10 +141,11 @@ class ChannelsConfiguration(commands.Cog):
                     )
                     return
 
+                # Confirmation pour la suppression
                 async def confirmation_callback(result: Optional[bool]):
                     if result is True:
-                        success = await ChannelService.remove_channel_for_action(
-                            interaction.guild.id, salon_action.value
+                        success = await ServerChannelService.remove_channel_for_action(
+                            guild_id, guild_name, salon_action.value
                         )
                         if success:
                             await interaction.followup.send(
@@ -163,6 +176,7 @@ class ChannelsConfiguration(commands.Cog):
                     f"Action non prise en charge : **{action.value}**.",
                     ephemeral=True
                 )
+
         except Exception as e:
             logger.exception(f"Erreur dans channels_execute pour action={action.value}: {e}")
             await interaction.followup.send(

@@ -25,13 +25,40 @@ TEST_MODE = False
 # Configuration des logs
 LOGGING = {
     'bot': True,
-    'clean': False,
+
+    # CONFIGURATION
     'roles_configuration': False,
     'channels_configuration': False,
+
+    # UTILS
     'database': False,
     'request_manager': False,
+
+    # OTHER
     'rank_updater': False,
-    'admin': False,
-    'moderation' : False
-    # Ajoutez d'autres modules ici
+
+    # ADMIN
+    'admin': True,
+
+    # MODERATION
+    'moderation' : False,
+    'clean': False,
+    'deban_manager' : False,
+
+    # RANKING
+    'valorant_service' : False,
+    'assign_rank' : False,
+    'rank_service' : False,
+
+    # RULES
+    'rules' : False,
+    'rules_service' : False,
+
+    # VOICE MANAGEMENT
+    'five_stack' : True,
+    'voice_cleaner' : False,
+
+    # ???
+    'rank_roles' : False,
+
 }

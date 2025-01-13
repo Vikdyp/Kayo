@@ -1,7 +1,5 @@
 # KayoBot
 
-![Logo du Bot](D:\python\Kayo\KAYO_icon.webp)
-
 ## Description
 
 **KayoBot** est un bot Discord développé en Python utilisant la bibliothèque `discord.py`. Il offre une variété de fonctionnalités pour gérer les salons, les rôles, les scrims, les rapports et bien plus encore. Grâce à une architecture modulaire basée sur des cogs, KayoBot est extensible et facile à maintenir.

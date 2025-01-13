@@ -1,4 +1,5 @@
-#bot.py
+# bot.py
+
 import discord
 from discord.ext import commands, tasks
 import logging
@@ -7,7 +8,7 @@ import os
 from config import DISCORD_TOKEN, TEST_GUILD_ID, LOGGING, TEST_MODE
 from utils.database import database
 from utils.request_manager import setup_request_manager, teardown_request_manager
-from cogs.voice_management.online_count_updater import setup_rank_updater, teardown_rank_updater, rank_updater
+from cogs.other.online_count_updater import setup_rank_updater, teardown_rank_updater, rank_updater
 
 def configure_logging():
     """Configure le niveau de logging pour chaque module."""
@@ -22,14 +23,14 @@ def configure_logging():
         else:
             logger.setLevel(logging.CRITICAL)
 
-    # Ajout d'un FileHandler global pour conserver l'historique des logs
+    # Ajout d'un FileHandler global
     file_handler = logging.FileHandler('bot.log', encoding='utf-8')
     file_handler.setLevel(logging.DEBUG)
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     file_handler.setFormatter(formatter)
     logging.getLogger().addHandler(file_handler)
 
-    # Ajout d'un StreamHandler pour voir les logs en console
+    # Ajout d'un StreamHandler pour la console
     stream_handler = logging.StreamHandler()
     stream_handler.setLevel(logging.DEBUG)
     stream_handler.setFormatter(formatter)
@@ -43,7 +44,12 @@ intents.members = True
 intents.messages = True
 intents.message_content = True
 
+# On crée le bot
 bot = commands.Bot(command_prefix='!', intents=intents)
+
+# On attache un logger "bot" à l'instance
+logger = logging.getLogger('bot')
+bot.logger = logger  # <-- Correction pour éviter l'erreur 'Bot' object has no attribute 'logger'
 
 cog_paths = [
     'cogs.configuration.channels_configuration',
@@ -52,12 +58,24 @@ cog_paths = [
     'cogs.admin.admin',
     'cogs.moderation.moderation',
     'cogs.file_counter.file_counter',
-    'cogs.accueil.accueil'
+    'cogs.accueil.accueil',
+    'cogs.role_management.game_role',
+    'cogs.ranking.assign_rank',
+    'cogs.rules.rules',
+    'cogs.moderation.unban_requests',
+    'cogs.troll.quoicoubeh',
+    'cogs.role_management.auto_role',
+    # 'cogs.role_management.language_role',
+    'cogs.voice_management.queue_cog',
+    'cogs.voice_management.team_cog',
+    'cogs.voice_management.voice_cleaner',
+    'cogs.accueil.stalker',
+    #'SQL_test', #TEST
+    'cogs.reputation.reputation',
 ]
 
 @bot.event
 async def on_ready():
-    logger = logging.getLogger('bot')
     logger.info(f'Connecté en tant que {bot.user}')
 
     await database.connect()
@@ -65,17 +83,14 @@ async def on_ready():
     setup_request_manager(bot)
     logger.info("RequestManager démarré.")
 
-    # Tâche de nettoyage des logs planifiée
     if not clean_old_logs.is_running():
         clean_old_logs.start()
         logger.info("Tâche de nettoyage planifiée démarrée.")
 
-    # Tâche de mise à jour des salons
     if not rank_updater.task or not rank_updater.task.is_running():
         setup_rank_updater(bot)
         logger.info("Tâche de mise à jour des salons démarrée.")
 
-    # Synchronisation des commandes
     await asyncio.sleep(1)
     try:
         if TEST_MODE:
@@ -90,8 +105,6 @@ async def on_ready():
 
 @bot.event
 async def on_app_command_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
-    """Handler global pour les erreurs de slash commands."""
-    logger = logging.getLogger('bot')
     logger.error(f"Erreur dans une commande slash : {error}")
     try:
         await interaction.response.send_message("Une erreur interne est survenue.", ephemeral=True)
@@ -108,10 +121,7 @@ async def clean_old_logs():
 
 @bot.event
 async def on_disconnect():
-    logger = logging.getLogger('bot')
-    logger.warning("Bot déconnecté de Discord. Le bot tentera de se reconnecter automatiquement...")
-    # Ne pas déconnecter la base de données. `ensure_connected()` s'occupera de la reconnexion si besoin.
-    # Pas besoin non plus de redémarrer une surveillance spéciale.
+    logger.warning("Bot déconnecté de Discord. Reconnexion automatique possible...")
 
 async def load_cogs():
     logger = logging.getLogger('bot')
@@ -139,7 +149,6 @@ async def main():
     except Exception as e:
         logger.exception(f"Erreur inattendue: {e}")
     finally:
-        # A l'arrêt du bot, déconnexion propre de la DB et arrêt du RequestManager
         await database.disconnect()
         teardown_request_manager()
         logger.info("Bot arrêté proprement.")

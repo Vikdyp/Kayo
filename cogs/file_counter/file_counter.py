@@ -1,45 +1,51 @@
-# cogs/file_counter/file_counter_cog.py
-
 import discord
 from discord.ext import commands
-from discord import app_commands
 import logging
 from typing import Optional
 from cogs.file_counter.services.file_counter_service import FileCounterService
-from utils.request_manager import enqueue_request
+from utils.request_manager import enqueue_button_request, enqueue_request
+# from utils.request_manager import enqueue_request  # Tu peux le réutiliser si besoin
 
 logger = logging.getLogger("cogs.file_counter")
 
 class CounterView(discord.ui.View):
-    def __init__(self, guild_id: int, channel_id: int, message_id: int, ajouter_count: int, terminer_count: int):
+    def __init__(self, server_db_id: int, channel_id: int, message_id: int, ajouter_count: int, terminer_count: int):
         super().__init__(timeout=None)  # Persistent view
-        self.guild_id = guild_id
+        self.server_db_id = server_db_id
         self.channel_id = channel_id
         self.message_id = message_id
         self.ajouter_count = ajouter_count
         self.terminer_count = terminer_count
 
     @discord.ui.button(label="Ajouter", style=discord.ButtonStyle.green, custom_id="file_counter:ajouter")
+    @enqueue_button_request("FAST")
     async def ajouter_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.guild.id != self.guild_id:
-            await interaction.response.send_message("Cette commande n'est pas autorisée dans ce serveur.", ephemeral=True)
+        # Vérifier que l'Interaction vient du bon serveur
+        if interaction.guild is None:
+            await interaction.response.send_message("Cette interaction ne peut être utilisée que sur un serveur.", ephemeral=True)
             return
 
-        updated = await FileCounterService.update_counts(self.guild_id, self.channel_id, ajouter=True)
+        # On vérifie que le server_db_id correspond au serveur actuel
+        # Ce n'est pas strictement nécessaire si tu n'héberges qu'un seul message par guild
+        # Sinon, on pourrait aussi stocker l'ID discord brut et vérifier.
+        # Pour simplifier, on omet la vérification.
+
+        updated = await FileCounterService.update_counts(self.server_db_id, self.channel_id, ajouter=True)
         if updated:
             self.ajouter_count = updated['ajouter_count']
-            self.terminer_count = updated['terminer_count']  # Mise à jour pour recalculer le pourcentage
+            self.terminer_count = updated['terminer_count']
             await self.update_embed(interaction)
         else:
             await interaction.response.send_message("Erreur lors de la mise à jour du compteur.", ephemeral=True)
 
     @discord.ui.button(label="Terminer", style=discord.ButtonStyle.blurple, custom_id="file_counter:terminer")
+    @enqueue_button_request("FAST")
     async def terminer_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.guild.id != self.guild_id:
-            await interaction.response.send_message("Cette commande n'est pas autorisée dans ce serveur.", ephemeral=True)
+        if interaction.guild is None:
+            await interaction.response.send_message("Cette interaction ne peut être utilisée que sur un serveur.", ephemeral=True)
             return
 
-        updated = await FileCounterService.update_counts(self.guild_id, self.channel_id, terminer=True)
+        updated = await FileCounterService.update_counts(self.server_db_id, self.channel_id, terminer=True)
         if updated:
             self.ajouter_count = updated['ajouter_count']
             self.terminer_count = updated['terminer_count']
@@ -59,7 +65,11 @@ class CounterView(discord.ui.View):
         embed = discord.Embed(
             title="Suivi des Fichiers",
             color=discord.Color.blue(),
-            description=f"**Fichier total**: {self.ajouter_count}\n**Fichier terminer**: {self.terminer_count}\n**Pourcentage de completion**: {percentage}%"
+            description=(
+                f"**Fichier total**: {self.ajouter_count}\n"
+                f"**Fichier terminer**: {self.terminer_count}\n"
+                f"**Pourcentage de completion**: {percentage}%"
+            )
         )
         try:
             channel = interaction.guild.get_channel(self.channel_id)
@@ -83,30 +93,39 @@ class FileCounterCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.channel_id = 1136359641899614408  # Remplacez par votre ID de salon
-        self.guild_id = None  # Sera défini lors du chargement du cog
+        self.channel_id = 1136359641899614408  # Remplace par l'ID de ton salon
+        self.server_db_id: Optional[int] = None  # ID interne (table serveur_id)
         logger.info("FileCounterCog initialisé.")
 
     def cog_unload(self):
         """Déchargement du Cog."""
         logger.info("FileCounterCog déchargé.")
-        # Vous pouvez ajouter ici des actions de nettoyage si nécessaire
 
     @commands.Cog.listener()
     async def on_ready(self):
         """Initialisation lors du démarrage du bot."""
         logger.debug("FileCounterCog en cours d'initialisation.")
 
+        # Récupérer le salon
         channel = self.bot.get_channel(self.channel_id)
         if not channel:
             logger.error(f"Salon avec l'ID {self.channel_id} introuvable.")
             return
 
         guild = channel.guild
-        self.guild_id = guild.id
+        if not guild:
+            logger.error("Impossible de récupérer la guilde à partir de ce salon.")
+            return
 
-        # Récupérer les données du compteur depuis la base de données
-        data = await FileCounterService.get_counter(self.guild_id, self.channel_id)
+        # 1) On convertit le guild.id Discord → server_db_id
+        server_db_id = await FileCounterService.get_or_create_server_record(guild.id, guild.name)
+        if not server_db_id:
+            logger.error("Impossible de créer/récupérer server_db_id pour ce guild.")
+            return
+        self.server_db_id = server_db_id
+
+        # 2) Récupérer les données du compteur depuis la base de données
+        data = await FileCounterService.get_counter(self.server_db_id, self.channel_id)
         if data:
             message_id = data['message_id']
             ajouter_count = data['ajouter_count']
@@ -114,13 +133,9 @@ class FileCounterCog(commands.Cog):
 
             try:
                 message = await channel.fetch_message(message_id)
-                embed = discord.Embed(
-                    title="Suivi des Fichiers",
-                    color=discord.Color.blue(),
-                    description=f"**Fichier total**: {ajouter_count}\n**Fichier terminer**: {terminer_count}\n**Pourcentage de completion**: {self.calculate_percentage(terminer_count, ajouter_count)}%"
-                )
+                embed = self.create_embed(ajouter_count, terminer_count)
                 view = CounterView(
-                    guild_id=self.guild_id,
+                    server_db_id=self.server_db_id,
                     channel_id=self.channel_id,
                     message_id=message_id,
                     ajouter_count=ajouter_count,
@@ -131,122 +146,98 @@ class FileCounterCog(commands.Cog):
                 logger.info("Message de suivi existant retrouvé et mis à jour.")
             except discord.NotFound:
                 logger.warning("Message de suivi non trouvé. Création d'un nouveau message.")
-                message = await self.send_counter_message(channel)
+                message = await self.send_counter_message(channel, 0, 0)
                 data['message_id'] = message.id
-                await FileCounterService.create_counter(self.guild_id, self.channel_id, message.id)
-                view = CounterView(
-                    guild_id=self.guild_id,
-                    channel_id=self.channel_id,
-                    message_id=message.id,
-                    ajouter_count=0,
-                    terminer_count=0
-                )
-                self.bot.add_view(view)
+                await FileCounterService.create_counter(self.server_db_id, self.channel_id, message.id)
         else:
             logger.info("Aucune configuration de compteur trouvée. Création d'un nouveau message.")
-            message = await self.send_counter_message(channel)
-            data = {
-                "message_id": message.id,
-                "ajouter_count": 0,
-                "terminer_count": 0
-            }
-            await FileCounterService.create_counter(self.guild_id, self.channel_id, message.id)
-            view = CounterView(
-                guild_id=self.guild_id,
-                channel_id=self.channel_id,
-                message_id=message.id,
-                ajouter_count=0,
-                terminer_count=0
-            )
-            self.bot.add_view(view)
+            message = await self.send_counter_message(channel, 0, 0)
+            await FileCounterService.create_counter(self.server_db_id, self.channel_id, message.id)
 
-    async def send_counter_message(self, channel: discord.TextChannel) -> discord.Message:
+    @commands.command(name="init_counter")
+    @commands.has_permissions(administrator=True)
+    async def init_counter(self, ctx: commands.Context):
+        """
+        Commande préfixe pour initialiser ou réinitialiser le compteur de fichiers.
+        Utilisation: `!init_counter`
+        """
+        if not self.server_db_id:
+            # Créer/récupérer le server_db_id si jamais le on_ready n'a pas encore tourné
+            server_db_id = await FileCounterService.get_or_create_server_record(ctx.guild.id, ctx.guild.name)
+            if not server_db_id:
+                await ctx.send("Impossible de configurer le compteur (server_db_id non trouvé).", delete_after=10)
+                return
+            self.server_db_id = server_db_id
+
+        channel = self.bot.get_channel(self.channel_id)
+        if not channel:
+            await ctx.send("Salon introuvable.", delete_after=10)
+            return
+
+        data = await FileCounterService.get_counter(self.server_db_id, self.channel_id)
+        if data and data['message_id']:
+            try:
+                old_msg = await channel.fetch_message(data['message_id'])
+                await old_msg.delete()
+                logger.info("Ancien message de suivi supprimé lors de la réinitialisation.")
+            except discord.NotFound:
+                logger.warning("Ancien message de suivi non trouvé lors de la réinitialisation.")
+
+        # Envoie un nouveau message
+        message = await self.send_counter_message(channel, 0, 0)
+
+        # Si le compteur existe déjà en DB, on reset
+        if data:
+            await FileCounterService.reset_counter(self.server_db_id, self.channel_id, message.id)
+        else:
+            # Sinon on crée un nouvel enregistrement
+            await FileCounterService.create_counter(self.server_db_id, self.channel_id, message.id)
+
+        await ctx.send("Le compteur a été réinitialisé avec succès.", delete_after=10)
+
+    async def send_counter_message(self, channel: discord.TextChannel, ajouter_count: int, terminer_count: int) -> discord.Message:
         """Envoie un nouveau message de suivi avec les boutons."""
-        embed = discord.Embed(
-            title="Suivi des Fichiers",
-            color=discord.Color.blue(),
-            description="**Fichier total**: 0\n**Fichier terminer**: 0\n**Pourcentage de completion**: 0%"
-        )
+        embed = self.create_embed(ajouter_count, terminer_count)
         view = CounterView(
-            guild_id=self.guild_id,
+            server_db_id=self.server_db_id,
             channel_id=self.channel_id,
             message_id=0,  # Sera défini après l'envoi
-            ajouter_count=0,
-            terminer_count=0
+            ajouter_count=ajouter_count,
+            terminer_count=terminer_count
         )
         message = await channel.send(embed=embed, view=view)
         logger.info(f"Nouveau message de suivi envoyé avec l'ID {message.id}.")
+
+        # Met à jour la View après avoir récupéré le message_id
+        view.message_id = message.id
+        self.bot.add_view(view)
+
         return message
+
+    def create_embed(self, ajouter_count: int, terminer_count: int) -> discord.Embed:
+        """Crée l'embed de suivi."""
+        percentage = self.calculate_percentage(terminer_count, ajouter_count)
+        embed = discord.Embed(
+            title="Suivi des Fichiers",
+            color=discord.Color.blue(),
+            description=(
+                f"**Fichier total**: {ajouter_count}\n"
+                f"**Fichier terminer**: {terminer_count}\n"
+                f"**Pourcentage de completion**: {percentage}%"
+            )
+        )
+        return embed
 
     @staticmethod
     def calculate_percentage(terminer_count: int, ajouter_count: int) -> float:
         """Calcule le pourcentage de completion."""
         if ajouter_count > 0:
             percentage = (terminer_count / ajouter_count) * 100
-            percentage = min(percentage, 100)  # Cap à 100%
-            percentage = round(percentage, 1)  # Arrondi à une décimale
+            percentage = min(percentage, 100)
+            percentage = round(percentage, 1)
             return percentage
         else:
             return 0.0
-
-    @app_commands.command(name="init_counter", description="Initialise le compteur de fichiers.")
-    @app_commands.checks.has_permissions(administrator=True)
-    @enqueue_request()
-    async def init_counter(self, interaction: discord.Interaction):
-        """Commande pour initialiser ou réinitialiser le compteur."""
-        channel = self.bot.get_channel(self.channel_id)
-        if not channel:
-            await interaction.followup.send("Salon introuvable.", ephemeral=True)
-            return
-
-        data = await FileCounterService.get_counter(self.guild_id, self.channel_id)
-        if data and data['message_id']:
-            try:
-                message = await channel.fetch_message(data['message_id'])
-                await message.delete()
-                logger.info("Message de suivi supprimé lors de la réinitialisation.")
-            except discord.NotFound:
-                logger.warning("Message de suivi non trouvé lors de la réinitialisation.")
-
-        message = await self.send_counter_message(channel)
-        if data:
-            data['message_id'] = message.id
-            data['ajouter_count'] = 0
-            data['terminer_count'] = 0
-            # Mise à jour des compteurs à zéro
-            await FileCounterService.update_counts(self.guild_id, self.channel_id, ajouter=False, terminer=False)
-        else:
-            data = {
-                "message_id": message.id,
-                "ajouter_count": 0,
-                "terminer_count": 0
-            }
-            await FileCounterService.create_counter(self.guild_id, self.channel_id, message.id)
-
-        embed = discord.Embed(
-            title="Suivi des Fichiers",
-            color=discord.Color.blue(),
-            description="**Fichier total**: 0\n**Fichier terminer**: 0\n**Pourcentage de completion**: 0%"
-        )
-        view = CounterView(
-            guild_id=self.guild_id,
-            channel_id=self.channel_id,
-            message_id=message.id,
-            ajouter_count=0,
-            terminer_count=0
-        )
-        await message.edit(embed=embed, view=view)
-        self.bot.add_view(view)
-
-        await interaction.followup.send("Le compteur a été initialisé avec succès.", ephemeral=True)
-
-    @init_counter.error
-    async def init_counter_error(self, interaction: discord.Interaction, error):
-        if isinstance(error, app_commands.errors.MissingPermissions):
-            await interaction.followup.send("Vous n'avez pas les permissions nécessaires pour utiliser cette commande.", ephemeral=True)
-        else:
-            logger.error(f"Erreur dans la commande init_counter: {error}")
-            await interaction.followup.send("Une erreur est survenue lors de l'exécution de la commande.", ephemeral=True)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(FileCounterCog(bot))

@@ -6,3 +6,7 @@ ERREUR 101
 ERREUR 001
     ligne: 172
     fichier: cogs\moderation\moderation.py
+
+ERREUR discord.errors.NotFound: 404 Not Found (error code: 10015): Unknown Webhook
+    Cette erreur indique que le bot tente d'utiliser un webhook inconnu, généralement parce qu'il essaie 
+    d'envoyer un message de suivi (followup.send) sans avoir préalablement répondu à l'interaction initiale avec interaction.response.send_message.

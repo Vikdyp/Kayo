@@ -56,7 +56,8 @@ class Moderation(commands.Cog):
             app_commands.Choice(name="Vérifier le statut", value="check_status")
         ]
     )
-    @enqueue_request()
+    @enqueue_request("URGENT")
+    @app_commands.default_permissions(administrator=True)
     async def moderation_execute(
         self,
         interaction: discord.Interaction,
@@ -194,90 +195,121 @@ class Moderation(commands.Cog):
             )
 
     async def ban_member(
-        self,
-        guild: discord.Guild,
-        member: discord.Member,
-        ban_type: str,
-        reason: str,
-        banned_by: discord.User,
-        duration_minutes: Optional[int] = None
-    ) -> bool:
-        """Bannit un membre avec sauvegarde des rôles et ajout du rôle 'ban'."""
-        logger.debug(f"Début du bannissement de {member.display_name} (ID: {member.id}) dans {guild.name}.")
+            self,
+            guild: discord.Guild,
+            member: discord.Member,
+            ban_type: str,
+            reason: str,
+            banned_by: discord.User,
+            duration_minutes: Optional[int] = None
+        ) -> bool:
+            """Bannit un membre avec sauvegarde des rôles et ajout du rôle 'ban'."""
+            logger.debug(f"Début du bannissement de {member.display_name} (ID: {member.id}) dans {guild.name}.")
 
-        # Sauvegarder les rôles
-        await self.backup_roles(member)
+            # Sauvegarder les rôles
+            await self.backup_roles(member)
 
-        # Retirer tous les rôles (sauf le rôle par défaut)
-        roles_to_remove = [role for role in member.roles if role != guild.default_role]
-        try:
-            if roles_to_remove:
-                await member.remove_roles(*roles_to_remove, reason=reason)
-                logger.info(f"Rôles supprimés pour {member.display_name}: {[role.name for role in roles_to_remove]}")
-        except discord.Forbidden:
-            logger.error(f"Impossible de supprimer les rôles de {member.display_name}. Permissions manquantes.")
-            return False
-        except discord.HTTPException as e:
-            logger.error(f"Erreur HTTP lors de la suppression des rôles de {member.display_name}: {e}")
-            return False
+            # Retirer tous les rôles (sauf le rôle par défaut)
+            roles_to_remove = [role for role in member.roles if role != guild.default_role]
+            try:
+                if roles_to_remove:
+                    await member.remove_roles(*roles_to_remove, reason=reason)
+                    logger.info(f"Rôles supprimés pour {member.display_name}: {[role.name for role in roles_to_remove]}")
+            except discord.Forbidden:
+                logger.error(f"Impossible de supprimer les rôles de {member.display_name}. Permissions manquantes.")
+                return False
+            except discord.HTTPException as e:
+                logger.error(f"Erreur HTTP lors de la suppression des rôles de {member.display_name}: {e}")
+                return False
 
-        # Ajouter le rôle 'ban'
-        ban_role_id = await ModerationService.get_ban_role_id(guild.id)
-        if not ban_role_id:
-            logger.error("Le rôle 'ban' n'est pas configuré.")
-            return False
+            # Ajouter le rôle 'ban'
+            ban_role_id = await ModerationService.get_ban_role_id(guild.id)
+            if not ban_role_id:
+                logger.error("Le rôle 'ban' n'est pas configuré.")
+                return False
 
-        ban_role = guild.get_role(ban_role_id)
-        if not ban_role:
-            logger.error(f"Rôle 'ban' avec l'ID {ban_role_id} introuvable dans le serveur {guild.name}.")
-            return False
+            ban_role = guild.get_role(ban_role_id)
+            if not ban_role:
+                logger.error(f"Rôle 'ban' avec l'ID {ban_role_id} introuvable dans le serveur {guild.name}.")
+                return False
 
-        try:
-            await member.add_roles(ban_role, reason=reason)
-            logger.info(f"Rôle 'ban' appliqué à {member.display_name}.")
-        except discord.Forbidden:
-            logger.error(f"Impossible d'appliquer le rôle 'ban' à {member.display_name}. Permissions manquantes.")
-            return False
-        except discord.HTTPException as e:
-            logger.error(f"Erreur HTTP lors de l'application du rôle 'ban' à {member.display_name}: {e}")
-            return False
+            try:
+                await member.add_roles(ban_role, reason=reason)
+                logger.info(f"Rôle 'ban' appliqué à {member.display_name}.")
+            except discord.Forbidden:
+                logger.error(f"Impossible d'appliquer le rôle 'ban' à {member.display_name}. Permissions manquantes.")
+                return False
+            except discord.HTTPException as e:
+                logger.error(f"Erreur HTTP lors de l'application du rôle 'ban' à {member.display_name}: {e}")
+                return False
 
-        # Définir la durée du bannissement si temporaire
-        ban_end = None
-        if ban_type == "temp" and duration_minutes:
-            ban_end = datetime.utcnow() + timedelta(minutes=duration_minutes)
+            # Définir la durée du bannissement si temporaire
+            ban_end = None
+            if ban_type == "temp" and duration_minutes:
+                ban_end = datetime.utcnow() + timedelta(minutes=duration_minutes)
 
-        logger.debug(
-            f"Ajout du bannissement : user_id={member.id}, ban_type_id={1 if ban_type == 'temp' else 2}, "
-            f"reason={reason}, banned_by={banned_by.id}, ban_end={ban_end}"
-        )
-
-        # Ajouter les informations de bannissement dans la table 'bans'
-        await ModerationService.add_ban(
-            user_id=member.id,
-            ban_type_id=1 if ban_type == "temp" else 2,
-            reason=reason,
-            banned_by=banned_by.id,
-            ban_end=ban_end
-        )
-
-        # Envoyer un DM à l'utilisateur
-        try:
-            duration_text = "Permanente" if ban_type == "perma" else f"Jusqu'à {ban_end}"
-            await member.send(
-                f"Vous avez été banni(e) du serveur **{guild.name}**.\n"
-                f"**Raison :** {reason}\n"
-                f"**Durée :** {duration_text}\n"
-                f"**Banni(e) par :** {banned_by.display_name}\n\n"
-                f"Pour demander un débannissement, veuillez contacter l'administration."
+            logger.debug(
+                f"Ajout du bannissement : user_id={member.id}, ban_type_id={1 if ban_type == 'temp' else 2}, "
+                f"reason={reason}, banned_by={banned_by.id}, ban_end={ban_end}"
             )
-            logger.info(f"DM envoyé à {member.display_name} pour le bannissement.")
-        except discord.Forbidden:
-            logger.warning(f"Impossible d'envoyer un DM à {member.display_name}.")
-        except discord.HTTPException as e:
-            logger.error(f"Erreur HTTP lors de l'envoi du DM à {member.display_name}: {e}")
 
-        return True
+            # Ajouter les informations de bannissement dans la table 'bans'
+            await ModerationService.add_ban(
+                user_id=member.id,
+                ban_type_id=1 if ban_type == "temp" else 2,
+                reason=reason,
+                banned_by=banned_by.id,
+                ban_end=ban_end
+            )
+
+            # Récupérer l'ID interne du serveur
+            internal_server_id = await ModerationService.get_internal_server_id(guild.id)
+            if not internal_server_id:
+                logger.error(f"Impossible de récupérer l'ID interne du serveur pour {guild.id}.")
+                # Vous pouvez choisir de continuer ou de retourner False ici
+                # Je vais continuer pour envoyer le DM sans mention de salon de débannissement
+
+            # Récupérer l'ID du salon de demande-deban
+            deban_channel_id = await ModerationService.get_deban_channel_id(internal_server_id) if internal_server_id else None
+            if deban_channel_id:
+                deban_channel = guild.get_channel(deban_channel_id)
+                if deban_channel:
+                    deban_channel_mention = deban_channel.mention
+                else:
+                    deban_channel_mention = "le salon de débannissement n'est pas configuré correctement."
+                    logger.warning(f"Salon de débannissement avec l'ID {deban_channel_id} introuvable dans le serveur {guild.name}.")
+            else:
+                deban_channel_mention = "le salon de débannissement n'est pas configuré."
+
+            # Créer l'embed de bannissement
+            embed = discord.Embed(
+                title="📛 Vous avez été banni(e) du serveur",
+                color=discord.Color.red(),
+                timestamp=datetime.utcnow()
+            )
+            embed.add_field(name="Serveur", value=f"**{guild.name}**", inline=False)
+            embed.add_field(name="Raison", value=reason, inline=False)
+            embed.add_field(name="Durée", value="Permanente" if ban_type == "perma" else f"Jusqu'à {ban_end}", inline=False)
+            embed.add_field(name="Banni(e) par", value=banned_by.display_name, inline=False)
+            embed.add_field(
+                name="Demande de Débannissement",
+                value=(
+                    f"Si vous souhaitez être débanni(e), veuillez soumettre une demande dans {deban_channel_mention}."
+                ),
+                inline=False
+            )
+            embed.set_footer(text="Si vous avez des questions, veuillez contacter l'administration.")
+
+            # Envoyer un DM à l'utilisateur avec l'embed
+            try:
+                await member.send(embed=embed)
+                logger.info(f"Embed de bannissement envoyé à {member.display_name}.")
+            except discord.Forbidden:
+                logger.warning(f"Impossible d'envoyer un DM à {member.display_name}.")
+            except discord.HTTPException as e:
+                logger.error(f"Erreur HTTP lors de l'envoi de l'embed de bannissement à {member.display_name}: {e}")
+
+            return True
 
     async def unban_member(self, guild: discord.Guild, user_id: int, reason: Optional[str] = None) -> None:
         """Débanni un membre et restaure ses rôles."""
@@ -315,17 +347,53 @@ class Moderation(commands.Cog):
         # Supprimer les informations de bannissement
         await ModerationService.remove_ban(internal_id)
 
-        # Informer l'utilisateur via DM
+        # Récupérer l'ID interne du serveur
+        internal_server_id = await ModerationService.get_internal_server_id(guild.id)
+        if not internal_server_id:
+            logger.error(f"Impossible de récupérer l'ID interne du serveur pour {guild.id}.")
+            # Vous pouvez choisir de continuer ou de retourner ici
+            # Je vais continuer pour envoyer le DM sans mention de salon de débannissement
+
+        # Récupérer l'ID du salon de demande-deban
+        deban_channel_id = await ModerationService.get_deban_channel_id(internal_server_id) if internal_server_id else None
+        if deban_channel_id:
+            deban_channel = guild.get_channel(deban_channel_id)
+            if deban_channel:
+                deban_channel_mention = deban_channel.mention
+            else:
+                deban_channel_mention = "le salon de débannissement n'est pas configuré correctement."
+                logger.warning(f"Salon de débannissement avec l'ID {deban_channel_id} introuvable dans le serveur {guild.name}.")
+        else:
+            deban_channel_mention = "le salon de débannissement n'est pas configuré."
+
+        # Créer l'embed de débannissement
+        embed = discord.Embed(
+            title="✅ Vous avez été débanni(e) du serveur",
+            color=discord.Color.green(),
+            timestamp=datetime.utcnow()
+        )
+        embed.add_field(name="Serveur", value=f"**{guild.name}**", inline=False)
+        embed.add_field(name="Raison", value=reason or "Expiration du bannissement temporaire ou décision du staff.", inline=False)
+        embed.add_field(name="Débanni(e) par", value="Administration", inline=False)
+        embed.add_field(
+            name="C'est fini",
+            value=(
+                f"Bonne nouvelle, vous êtes libre comme l’air. On est content de vous revoir parmi nous, mais faites gaffe cette fois, hein ? 😉 Profitez bien et bon retour !"
+            ),
+            inline=False
+        )
+        embed.set_footer(text="Si vous avez des questions, veuillez contacter l'administration.")
+
+        # Informer l'utilisateur via DM avec l'embed
         try:
             user = await self.bot.fetch_user(user_id)
             if user:
-                await user.send(
-                    f"Vous avez été débanni(e) du serveur **{guild.name}**.\n"
-                    f"**Raison :** {reason or 'Expiration du bannissement temporaire ou décision du staff.'}"
-                )
-                logger.info(f"DM envoyé à l'utilisateur Discord ID {user_id} pour le débannissement.")
+                await user.send(embed=embed)
+                logger.info(f"Embed de débannissement envoyé à l'utilisateur Discord ID {user_id}.")
+        except discord.Forbidden:
+            logger.warning(f"Impossible d'envoyer un DM à l'utilisateur Discord ID {user_id}.")
         except discord.HTTPException as e:
-            logger.error(f"Erreur HTTP lors de l'envoi du DM de débannissement à l'utilisateur Discord ID {user_id}: {e}")
+            logger.error(f"Erreur HTTP lors de l'envoi de l'embed de débannissement à l'utilisateur Discord ID {user_id}: {e}")
 
     async def backup_roles(self, member: discord.Member) -> None:
         """Sauvegarde les rôles actuels d'un membre dans 'role_backups'."""

@@ -1,163 +1,143 @@
-# cogs/reputation/reputation.py
-
 import discord
 from discord.ext import commands
 from discord import app_commands
 import logging
 from datetime import datetime
-from utils.database import Database
-from utils.request_manager import enqueue_request
-from typing import Any
+from typing import Optional
+
+from cogs.reputation.service.reputation_service import get_profile_data, add_event
 
 logger = logging.getLogger('discord.reputation')
 
+async def update_roles(member: discord.Member, profile_data: dict):
+    """
+    Met à jour les rôles d'un membre en fonction de son ratio (recommandations + 1) / (reports + 1).
+    Si le ratio > 1, le rôle "Bon Joueur" est ajouté, sinon le rôle "Mauvais Joueur" est appliqué.
+    Avant d'ajouter un nouveau rôle, les rôles existants liés à la réputation sont retirés.
+    """
+    reports_count = profile_data.get("reports", 0)
+    recos_count = profile_data.get("recommendations", 0)
+    ratio = (recos_count + 1) / (reports_count + 1)
+    guild = member.guild
+    bon_joueur_role = discord.utils.get(guild.roles, name="Bon Joueur")
+    mauvais_joueur_role = discord.utils.get(guild.roles, name="Mauvais Joueur")
+    
+    roles_to_remove = []
+    if bon_joueur_role in member.roles:
+        roles_to_remove.append(bon_joueur_role)
+    if mauvais_joueur_role in member.roles:
+        roles_to_remove.append(mauvais_joueur_role)
+    if roles_to_remove:
+        await member.remove_roles(*roles_to_remove, reason="Mise à jour du profil de réputation")
+    
+    if ratio > 1:
+        if bon_joueur_role:
+            await member.add_roles(bon_joueur_role, reason=f"Joueur avec un ratio ({ratio:.2f}) > 1")
+    elif ratio == 1:
+        if bon_joueur_role:
+            await member.add_roles(bon_joueur_role, reason=f"Joueur avec un ratio ({ratio:.2f}) = 1")
+    else:
+        if mauvais_joueur_role:
+            await member.add_roles(mauvais_joueur_role, reason=f"Joueur avec un ratio ({ratio:.2f}) < 1")
+
+# Définition des choix d'actions pour la commande
+ACTION_CHOICES = [
+    app_commands.Choice(name="Signaler un utilisateur", value="report"),
+    app_commands.Choice(name="Recommander un utilisateur", value="recommend"),
+    app_commands.Choice(name="Afficher le profil", value="view")
+]
+
 class Reputation(commands.Cog):
+    """
+    Cog qui gère la réputation et le profil d'un joueur via une commande slash unique.
+    La commande `/reputation` permet de signaler, recommander ou afficher le profil d'un utilisateur.
+    """
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.data = DataManager()
 
-    async def get_reputation_data(self):
-        return await self.data.get_reputation_data()
-
-    async def save_reputation_data(self, rep_data):
-        await self.data.save_reputation_data(rep_data)
-
-    def today_str(self):
+    def today_str(self) -> str:
         return datetime.utcnow().strftime("%Y-%m-%d")
 
-    async def update_player_role(self, member: discord.Member, reports_count: int, recommendations_count: int):
-        ratio = (recommendations_count + 1) / (reports_count + 1)
-        guild = member.guild
-        bon_joueur_role = discord.utils.get(guild.roles, name="bon joueur")
-        mauvais_joueur_role = discord.utils.get(guild.roles, name="mauvais joueur")
+    @app_commands.command(name="reputation", description="Gérer la réputation des joueurs.")
+    @app_commands.describe(
+        action="Action à effectuer",
+        user="Utilisateur concerné",
+        reason="Raison du signalement (uniquement pour 'report')"
+    )
+    @app_commands.choices(action=ACTION_CHOICES)
+    async def reputation_execute(
+        self, 
+        interaction: discord.Interaction, 
+        action: app_commands.Choice[str], 
+        user: discord.Member,
+        reason: Optional[str] = None
+    ):
+        """Exécute une action sur la réputation en fonction du choix effectué."""
+        try:
+            # Vérification que la commande est exécutée dans un serveur
+            if not interaction.guild:
+                await interaction.response.send_message("Cette commande doit être exécutée dans un serveur.", ephemeral=True)
+                return
 
-        # Retirer les deux rôles si présents
-        roles_to_remove = []
-        if bon_joueur_role and bon_joueur_role in member.roles:
-            roles_to_remove.append(bon_joueur_role)
-        if mauvais_joueur_role and mauvais_joueur_role in member.roles:
-            roles_to_remove.append(mauvais_joueur_role)
-        if roles_to_remove:
-            await member.remove_roles(*roles_to_remove, reason="Mise à jour du statut joueur")
+            action_lower = action.value.lower()
+            
+            if action_lower == "report":
+                # Vérification pour empêcher l'auto-signalement
+                if user.id == interaction.user.id:
+                    return await interaction.response.send_message("Vous ne pouvez pas vous signaler vous-même.", ephemeral=True)
 
-        # Ajouter le rôle approprié
-        if ratio > 1:
-            # bon joueur
-            if bon_joueur_role:
-                await member.add_roles(bon_joueur_role, reason="Joueur ratio > 1")
-        else:
-            # mauvais joueur
-            if mauvais_joueur_role:
-                await member.add_roles(mauvais_joueur_role, reason="Joueur ratio <= 1")
+                success = await add_event(interaction.user.id, user.id, 'report')
+                if not success:
+                    return await interaction.response.send_message(
+                        "Vous avez déjà signalé cet utilisateur aujourd'hui ou 5 fois au total.", ephemeral=True
+                    )
+                await interaction.response.send_message(
+                    f"{user.mention} a été signalé pour `{reason or 'Aucune raison fournie'}`.", ephemeral=True
+                )
+                # Mise à jour des rôles du membre signalé
+                profile_data = await get_profile_data(user.id)
+                await update_roles(user, profile_data)
 
-    def count_reports_for_user(self, rep_data, user_id: str):
-        reports_count = 0
-        for rid, rinfo in rep_data.get("reports", {}).items():
-            if user_id in rinfo["targets"]:
-                # rinfo["targets"][user_id] = { "dates": [list_of_dates] }
-                # On compte le nombre total de reports sur cette cible
-                reports_count += len(rinfo["targets"][user_id]["dates"])
-        return reports_count
+            elif action_lower == "recommend":
+                # Vérification pour empêcher l'auto-recommandation
+                if user.id == interaction.user.id:
+                    return await interaction.response.send_message("Vous ne pouvez pas vous recommander vous-même.", ephemeral=True)
 
-    def count_recommendations_for_user(self, rep_data, user_id: str):
-        reco_count = 0
-        for rid, rinfo in rep_data.get("recommendations", {}).items():
-            if user_id in rinfo["targets"]:
-                # rinfo["targets"][user_id] = { "dates": [list_of_dates] }
-                reco_count += len(rinfo["targets"][user_id]["dates"])
-        return reco_count
+                success = await add_event(interaction.user.id, user.id, 'recommendation')
+                if not success:
+                    return await interaction.response.send_message(
+                        "Vous avez déjà recommandé cet utilisateur aujourd'hui ou 5 fois au total.", ephemeral=True
+                    )
+                await interaction.response.send_message(
+                    f"{user.mention} a été recommandé !", ephemeral=True
+                )
+                # Mise à jour des rôles du membre recommandé
+                profile_data = await get_profile_data(user.id)
+                await update_roles(user, profile_data)
 
-    @app_commands.command(name="recommend", description="Recommande un utilisateur (max 1/jour par cible, max 5 fois par cible au total)")
-    @app_commands.describe(user="Utilisateur à recommander")
-    @enqueue_request()
-    async def recommend(self, interaction: Any, user: discord.Member):
-        await interaction.response.defer(ephemeral=True)
-        if user.id == interaction.user.id:
-            return await interaction.followup.send("Vous ne pouvez pas vous recommander vous-même.", ephemeral=True)
+            elif action_lower == "view":
+                profile_data = await get_profile_data(user.id)
+                reports_count = profile_data.get("reports", 0)
+                recos_count = profile_data.get("recommendations", 0)
+                ratio = (recos_count + 1) / (reports_count + 1)
 
-        rep_data = await self.get_reputation_data()
-        recommendations = rep_data.setdefault("recommendations", {})
-        recommender_id = str(interaction.user.id)
-        recommended_id = str(user.id)
-        recommender_info = recommendations.setdefault(recommender_id, {"targets":{}})
+                embed = discord.Embed(title=f"Profil de {user.display_name}", color=discord.Color.blue())
+                embed.add_field(name="Signalements", value=str(reports_count), inline=True)
+                embed.add_field(name="Recommandations", value=str(recos_count), inline=True)
+                embed.add_field(name="Ratio (Reco+1)/(Report+1)", value=f"{ratio:.2f}", inline=True)
 
-        target_info = recommender_info["targets"].setdefault(recommended_id, {"dates":[]})
+                await interaction.response.send_message(embed=embed, ephemeral=True)
 
-        today = self.today_str()
-        # Vérifier si déjà recommandé cet utilisateur aujourd'hui
-        if today in target_info["dates"]:
-            return await interaction.followup.send("Vous avez déjà recommandé cet utilisateur aujourd'hui.", ephemeral=True)
+            else:
+                await interaction.response.send_message("Action non reconnue.", ephemeral=True)
 
-        # Vérifier si déjà recommandé 5 fois au total cet utilisateur
-        if len(target_info["dates"]) >= 5:
-            return await interaction.followup.send("Vous avez déjà recommandé cet utilisateur 5 fois au total.", ephemeral=True)
-
-        # Ajouter la recommandation
-        target_info["dates"].append(today)
-        await self.save_reputation_data(rep_data)
-
-        await interaction.followup.send(f"{user.mention} a été recommandé !", ephemeral=True)
-
-        # Mettre à jour les rôles du "user"
-        user_reports_count = self.count_reports_for_user(rep_data, recommended_id)
-        user_reco_count = self.count_recommendations_for_user(rep_data, recommended_id)
-        await self.update_player_role(user, user_reports_count, user_reco_count)
-
-    @app_commands.command(name="report", description="Report un utilisateur (max 1/jour par cible, max 5 fois par cible au total)")
-    @app_commands.describe(user="Utilisateur à reporter", reason="Raison du report")
-    @enqueue_request()
-    async def report(self, interaction: Any, user: discord.Member, reason: str):
-        await interaction.response.defer(ephemeral=True)
-        if user.id == interaction.user.id:
-            return await interaction.followup.send("Vous ne pouvez pas vous report vous-même.", ephemeral=True)
-
-        rep_data = await self.get_reputation_data()
-        reports = rep_data.setdefault("reports", {})
-        reporter_id = str(interaction.user.id)
-        reported_id = str(user.id)
-        reporter_info = reports.setdefault(reporter_id, {"targets":{}})
-
-        target_info = reporter_info["targets"].setdefault(reported_id, {"dates":[]})
-
-        today = self.today_str()
-        # Vérifier si déjà reporté cet utilisateur aujourd'hui
-        if today in target_info["dates"]:
-            return await interaction.followup.send("Vous avez déjà reporté cet utilisateur aujourd'hui.", ephemeral=True)
-
-        # Vérifier si déjà reporté 5 fois au total cet utilisateur
-        if len(target_info["dates"]) >= 5:
-            return await interaction.followup.send("Vous avez déjà reporté cet utilisateur 5 fois au total.", ephemeral=True)
-
-        # Ajouter le report
-        target_info["dates"].append(today)
-        await self.save_reputation_data(rep_data)
-
-        await interaction.followup.send(f"{user.mention} a été report pour {reason}", ephemeral=True)
-
-        # Mettre à jour les rôles du "user"
-        user_reports_count = self.count_reports_for_user(rep_data, reported_id)
-        user_reco_count = self.count_recommendations_for_user(rep_data, reported_id)
-        await self.update_player_role(user, user_reports_count, user_reco_count)
-
-    @app_commands.command(name="reputation", description="Affiche la réputation d'un utilisateur")
-    @app_commands.describe(user="Utilisateur dont on veut la réputation")
-    @enqueue_request()
-    async def reputation_cmd(self, interaction: Any, user: discord.Member):
-        await interaction.response.defer(ephemeral=True)
-        rep_data = await self.get_reputation_data()
-
-        uid = str(user.id)
-        reports_count = self.count_reports_for_user(rep_data, uid)
-        reco_count = self.count_recommendations_for_user(rep_data, uid)
-
-        ratio = (reco_count + 1) / (reports_count + 1)
-        embed = discord.Embed(title=f"Réputation de {user.display_name}", color=discord.Color.blue())
-        embed.add_field(name="Reports", value=str(reports_count), inline=True)
-        embed.add_field(name="Recommandations", value=str(reco_count), inline=True)
-        embed.add_field(name="Ratio (Reco+1)/(Reports+1)", value=f"{ratio:.2f}", inline=True)
-
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        except Exception as e:
+            logger.exception(f"Erreur dans reputation_execute pour action={action.value}: {e}")
+            await interaction.response.send_message(
+                "Une erreur est survenue lors de l'exécution de cette commande.", ephemeral=True
+            )
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(Reputation(bot))
+    cog = Reputation(bot)
+    await bot.add_cog(cog)
     logger.info("Reputation Cog chargé avec succès.")
