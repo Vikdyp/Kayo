@@ -1,3 +1,4 @@
+#cogs\voice_management\queue_views.py
 import logging
 import random
 import string
@@ -172,6 +173,7 @@ class TeamSizeSelect(Select):
         team_size = int(selected_value)
 
         try:
+            # Vérifier si déjà dans la queue
             in_queue = await MatchmakingService.is_player_in_queue(user.id)
             if in_queue:
                 await interaction.response.send_message(
@@ -179,14 +181,33 @@ class TeamSizeSelect(Select):
                 )
                 return
 
+            # --- NOUVEAU : vérification des infos Valorant avant d'inscrire ---
             user_info = await MatchmakingService.get_user_info(user.id)
-            elo = user_info.get("elo", 1500) if user_info else 1500
-            region = user_info.get("region", "EU") if user_info else "EU"
+            if not user_info:
+                await interaction.response.send_message(
+                    "Vous n'avez pas encore configuré vos informations Valorant. "
+                    "Veuillez lier votre compte dans le salon <#1323673115922010143> avant de rejoindre la queue.",
+                    ephemeral=True
+                )
+                return
 
+            elo = user_info.get("elo")
+            region = user_info.get("region")
+            if elo is None or region is None:
+                await interaction.response.send_message(
+                    "Vos informations Valorant sont incomplètes. "
+                    "Veuillez lier votre compte dans le salon <#1323673115922010143> avant de rejoindre la queue.",
+                    ephemeral=True
+                )
+                return
+
+
+            # Récupérer server_id
             server_id = await MatchmakingService.get_server_id_by_guild_id(self.guild_id)
             if not server_id:
                 await interaction.response.send_message(
-                    "Impossible de récupérer server_id.", ephemeral=True
+                    "Impossible de récupérer server_id. Réessayez plus tard.",
+                    ephemeral=True
                 )
                 return
 
@@ -201,13 +222,15 @@ class TeamSizeSelect(Select):
                 code = await MatchmakingService.is_user_leader_of_team(user.id)
                 if not code:
                     await interaction.response.send_message(
-                        "Vous n'êtes pas leader d'une équipe. Seul le leader peut inscrire l'équipe en queue. Essaye /create_team.",
+                        "Vous n'êtes pas leader d'une équipe. Seul le leader peut inscrire l'équipe en queue. "
+                        "Utilisez /create_team pour créer votre équipe.",
                         ephemeral=True
                     )
                     return
 
-            # MMR confirmation pour 5 ou 0
+            # Si tout est OK, on gère la confirmation MMR
             if team_size in [5, 0]:
+                from .queue_views import MMRConfirmationView  # ou importez en haut
                 mmr_view = MMRConfirmationView(
                     cog=self.cog,
                     guild_id=self.guild_id,
@@ -239,7 +262,7 @@ class TeamSizeSelect(Select):
                         roles=roles
                     )
                     await interaction.response.send_message(
-                        f"Vous avez rejoint la queue.",
+                        "Vous avez rejoint la queue.",
                         ephemeral=True
                     )
                 else:
@@ -254,7 +277,7 @@ class TeamSizeSelect(Select):
                         roles=roles
                     )
                     await interaction.response.send_message(
-                        f"Votre équipe est inscrite dans la queue.",
+                        "Votre équipe est inscrite dans la queue.",
                         ephemeral=True
                     )
 
