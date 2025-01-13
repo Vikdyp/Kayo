@@ -1,8 +1,12 @@
+#cogs\ranking\assign_rank.py
 import re
 from typing import Optional
 import discord
 from discord.ext import commands, tasks
 from cogs.ranking.services.assign_rank_service import (
+    reset_all_update_flag_false,
+    mark_user_update_flag_true,
+    get_users_with_update_flag_false,   
     store_persistent_message,
     get_persistent_message,
     get_channel_id,
@@ -378,47 +382,59 @@ class EmbedCog(commands.Cog):
     async def ping(self, ctx: commands.Context):
         await ctx.send("Pong!")
 
-    @tasks.loop(minutes=30)
+    @tasks.loop(minutes=10)
     async def update_roles_task(self):
-        logger.info("Début de la tâche de mise à jour des rôles Valorant.")
+        logger.info("Début de la tâche de mise à jour des rôles Valorant (logique ping-pong).")
 
-        # 1) Récupération de tous les utilisateurs
-        users = await get_all_users_with_valo_info()
-        logger.info(f"{len(users)} utilisateurs trouvés pour la mise à jour des rôles.")
+        # 1) On récupère tous les utilisateurs dont needs_update = FALSE
+        users = await get_users_with_update_flag_false()
+        logger.info(f"{len(users)} utilisateurs trouvés avec needs_update=FALSE.")
 
+        # 2) S'il n'y a plus personne => on réinitialise TOUT à FALSE pour relancer un cycle complet
+        if not users:
+            logger.info("Aucun utilisateur à mettre à jour. On repasse tout le monde à needs_update=FALSE.")
+            await reset_all_update_flag_false()
+            logger.info("Fin de la tâche (aucun user). Tout est réinitialisé.")
+            return
+
+        # 3) Sinon, on met à jour seulement ceux qui ont needs_update=FALSE
         for record in users:
-            discord_id = record["discord_id"]
-            pseudo     = record["valorant_pseudo"]
-            tag        = record["valorant_tag"]
-            puuid      = record.get("valorant_puuid")
-            region     = record.get("valorant_region")
+            discord_id  = record["discord_id"]
+            pseudo      = record["valorant_pseudo"]
+            tag         = record["valorant_tag"]
+            puuid       = record.get("valorant_puuid")
+            region      = record.get("valorant_region")
             current_rank = record.get("valorant_rank")
             current_elo  = record.get("valorant_elo")
 
-            # Récupérer le member
             member = None
             for guild in self.bot.guilds:
                 m = guild.get_member(discord_id)
                 if m:
                     member = m
                     break
+
             if not member:
                 logger.warning(f"[update_roles_task] Member introuvable pour Discord ID {discord_id}.")
+                # Marquer quand même comme mis à jour, pour ne pas le revoir à chaque fois
+                await mark_user_update_flag_true(discord_id)
                 continue
 
-            # --- NOUVEAU : Vérification si l'utilisateur a le rôle 'ban' ---
+            # Vérification rôle 'ban'
             try:
-                ban_role_id = await ModerationService.get_ban_role_id(member.guild.id)  # Remplacez 'YourClass' par le nom de votre classe contenant la méthode
+                ban_role_id = await ModerationService.get_ban_role_id(member.guild.id)
                 if ban_role_id:
                     ban_role = member.guild.get_role(ban_role_id)
                     if ban_role and ban_role in member.roles:
-                        logger.info(f"[update_roles_task] Skipping {member.display_name} car il a le rôle 'ban'.")
-                        continue  # Passer à l'utilisateur suivant
-                else:
-                    logger.warning(f"[update_roles_task] Aucun rôle 'ban' configuré pour guild_id={member.guild.id}.")
+                        logger.info(f"[update_roles_task] Skipping {member.display_name} (rôle 'ban').")
+                        # Marquer quand même comme mis à jour
+                        await mark_user_update_flag_true(discord_id)
+                        continue
             except Exception as e:
-                logger.error(f"[update_roles_task] Erreur lors de la vérification du rôle 'ban' pour {member.display_name}: {e}")
-                continue  # Optionnel : décider de continuer ou non en cas d'erreur
+                logger.error(f"[update_roles_task] Erreur vérification ban pour {member.display_name}: {e}")
+                # Marquer quand même comme mis à jour
+                await mark_user_update_flag_true(discord_id)
+                continue
 
             # Vérifier/récupérer puuid/region si manquants
             if not puuid or not region:
@@ -427,37 +443,42 @@ class EmbedCog(commands.Cog):
                     nom_tag, region, puuid = valo_info
                     success = await set_valorant_details(discord_id, puuid, region, current_rank, current_elo)
                     if success:
-                        logger.info(f"[update_roles_task] PUUID et région mis à jour pour Discord ID {discord_id}.")
+                        logger.info(f"[update_roles_task] PUUID/région mis à jour pour Discord ID {discord_id}.")
                 else:
                     logger.warning(f"[update_roles_task] Impossible de récupérer le PUUID pour {pseudo}#{tag}.")
+                    # Marquer quand même comme mis à jour
+                    await mark_user_update_flag_true(discord_id)
                     continue
 
-            # Récupérer le rang du joueur via l'API
+            # Récupérer rang du joueur (API)
             stats = await get_player_rank(region, puuid)
             if stats:
                 new_rank, new_elo = stats
             else:
                 new_rank, new_elo = None, None
-                logger.info(f"[update_roles_task] Joueur {pseudo}#{tag} n'a pas de rang compétitif (ou échec API).")
+                logger.info(f"[update_roles_task] Joueur {pseudo}#{tag} n'a pas de rang compétitif ou échec API.")
 
             # Mettre à jour la DB si rang/Elo ont changé
             if (new_rank != current_rank) or (new_elo != current_elo):
                 if new_rank and new_elo:
                     updated = await set_valorant_details(discord_id, puuid, region, new_rank, new_elo)
                     if updated:
-                        logger.info(f"[update_roles_task] Rang/Elo mis à jour pour {discord_id}: {new_rank}, Elo={new_elo}")
+                        logger.info(f"[update_roles_task] Rang/Elo mis à jour pour {discord_id}: {new_rank} / {new_elo}")
 
             # Déterminer le nouveau rôle "rang Valorant"
             if not new_rank:
-                # Joueur pas classé => si tu veux lui enlever tout rôle, tu pourrais le faire ici
+                # Joueur pas classé => on pourrait le retirer, etc.
+                # Quoi qu'il en soit, on le marque comme mis à jour
+                await mark_user_update_flag_true(discord_id)
                 continue
             else:
                 role_config_id = VALORANT_RANK_TO_DB_ID.get(new_rank)
                 if not role_config_id:
-                    logger.warning(f"[update_roles_task] Aucun mapping pour le rang {new_rank} dans VALORANT_RANK_TO_DB_ID.")
+                    logger.warning(f"[update_roles_task] Aucun mapping pour {new_rank}.")
+                    await mark_user_update_flag_true(discord_id)
                     continue
 
-            # --- NOUVEAU : On récupère le 'role_id' Discord via la fonction get_role_id_for_config ---
+            # Obtenir l'ID Discord du rôle via roles_configurations
             try:
                 discord_role_id = await get_role_id_for_config(member.guild.id, member.guild.name, role_config_id)
             except Exception as e:
@@ -465,44 +486,56 @@ class EmbedCog(commands.Cog):
                 discord_role_id = None
 
             if not discord_role_id:
-                logger.warning(f"[update_roles_task] Aucun 'role_id' trouvé en base pour guild={member.guild.id}, id={role_config_id}.")
+                logger.warning(f"[update_roles_task] Aucun 'role_id' pour guild={member.guild.id}, pk={role_config_id}.")
+                await mark_user_update_flag_true(discord_id)
                 continue
 
             desired_role = member.guild.get_role(discord_role_id)
             if not desired_role:
                 logger.warning(f"[update_roles_task] Rôle introuvable sur le serveur : {discord_role_id}")
+                await mark_user_update_flag_true(discord_id)
                 continue
 
-            # Supprimer les anciens rôles de rang
+            # Supprimer anciens rôles de rang
             role_mappings = await get_role_mappings(member.guild.id, member.guild.name)
             if not role_mappings:
-                logger.warning(f"[update_roles_task] Aucun mapping de rôles trouvé pour guild_id={member.guild.id}.")
+                logger.warning(f"[update_roles_task] Aucune config de rôles pour guild={member.guild.id}.")
+                await mark_user_update_flag_true(discord_id)
                 continue
 
             rank_role_ids = set(role_mappings.values())
-            roles_to_remove = []
-            for r in member.roles:
-                if r.id in rank_role_ids and r.id != desired_role.id:
-                    roles_to_remove.append(r)
-
+            roles_to_remove = [r for r in member.roles if (r.id in rank_role_ids and r.id != desired_role.id)]
             if roles_to_remove:
                 try:
-                    await member.remove_roles(*roles_to_remove, reason="Mise à jour du rang Valorant")
+                    await member.remove_roles(*roles_to_remove, reason="Mise à jour rang Valorant")
                     logger.info(f"[update_roles_task] Rôles supprimés pour {member.display_name}: {[r.name for r in roles_to_remove]}")
                 except Exception as e:
-                    logger.error(f"[update_roles_task] Erreur lors de la suppression de rôles pour {member.display_name}: {e}")
+                    logger.error(f"[update_roles_task] Erreur remove_roles pour {member.display_name}: {e}")
+                    # Même si on a eu un souci, on le marque comme à jour pour ne pas bloquer
+                    await mark_user_update_flag_true(discord_id)
                     continue
 
-            # Ajouter le nouveau rôle de rang
+            # Ajouter le nouveau rôle
             if desired_role not in member.roles:
                 try:
-                    await member.add_roles(desired_role, reason="Mise à jour du rang Valorant")
+                    await member.add_roles(desired_role, reason="Mise à jour rang Valorant")
                     logger.info(f"[update_roles_task] Rôle '{desired_role.name}' ajouté à {member.display_name}.")
                 except Exception as e:
-                    logger.error(f"[update_roles_task] Erreur lors de l'ajout du rôle '{desired_role.name}' à {member.display_name}: {e}")
+                    logger.error(f"[update_roles_task] Erreur add_roles '{desired_role.name}' -> {member.display_name}: {e}")
+                    # Quoi qu'il arrive, on marque comme à jour
+                    await mark_user_update_flag_true(discord_id)
+                    continue
 
-        logger.info("Fin de la tâche de mise à jour des rôles Valorant.")
+            # Enfin, on marque cet utilisateur comme mis à jour (needs_update=TRUE) 
+            await mark_user_update_flag_true(discord_id)
 
+        logger.info("Fin de la tâche de mise à jour des rôles Valorant (phase ping-pong).")
+
+    @commands.command(name="reset_valo_updates")
+    @commands.has_permissions(administrator=True)
+    async def reset_valo_updates(self, ctx: commands.Context):
+        await reset_all_update_flag_false()
+        await ctx.send("Tous les utilisateurs ont été repassés en needs_update=TRUE.")
 
     @tasks.loop(hours=1)
     async def refresh_roles_cache_task(self):

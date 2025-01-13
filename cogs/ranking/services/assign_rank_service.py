@@ -1,5 +1,7 @@
+# cogs/ranking/services/assign_rank_service.py
+
 import asyncio
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 from utils.database import database
 import logging
 
@@ -10,6 +12,24 @@ RANGS_VALORANT = (
     'fer', 'bronze', 'argent', 'or', 'platine',
     'diamant', 'ascendant', 'immortel', 'radiant', 'no_rank'
 )
+
+# ------------------------------------------------
+# NOUVEAU : get_user_pk_by_discord_id
+# ------------------------------------------------
+async def get_user_pk_by_discord_id(discord_id: int) -> Optional[int]:
+    """
+    Retourne l'ID (PK) de la table user_id pour un discord_id donné.
+    """
+    query = """
+        SELECT id
+          FROM user_id
+         WHERE discord_id = $1
+         LIMIT 1
+    """
+    record = await database.fetchrow(query, discord_id)
+    if record:
+        return record["id"]
+    return None
 
 # ------------------------------------------------
 # NOUVEAU : get_or_create_server_record
@@ -41,10 +61,10 @@ async def get_or_create_server_record(guild_id: int, guild_name: str) -> Optiona
         logger.error(f"[get_or_create_server_record] Erreur : {e}")
         return None
 
+
 # ------------------------------------------------
 # PERSISTENT MESSAGES
 # ------------------------------------------------
-
 async def store_persistent_message(discord_guild_id: int, channel_id: int, message_id: int, message_type: str, guild_name: str = "Inconnu") -> bool:
     """
     Enregistre ou met à jour un message persistant pour un serveur donné.
@@ -127,10 +147,10 @@ async def delete_persistent_message(discord_guild_id: int, message_type: str, gu
         logger.error(f"Erreur lors de la suppression du message persistant: {e}")
         return False
 
+
 # ------------------------------------------------
 # CHANNEL CONFIG
 # ------------------------------------------------
-
 async def get_channel_id(guild_id: int, action: str) -> Optional[int]:
     """
     Récupère channel_id depuis channel_configurations,
@@ -179,48 +199,79 @@ async def set_channel_id(guild_id: int, action: str, channel_id: int) -> bool:
         logger.error(f"Erreur lors de la définition du salon : {e}")
         return False
 
-# ------------------------------------------------
-# USER VALORANT INFO
-# ------------------------------------------------
 
+# ------------------------------------------------
+# USER VALORANT INFO (NOUVELLE TABLE : valorant_info)
+# ------------------------------------------------
 async def update_user_valorant_info(discord_id: int, pseudo: str, tag: str) -> bool:
+    """
+    Met à jour le pseudo et le tag Valorant dans valorant_info,
+    après avoir récupéré user_id (PK) depuis la table user_id.
+    """
+    user_pk = await get_user_pk_by_discord_id(discord_id)
+    if not user_pk:
+        logger.warning(f"[update_user_valorant_info] Impossible de trouver user_id pour discord_id={discord_id}.")
+        return False
+
     query = """
-        INSERT INTO user_id (discord_id, valorant_pseudo, valorant_tag)
+        INSERT INTO valorant_info (user_id, pseudo, tag)
         VALUES ($1, $2, $3)
-        ON CONFLICT (discord_id)
-        DO UPDATE SET valorant_pseudo = EXCLUDED.valorant_pseudo,
-                      valorant_tag = EXCLUDED.valorant_tag;
+        ON CONFLICT (user_id)
+        DO UPDATE SET pseudo = EXCLUDED.pseudo,
+                      tag    = EXCLUDED.tag;
     """
     try:
-        await database.execute(query, discord_id, pseudo, tag)
+        await database.execute(query, user_pk, pseudo, tag)
         logger.info(f"Informations Valorant mises à jour pour Discord ID {discord_id}: {pseudo}#{tag}")
         return True
     except Exception as e:
         logger.error(f"Erreur lors de la mise à jour des informations Valorant pour Discord ID {discord_id}: {e}")
         return False
 
+
 async def set_valorant_details(discord_id: int, puuid: str, region: str, rank: str, elo: int) -> bool:
+    """
+    Met à jour le puuid, la region, le rank et l'elo dans valorant_info.
+    """
+    user_pk = await get_user_pk_by_discord_id(discord_id)
+    if not user_pk:
+        logger.warning(f"[set_valorant_details] Impossible de trouver user_id pour discord_id={discord_id}.")
+        return False
+
     query = """
-        UPDATE user_id
-        SET valorant_puuid = $1,
-            valorant_region = $2,
-            valorant_rank = $3,
-            valorant_elo = $4
-        WHERE discord_id = $5;
+        UPDATE valorant_info
+           SET puuid  = $1,
+               region = $2,
+               rank   = $3,
+               elo    = $4
+         WHERE user_id = $5
     """
     try:
-        await database.execute(query, puuid, region, rank, elo, discord_id)
+        await database.execute(query, puuid, region, rank, elo, user_pk)
         logger.info(f"Détails Valorant mis à jour pour Discord ID {discord_id}: PUUID={puuid}, Région={region}, Rang={rank}, Elo={elo}")
         return True
     except Exception as e:
         logger.error(f"Erreur lors de la mise à jour des détails Valorant pour Discord ID {discord_id}: {e}")
         return False
 
-async def get_all_users_with_valo_info() -> list:
+
+async def get_all_users_with_valo_info() -> List[Dict]:
+    """
+    Récupère tous les utilisateurs ayant pseudo/tag non NULL dans valorant_info,
+    en jointure avec user_id pour obtenir leur discord_id.
+    """
     query = """
-        SELECT discord_id, valorant_pseudo, valorant_tag, valorant_puuid, valorant_region, valorant_rank, valorant_elo
-        FROM user_id
-        WHERE valorant_pseudo IS NOT NULL AND valorant_tag IS NOT NULL;
+        SELECT u.discord_id,
+               v.pseudo  AS valorant_pseudo,
+               v.tag     AS valorant_tag,
+               v.puuid   AS valorant_puuid,
+               v.region  AS valorant_region,
+               v.rank    AS valorant_rank,
+               v.elo     AS valorant_elo
+          FROM user_id u
+          JOIN valorant_info v ON u.id = v.user_id
+         WHERE v.pseudo IS NOT NULL
+           AND v.tag    IS NOT NULL
     """
     try:
         records = await database.fetch(query)
@@ -230,29 +281,73 @@ async def get_all_users_with_valo_info() -> list:
         logger.error(f"Erreur lors de la récupération des utilisateurs pour la mise à jour Valorant: {e}")
         return []
 
+
 async def get_user_by_pseudo_tag(pseudo: str, tag: str) -> Optional[int]:
     """
-    Vérifie si un pseudo + tag est déjà enregistré.
-    Retourne le discord_id de l'utilisateur existant ou None s'il n'y a pas de doublon.
+    Vérifie si un pseudo + tag est déjà enregistré dans valorant_info.
+    Retourne le discord_id associé ou None si pas de doublon.
     """
     query = """
-        SELECT discord_id
-        FROM user_id
-        WHERE valorant_pseudo = $1
-          AND valorant_tag = $2
-        LIMIT 1;
+        SELECT u.discord_id
+          FROM valorant_info v
+          JOIN user_id u ON v.user_id = u.id
+         WHERE v.pseudo = $1
+           AND v.tag    = $2
+         LIMIT 1
     """
     try:
         record = await database.fetchrow(query, pseudo, tag)
         if record:
             logger.info(f"Doublon trouvé pour {pseudo}#{tag} avec Discord ID {record['discord_id']}.")
-            return record['discord_id']
+            return record["discord_id"]
         else:
             logger.info(f"Aucun doublon trouvé pour {pseudo}#{tag}.")
             return None
     except Exception as e:
         logger.error(f"[get_user_by_pseudo_tag] Erreur : {e}")
         return None
+
+
+# ------------------------------------------------
+# Supprimer données Valorant
+# ------------------------------------------------
+async def delete_valo_data(discord_id: int) -> bool:
+    """
+    Supprime (ou met à NULL) les données Valorant dans valorant_info.
+    Ici on fait un DELETE complet de la ligne.
+    """
+    user_pk = await get_user_pk_by_discord_id(discord_id)
+    if not user_pk:
+        logger.warning(f"[delete_valo_data] user_id introuvable pour discord_id={discord_id}.")
+        return False
+
+    query = """
+        DELETE FROM valorant_info
+         WHERE user_id = $1
+    """
+    try:
+        await database.execute(query, user_pk)
+        logger.info(f"Données Valorant supprimées pour Discord ID {discord_id}.")
+        return True
+    except Exception as e:
+        logger.error(f"Erreur lors de la suppression des données Valorant pour {discord_id}: {e}")
+        return False
+
+
+async def user_exists_in_db(discord_id: int) -> bool:
+    """
+    Vérifie l'existence d'un enregistrement dans la table user_id pour ce discord_id.
+    """
+    query = """
+        SELECT 1
+          FROM user_id
+         WHERE discord_id = $1
+         LIMIT 1
+    """
+    record = await database.fetchrow(query, discord_id)
+    return record is not None
+
+
 # ------------------------------------------------
 # RÔLES : gestion + cache local
 # ------------------------------------------------
@@ -262,8 +357,7 @@ _role_cache_lock = asyncio.Lock()
 async def get_role_id_for_config(guild_id: int, guild_name: str, role_config_pk: int) -> Optional[int]:
     """
     Récupère le 'role_id' (ID Discord du rôle) dans la table roles_configurations,
-    en se basant sur la PK `id` de roles_configurations ( = role_config_pk ).
-    On utilise server_id comme FK.
+    basé sur la PK `id` (role_config_pk) et l'ID interne du serveur.
     """
     server_db_id = await get_or_create_server_record(guild_id, guild_name)
     if not server_db_id:
@@ -284,6 +378,7 @@ async def get_role_id_for_config(guild_id: int, guild_name: str, role_config_pk:
     except Exception as e:
         logger.error(f"[get_role_id_for_config] Erreur : {e}")
         return None
+
 
 async def get_role_mappings(guild_id: int, guild_name: str) -> Optional[Dict[str, int]]:
     """
@@ -333,34 +428,57 @@ async def refresh_role_mappings(guild_id: int, guild_name: str):
     # Pour forcer la recréation du cache :
     await get_role_mappings(guild_id, guild_name)
 
-# ------------------------------------------------
-# Supprimer données Valorant
-# ------------------------------------------------
-async def delete_valo_data(discord_id: int) -> bool:
+async def get_users_with_update_flag_false() -> list:
+    """
+    Récupère tous les utilisateurs (jointure valorant_info + user_id)
+    où needs_update = FALSE.
+    """
     query = """
-        UPDATE user_id
-           SET valorant_pseudo = NULL,
-               valorant_tag = NULL,
-               valorant_puuid = NULL,
-               valorant_region = NULL,
-               valorant_rank = NULL,
-               valorant_elo = NULL
-         WHERE discord_id = $1
+        SELECT u.discord_id,
+               v.pseudo  AS valorant_pseudo,
+               v.tag     AS valorant_tag,
+               v.puuid   AS valorant_puuid,
+               v.region  AS valorant_region,
+               v.rank    AS valorant_rank,
+               v.elo     AS valorant_elo
+          FROM valorant_info v
+          JOIN user_id u ON u.id = v.user_id
+         WHERE v.needs_update = FALSE
+           AND v.pseudo IS NOT NULL
+           AND v.tag    IS NOT NULL
+    """
+    try:
+        return await database.fetch(query)
+    except Exception as e:
+        logger.error(f"[get_users_with_update_flag_false] Erreur: {e}")
+        return []
+
+
+async def mark_user_update_flag_true(discord_id: int) -> None:
+    """
+    Met needs_update = TRUE pour l'utilisateur donné (via discord_id).
+    """
+    query = """
+        UPDATE valorant_info v
+           SET needs_update = TRUE
+          FROM user_id u
+         WHERE u.id = v.user_id
+           AND u.discord_id = $1
     """
     try:
         await database.execute(query, discord_id)
-        logger.info(f"Données Valorant supprimées pour Discord ID {discord_id}.")
-        return True
+        logger.debug(f"[mark_user_update_flag_true] Discord ID {discord_id} -> needs_update=TRUE.")
     except Exception as e:
-        logger.error(f"Erreur lors de la suppression des données Valorant pour {discord_id}: {e}")
-        return False
+        logger.error(f"[mark_user_update_flag_true] Erreur: {e}")
 
-async def user_exists_in_db(discord_id: int) -> bool:
-    query = """
-        SELECT 1
-          FROM user_id
-         WHERE discord_id = $1
-         LIMIT 1
+
+async def reset_all_update_flag_false() -> None:
     """
-    record = await database.fetchrow(query, discord_id)
-    return record is not None
+    Remet tous les utilisateurs à needs_update = FALSE.
+    """
+    query = "UPDATE valorant_info SET needs_update = FALSE"
+    try:
+        await database.execute(query)
+        logger.info("[reset_all_update_flag_false] Tout le monde repasse à needs_update=FALSE.")
+    except Exception as e:
+        logger.error(f"[reset_all_update_flag_false] Erreur: {e}")

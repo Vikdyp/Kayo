@@ -1,4 +1,4 @@
-# cogs/ranking/services/valorant_service.py
+#cogs\ranking\services\valorant_service.py
 import aiohttp
 import logging
 import os

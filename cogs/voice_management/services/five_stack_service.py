@@ -28,19 +28,22 @@ class MatchmakingService:
         """
         Récupère les informations Valorant d'un utilisateur à partir de la base de données.
         Retourne un dict { "elo": int, "region": str }, ou None si introuvable.
+        
+        Désormais, on joint la table `valorant_info` et `user_id`.
         """
         query = """
-        SELECT valorant_elo, valorant_region
-        FROM user_id
-        WHERE discord_id = $1;
+        SELECT v.elo, v.region
+          FROM valorant_info v
+          JOIN user_id u ON v.user_id = u.id
+         WHERE u.discord_id = $1
         """
         try:
             row = await database.fetchrow(query, discord_id)
             if row:
-                logger.debug(f"Infos récupérées pour Discord ID {discord_id}: {row}")
+                logger.debug(f"Infos Valorant récupérées pour Discord ID {discord_id}: {row}")
                 return {
-                    "elo": row["valorant_elo"],
-                    "region": row["valorant_region"]
+                    "elo": row["elo"],
+                    "region": row["region"]
                 }
             logger.warning(f"Infos Valorant non trouvées pour Discord ID {discord_id}.")
         except Exception as e:
