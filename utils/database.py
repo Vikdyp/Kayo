@@ -29,8 +29,8 @@ class Database:
                 host=DATABASE['host'],
                 port=DATABASE['port'],
                 ssl=DATABASE.get('ssl', False),
-                min_size=1,
-                max_size=10,
+                min_size=5,
+                max_size=100,
                 max_inactive_connection_lifetime=3600
             )
             logger.info("Connexion à la base de données réussie.")

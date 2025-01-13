@@ -70,7 +70,8 @@ cog_paths = [
     'cogs.voice_management.team_cog',
     'cogs.voice_management.voice_cleaner',
     'cogs.accueil.stalker',
-    'SQL_test', #TEST
+    #'SQL_test', #TEST
+    'cogs.reputation.reputation',
 ]
 
 @bot.event

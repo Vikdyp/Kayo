@@ -201,7 +201,7 @@ class TeamSizeSelect(Select):
                 code = await MatchmakingService.is_user_leader_of_team(user.id)
                 if not code:
                     await interaction.response.send_message(
-                        "Vous n'êtes pas leader d'une équipe. Seul le leader peut inscrire l'équipe en queue.",
+                        "Vous n'êtes pas leader d'une équipe. Seul le leader peut inscrire l'équipe en queue. Essaye /create_team.",
                         ephemeral=True
                     )
                     return
