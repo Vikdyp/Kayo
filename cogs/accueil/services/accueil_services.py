@@ -48,17 +48,24 @@ async def get_server_id(guild_id: int) -> Optional[int]:
 async def log_member_event_aggregated(guild_id: int, event_type: str) -> None:
     """
     Incrémente le compteur join/leave dans la table member_daily_stats.
+    Maintenant, on utilise l'ID interne du serveur récupéré dans la table serveur_id.
     """
+    # Récupérer l'ID interne du serveur à partir du guild_id Discord
+    server_id = await get_server_id(guild_id)
+    if server_id is None:
+        # On peut choisir de ne rien faire ou de loguer une erreur si le mapping n'existe pas
+        return
+
     # On prend la date du jour
     today = date.today()
 
-    # Vérifie si la ligne (guild_id, today) existe déjà
+    # Vérifie si la ligne (server_id, today) existe déjà dans member_daily_stats
     query_select = """
         SELECT join_count, leave_count
         FROM member_daily_stats
         WHERE guild_id = $1 AND date = $2
     """
-    record = await database.fetchrow(query_select, guild_id, today)
+    record = await database.fetchrow(query_select, server_id, today)
 
     if record is None:
         # Insérer une nouvelle ligne
@@ -72,7 +79,7 @@ async def log_member_event_aggregated(guild_id: int, event_type: str) -> None:
                 INSERT INTO member_daily_stats (guild_id, date, join_count, leave_count)
                 VALUES ($1, $2, 0, 1);
             """
-        await database.execute(query_insert, guild_id, today)
+        await database.execute(query_insert, server_id, today)
     else:
         # Mettre à jour la ligne existante
         if event_type == "join":
@@ -82,7 +89,7 @@ async def log_member_event_aggregated(guild_id: int, event_type: str) -> None:
                 SET join_count = $3
                 WHERE guild_id = $1 AND date = $2
             """
-            await database.execute(query_update, guild_id, today, new_join_count)
+            await database.execute(query_update, server_id, today, new_join_count)
         else:  # leave
             new_leave_count = record['leave_count'] + 1
             query_update = """
@@ -90,18 +97,24 @@ async def log_member_event_aggregated(guild_id: int, event_type: str) -> None:
                 SET leave_count = $3
                 WHERE guild_id = $1 AND date = $2
             """
-            await database.execute(query_update, guild_id, today, new_leave_count)
-
+            await database.execute(query_update, server_id, today, new_leave_count)
 
 async def get_aggregated_stats(guild_id: int) -> dict:
     """
-    Retourne un dictionnaire avec les stats sur 24h, 7j, 30j, et totaux :
-      - join_24h, leave_24h
-      - join_7d, leave_7d
-      - join_30d, leave_30d
-      - total_join, total_left
-      - join_leave_ratio
+    Retourne un dictionnaire avec les stats sur 24h, 7j, 30j, et totaux.
+    Les requêtes se font sur la table member_daily_stats en utilisant l'ID interne du serveur.
     """
+    server_id = await get_server_id(guild_id)
+    if server_id is None:
+        # Retourner des valeurs par défaut ou lever une exception si le mapping n'existe pas
+        return {
+            "join_24h": 0, "leave_24h": 0,
+            "join_7d": 0, "leave_7d": 0,
+            "join_30d": 0, "leave_30d": 0,
+            "total_join": 0, "total_left": 0,
+            "join_leave_ratio": 0
+        }
+
     # Requête pour 24h : date >= CURRENT_DATE - 1
     query_24h = """
         SELECT COALESCE(SUM(join_count), 0) AS join_24h,
@@ -134,10 +147,10 @@ async def get_aggregated_stats(guild_id: int) -> dict:
         WHERE guild_id = $1;
     """
 
-    rec_24h = await database.fetchrow(query_24h, guild_id)
-    rec_7d  = await database.fetchrow(query_7d, guild_id)
-    rec_30d = await database.fetchrow(query_30d, guild_id)
-    rec_total = await database.fetchrow(query_total, guild_id)
+    rec_24h = await database.fetchrow(query_24h, server_id)
+    rec_7d  = await database.fetchrow(query_7d, server_id)
+    rec_30d = await database.fetchrow(query_30d, server_id)
+    rec_total = await database.fetchrow(query_total, server_id)
 
     join_24h = rec_24h["join_24h"]
     leave_24h = rec_24h["leave_24h"]
@@ -151,7 +164,7 @@ async def get_aggregated_stats(guild_id: int) -> dict:
 
     # Calcul du ratio
     if total_left == 0:
-        ratio = float(total_join)  # ou "∞"
+        ratio = float(total_join)  # ou éventuellement définir un ratio spécifique
     else:
         ratio = round(total_join / total_left, 2)
 
@@ -170,11 +183,16 @@ async def get_aggregated_stats(guild_id: int) -> dict:
 async def get_member_evolution(guild_id: int) -> List[Dict]:
     """
     Récupère les données d'évolution des membres sur les 30 derniers jours.
+    Les requêtes se font sur la table member_daily_stats en utilisant l'ID interne du serveur.
     Chaque élément est un dictionnaire contenant :
       - 'date': la date de la donnée
       - 'join_count': le nombre d'adhésions ce jour-là
       - 'leave_count': le nombre de départs ce jour-là
     """
+    server_id = await get_server_id(guild_id)
+    if server_id is None:
+        return []
+
     query = """
         SELECT date, join_count, leave_count
         FROM member_daily_stats
@@ -182,6 +200,6 @@ async def get_member_evolution(guild_id: int) -> List[Dict]:
           AND date >= (CURRENT_DATE - 30)
         ORDER BY date ASC;
     """
-    records = await database.fetch(query, guild_id)
+    records = await database.fetch(query, server_id)
     # Assure-toi que les dates sont au format datetime.date
     return [dict(record) for record in records]
