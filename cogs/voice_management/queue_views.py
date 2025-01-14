@@ -180,7 +180,7 @@ class TeamSizeSelect(Select):
             # Vérifier si déjà dans la queue
             in_queue = await MatchmakingService.is_player_in_queue(user.id)
             if in_queue:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     "Vous êtes déjà dans la queue.", ephemeral=True
                 )
                 return
@@ -188,7 +188,7 @@ class TeamSizeSelect(Select):
             # --- NOUVEAU : vérification des infos Valorant avant d'inscrire ---
             user_info = await MatchmakingService.get_user_info(user.id)
             if not user_info:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     "Vous n'avez pas encore configuré vos informations Valorant. "
                     "Veuillez lier votre compte dans le salon <#1323673115922010143> avant de rejoindre la queue.",
                     ephemeral=True
@@ -198,7 +198,7 @@ class TeamSizeSelect(Select):
             elo = user_info.get("elo")
             region = user_info.get("region")
             if elo is None or region is None:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     "Vos informations Valorant sont incomplètes. "
                     "Veuillez lier votre compte dans le salon <#1323673115922010143> avant de rejoindre la queue.",
                     ephemeral=True
@@ -209,7 +209,7 @@ class TeamSizeSelect(Select):
             # Récupérer server_id
             server_id = await MatchmakingService.get_server_id_by_guild_id(self.guild_id)
             if not server_id:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     "Impossible de récupérer server_id. Réessayez plus tard.",
                     ephemeral=True
                 )
@@ -225,7 +225,7 @@ class TeamSizeSelect(Select):
             if self.entry_type == "team":
                 code = await MatchmakingService.is_user_leader_of_team(user.id)
                 if not code:
-                    await interaction.response.send_message(
+                    await interaction.followup.send(
                         "Vous n'êtes pas leader d'une équipe. Seul le leader peut inscrire l'équipe en queue. "
                         "Utilisez /create_team pour créer votre équipe.",
                         ephemeral=True

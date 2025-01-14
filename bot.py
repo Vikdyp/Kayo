@@ -72,6 +72,7 @@ cog_paths = [
     'cogs.accueil.stalker',
     #'SQL_test', #TEST
     'cogs.reputation.reputation',
+    #'cogs.other.test',
 ]
 
 @bot.event
