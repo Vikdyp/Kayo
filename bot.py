@@ -73,6 +73,7 @@ cog_paths = [
     #'SQL_test', #TEST
     'cogs.reputation.reputation',
     #'cogs.other.test',
+    'cogs.other.vocal_creator',
 ]
 
 @bot.event

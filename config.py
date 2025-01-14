@@ -61,4 +61,8 @@ LOGGING = {
     # ???
     'rank_roles' : False,
 
+    # OTHER
+    'vocal.services' : False,
+    'vocal.creator' : False,
+
 }
