@@ -363,17 +363,18 @@ class QueueView(View):
         """
         user = interaction.user
         try:
+            await interaction.response.defer(ephemeral=True)
             await self.cog.remove_from_queue(user)
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "Vous avez quitté la queue.", ephemeral=True
             )
             logger.info(f"{user.display_name} a quitté la queue.")
         except ValueError as ve:
             logger.error(f"Erreur leave_queue_button: {ve}")
-            await interaction.response.send_message(str(ve), ephemeral=True)
+            await interaction.followup.send(str(ve), ephemeral=True)
         except Exception as e:
             logger.error(f"Erreur retrait queue: {e}")
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "Une erreur est survenue lors de votre demande de quitter la queue.",
                 ephemeral=True,
             )
