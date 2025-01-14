@@ -223,8 +223,7 @@ class MatchmakingQueue(commands.Cog):
                         # Check rôles (optionnel)
                         unique_roles = set(combined_roles)
                         if len(unique_roles) < desired_size:
-                            logger.debug("Diversité de rôles insuffisante => reset.")
-                            return
+                            logger.debug("Plusieurs joueurs ont le même rôle, mais on continue quand même.")
                     else:
                         logger.debug("Aucun ELO => on skip.")
                         return
