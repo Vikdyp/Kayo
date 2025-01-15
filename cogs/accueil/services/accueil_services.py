@@ -76,7 +76,10 @@ async def log_member_event_aggregated(guild_id: int, event_type: str) -> None:
     server_id = await get_server_id(guild_id)
     if server_id is None:
         return
-    today = date.today()
+    
+    paris_tz = ZoneInfo("Europe/Paris")
+    today = datetime.now(paris_tz).date()
+
     await ensure_today_member_stats(guild_id)
     query_select = """
         SELECT join_count, leave_count
