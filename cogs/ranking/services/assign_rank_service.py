@@ -479,6 +479,6 @@ async def reset_all_update_flag_false() -> None:
     query = "UPDATE valorant_info SET needs_update = FALSE"
     try:
         await database.execute(query)
-        logger.info("[reset_all_update_flag_false] Tout le monde repasse à needs_update=FALSE.")
+        logger.info("[reset_all_update_flag_false] Tout le monde repasse à needs_update=TRUE.")
     except Exception as e:
         logger.error(f"[reset_all_update_flag_false] Erreur: {e}")

@@ -1,4 +1,3 @@
-# cogs/ranking/assign_rank.py
 import re
 from typing import Optional
 import discord
@@ -6,7 +5,7 @@ from discord.ext import commands, tasks
 from cogs.ranking.services.assign_rank_service import (
     reset_all_update_flag_false,
     mark_user_update_flag_true,
-    get_users_with_update_flag_false,   
+    get_users_with_update_flag_false,
     store_persistent_message,
     get_persistent_message,
     get_channel_id,
@@ -21,13 +20,19 @@ from cogs.ranking.services.assign_rank_service import (
     get_or_create_server_record,
     get_user_by_pseudo_tag
 )
-from cogs.ranking.services.valorant_service import get_puuid, get_player_rank
+from cogs.ranking.services.valorant_service import (
+    get_puuid, get_player_rank, RateLimitException
+)
 from cogs.moderation.services.moderation_service import ModerationService
 from utils.database import database
 import logging
 import asyncio
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo  # Utilisation de la librairie native zoneinfo
+
+try:
+    from zoneinfo import ZoneInfo  # Python 3.9+
+except ImportError:
+    import pytz
 
 from utils.request_manager import enqueue_button_request, enqueue_request
 
@@ -35,19 +40,10 @@ logger = logging.getLogger("assign_rank")
 
 EMBED_MESSAGE_TYPE = "embed_rank"
 
-
-# --- Nouveau helper pour récupérer le salon 'rules' ---
 async def get_rules_channel_id(guild_id: int) -> Optional[int]:
-    """
-    Récupère l'ID du salon configuré pour 'rules' dans la table channel_configurations.
-    Désormais basé sur server_id, donc on réutilise get_channel_id.
-    """
-    return await get_channel_id(guild_id, 'rules')
+    return await get_channel_id(guild_id, "rules")
 
-
-# --- Mapping rang Valorant → ID dans roles_configurations ---
-# Note : "id" ici fait référence à la PK de la table roles_configurations,
-#        PAS le role_id Discord.
+# --- Mapping rang Valorant → ID (roles_configurations PK)
 VALORANT_RANK_TO_DB_ID = {
     "Iron 1": 3,
     "Iron 2": 3,
@@ -74,26 +70,9 @@ VALORANT_RANK_TO_DB_ID = {
     "Immortal 2": 10,
     "Immortal 3": 10,
     "Radiant": 11,
-    "no_rank": 41,
+    "Unrated": 41,
 }
 
-
-# Fonction pour calculer la prochaine mise à jour en heure de Paris en utilisant zoneinfo
-def get_next_update_time():
-    """
-    Calcule l'heure de la prochaine mise à jour dans le fuseau horaire de Paris,
-    en ajoutant 10 minutes à l'heure actuelle.
-    """
-    try:
-        from zoneinfo import ZoneInfo  # Librairie native zoneinfo
-        paris_tz = ZoneInfo("Europe/Paris")
-    except Exception as e:
-        import pytz
-        paris_tz = pytz.timezone("Europe/Paris")
-    
-    now = datetime.now(paris_tz)
-    next_update = now + timedelta(minutes=10)
-    return next_update.strftime('%H:%M')
 
 class PseudoTagModal(discord.ui.Modal, title="Renseignez votre Pseudo et Tag Valorant"):
     pseudo = discord.ui.TextInput(
@@ -117,11 +96,8 @@ class PseudoTagModal(discord.ui.Modal, title="Renseignez votre Pseudo et Tag Val
     async def on_submit(self, interaction: discord.Interaction):
         pseudo = self.pseudo.value.strip()
         tag = self.tag.value.strip()
+        pseudo_pattern = re.compile(r"^[A-Za-z0-9 ]+$")
 
-        # Définir le motif regex pour le pseudo (lettres, chiffres et espaces)
-        pseudo_pattern = re.compile(r'^[A-Za-z0-9 ]+$')
-
-        # Vérifications basiques avec espace autorisé dans le pseudo
         if not pseudo_pattern.match(pseudo):
             await interaction.response.send_message(
                 "Le pseudo ne doit contenir que des lettres, des chiffres et des espaces.",
@@ -136,38 +112,27 @@ class PseudoTagModal(discord.ui.Modal, title="Renseignez votre Pseudo et Tag Val
             )
             return
 
-        # Vérifier si le pseudo + tag est déjà utilisé
         existing_discord_id = await get_user_by_pseudo_tag(pseudo, tag)
         if existing_discord_id:
             if existing_discord_id == self.user.id:
-                # L'utilisateur essaie de réenregistrer les mêmes informations
                 await interaction.response.send_message(
                     "Vous avez déjà enregistré ce pseudo et tag Valorant.",
                     ephemeral=True
                 )
                 return
             else:
-                # Doublon trouvé avec un autre utilisateur
                 existing_user = self.cog.bot.get_user(existing_discord_id)
                 if not existing_user:
-                    # Si l'utilisateur n'est pas dans le cache, récupérons-le
                     existing_user = await self.cog.bot.fetch_user(existing_discord_id)
-
-                # Envoyer un message éphémère à l'utilisateur actuel
                 await interaction.response.send_message(
                     "Ce pseudo et tag Valorant sont déjà utilisés par un autre utilisateur.",
                     ephemeral=True
                 )
-
-                # Envoyer un embed dans le salon spécifique
                 await self.cog.notify_duplicate_pseudo_tag(existing_user, self.user, pseudo, tag)
-
                 return
 
-        # Vérifier si l'utilisateur existe déjà dans user_id
         exists = await user_exists_in_db(interaction.user.id)
         if not exists:
-            # L'utilisateur n'a pas d'entrée dans user_id => message "Veuillez accepter le règlement..."
             rules_channel_id = await get_rules_channel_id(interaction.guild_id)
             if rules_channel_id:
                 channel_mention = f"<#{rules_channel_id}>"
@@ -177,7 +142,6 @@ class PseudoTagModal(discord.ui.Modal, title="Renseignez votre Pseudo et Tag Val
             await interaction.response.send_message(msg, ephemeral=True)
             return
 
-        # Sinon, on enregistre
         try:
             success = await update_user_valorant_info(interaction.user.id, pseudo, tag)
             if success:
@@ -185,9 +149,7 @@ class PseudoTagModal(discord.ui.Modal, title="Renseignez votre Pseudo et Tag Val
                     f"Vos informations Valorant ont été enregistrées : {pseudo}#{tag}",
                     ephemeral=True
                 )
-                logger.info(
-                    f"Utilisateur {interaction.user} a enregistré son pseudo et tag Valorant."
-                )
+                logger.info(f"Utilisateur {interaction.user} a enregistré son pseudo et tag Valorant.")
             else:
                 await interaction.response.send_message(
                     "Une erreur est survenue lors de l'enregistrement de vos informations. "
@@ -201,7 +163,6 @@ class PseudoTagModal(discord.ui.Modal, title="Renseignez votre Pseudo et Tag Val
                 "Veuillez réessayer plus tard.",
                 ephemeral=True
             )
-
 
 class EmbedButtonsView(discord.ui.View):
     def __init__(self, cog):
@@ -248,18 +209,18 @@ class EmbedButtonsView(discord.ui.View):
                 ephemeral=True
             )
 
-
 class EmbedCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.message_id = None
         logger.info("EmbedCog initialisé.")
         self.bot.loop.create_task(self.reload_persistent_embed())
-        self.update_roles_task.start()
+        # Lancement de la boucle de mise à jour (infinie)
+        self.bot.loop.create_task(self.update_roles_loop())
+        # Tâche (standard) de refresh du cache des rôles (toutes les heures)
         self.refresh_roles_cache_task.start()
 
     def cog_unload(self):
-        self.update_roles_task.cancel()
         self.refresh_roles_cache_task.cancel()
 
     async def reload_persistent_embed(self):
@@ -268,9 +229,9 @@ class EmbedCog(commands.Cog):
 
         for guild in self.bot.guilds:
             message_data = await get_persistent_message(
-                guild.id,            # discord_guild_id
-                EMBED_MESSAGE_TYPE, 
-                guild.name           # guild_name
+                guild.id,
+                EMBED_MESSAGE_TYPE,
+                guild.name
             )
             if not message_data:
                 logger.info(f"Aucun message persistant trouvé pour la guilde {guild.id}.")
@@ -298,13 +259,8 @@ class EmbedCog(commands.Cog):
     @commands.command(name="send_embed_rang")
     @commands.has_permissions(administrator=True)
     async def send_embed(self, ctx: commands.Context):
-        """
-        Envoie un embed dans le salon configuré pour l'action 'rang',
-        avec un texte expliquant comment renseigner ou effacer ses données Valorant.
-        """
         guild_id = ctx.guild.id
         action = "rang"
-
         channel_id = await get_channel_id(guild_id, action)
         if not channel_id:
             await ctx.send(f"Aucun salon défini pour l'action '{action}'.", delete_after=10)
@@ -317,7 +273,6 @@ class EmbedCog(commands.Cog):
             logger.error(f"Salon d'embed introuvable : {channel_id} dans guild_id={guild_id}.")
             return
 
-        # Vérifie si l'embed a déjà été envoyé
         message_data = await get_persistent_message(guild_id, EMBED_MESSAGE_TYPE)
         if message_data:
             try:
@@ -327,11 +282,9 @@ class EmbedCog(commands.Cog):
                 return
             except discord.NotFound:
                 logger.warning(
-                    f"Message persistant introuvable : {message_data['message_id']} dans {channel.name}. "
-                    "Envoi d'un nouvel embed."
+                    f"Message persistant introuvable : {message_data['message_id']} "
+                    f"dans {channel.name}. Envoi d'un nouvel embed."
                 )
-
-        next_update_time = get_next_update_time()
 
         embed = discord.Embed(
             title="Gestion de vos informations Valorant",
@@ -345,8 +298,7 @@ class EmbedCog(commands.Cog):
                 "   - **Pseudo** : Votre pseudo Valorant (exemple : `globeX`).\n"
                 "   - **Tag** : Votre tag Valorant sans le `#` (exemple : `meow`).\n\n"
                 "*Note : Vous devez d'abord accepter le règlement si vous n'êtes pas encore enregistré.*\n\n"
-                f"*Les rôles correspondant à votre rang Valorant seront mis à jour à {get_next_update_time()} (heure de Paris).*"
-
+                f"*Les rôles correspondant à votre rang Valorant seront mis à jour rapidement.*"
             ),
             color=discord.Color.blue()
         )
@@ -355,7 +307,7 @@ class EmbedCog(commands.Cog):
         view = EmbedButtonsView(self)
         try:
             message = await channel.send(embed=embed, view=view)
-            success = await store_persistent_message(guild_id, channel.id, message.id, EMBED_MESSAGE_TYPE)
+            success = await store_persistent_message(guild_id, channel.id, message.id, EMBED_MESSAGE_TYPE, ctx.guild.name)
             if success:
                 await ctx.send(f"Embed envoyé dans {channel.mention}.", delete_after=10)
                 logger.info(f"Embed envoyé dans le salon {channel.id} par {ctx.author} et stocké en base de données.")
@@ -366,63 +318,8 @@ class EmbedCog(commands.Cog):
             logger.error(f"Erreur lors de l'envoi de l'embed : {e}")
             await ctx.send("Une erreur est survenue lors de l'envoi de l'embed.", delete_after=10)
 
-    async def update_embed_with_next_update_time(self):
-        """
-        Met à jour l'embed existant avec la prochaine heure de mise à jour.
-        """
-        next_update_time = get_next_update_time()
-
-        # Rechercher le message persistant pour chaque guilde
-        for guild in self.bot.guilds:
-            message_data = await get_persistent_message(
-                guild.id,
-                EMBED_MESSAGE_TYPE,
-                guild.name
-            )
-            if not message_data:
-                logger.info(f"Aucun message persistant trouvé pour la guilde {guild.id}.")
-                continue
-
-            channel = guild.get_channel(message_data["channel_id"])
-            if not channel:
-                logger.warning(f"Canal introuvable : {message_data['channel_id']} dans guild_id={guild.id}")
-                continue
-
-            try:
-                message = await channel.fetch_message(message_data["message_id"])
-
-                # Recréer l'embed avec la nouvelle heure
-                embed = discord.Embed(
-                    title="Gestion de vos informations Valorant",
-                    description=(
-                        "Ce message vous permet de **renseigner** ou d'**effacer** vos données Valorant.\n\n"
-                        "**Bouton bleu** : Enregistrer votre pseudo et votre tag Valorant.\n"
-                        "**Bouton rouge** : Supprimer vos informations Valorant de la base.\n\n"
-                        "**Instructions :**\n"
-                        "1. Cliquez sur le bouton bleu pour lier votre compte Valorant.\n"
-                        "2. Un formulaire s'ouvrira où vous devrez entrer :\n"
-                        "   - **Pseudo** : Votre pseudo Valorant (exemple : `globeX`).\n"
-                        "   - **Tag** : Votre tag Valorant sans le `#` (exemple : `meow`).\n\n"
-                        "*Note : Vous devez d'abord accepter le règlement si vous n'êtes pas encore enregistré.*\n\n"
-                        f"*Les rôles Valorant seront mis à jour à {get_next_update_time()} (heure de Paris).*"
-
-                    ),
-                    color=discord.Color.blue()
-                )
-                embed.set_footer(text="Tenez à jour vos informations pour obtenir le rôle correspondant à votre rang.")
-
-                await message.edit(embed=embed)
-                logger.info(f"Embed mis à jour pour le message ID {message.id} dans le canal {channel.name}.")
-            except discord.NotFound:
-                logger.warning(f"Message introuvable : {message_data['message_id']} dans le canal {channel.name}")
-            except Exception as e:
-                logger.error(f"Erreur lors de la mise à jour de l'embed : {e}")
-
     async def notify_duplicate_pseudo_tag(self, existing_user: discord.User, current_user: discord.User, pseudo: str, tag: str):
-        """
-        Envoie un embed dans le salon spécifique pour informer d'un doublon de pseudo + tag Valorant.
-        """
-        channel_id = 1315770052431188069  # Remplacez par l'ID de votre salon
+        channel_id = 1315770052431188069  # Remplacez par l'ID du salon désiré
         channel = self.bot.get_channel(channel_id)
         if not channel:
             logger.error(f"Salon avec l'ID {channel_id} introuvable.")
@@ -440,7 +337,6 @@ class EmbedCog(commands.Cog):
             timestamp=discord.utils.utcnow()
         )
         embed.set_footer(text="Gestion des Doublons de Pseudo Valorant")
-
         try:
             await channel.send(embed=embed)
             logger.info(f"Embed de doublon envoyé dans le salon {channel_id} pour {current_user} et {existing_user}.")
@@ -451,33 +347,58 @@ class EmbedCog(commands.Cog):
     async def ping(self, ctx: commands.Context):
         await ctx.send("Pong!")
 
-    @tasks.loop(minutes=10)
-    async def update_roles_task(self):
-        logger.info("Début de la tâche de mise à jour des rôles Valorant (logique ping-pong).")
+    async def update_roles_loop(self):
+        """
+        Boucle infinie qui tourne toutes les minutes:
+          - Tente de mettre à jour les rôles
+          - Si on reçoit un code 429 (RateLimitException), on arrête la mise à jour
+            et on attend 60s avant de recommencer
+          - Si tout va bien ou s'il n'y a aucun utilisateur, on attend 60s avant de recommencer
+        """
+        while True:
+            try:
+                await self.update_roles_task()
+            except RateLimitException as e:
+                logger.warning(f"RateLimitException rencontrée: {e}. Pause de 60s.")
+                # On stoppe immédiatement le cycle et on attend 60 secondes
+                await asyncio.sleep(60)
+            else:
+                # Tout s'est bien passé (ou aucun user à mettre à jour)
+                # On attend 60 secondes avant le prochain cycle
 
-        # 1) On récupère tous les utilisateurs dont needs_update = FALSE
+                await asyncio.sleep(60)
+
+    async def update_roles_task(self):
+        """
+        Effectue le cycle de mise à jour des rôles Valorant :
+          - Récupère les utilisateurs dont needs_update=FALSE
+          - Pour chacun, récupère/assigne puuid, rank, etc.
+          - Ajoute/Supprime le rôle correspondant
+          - Marque needs_update=TRUE
+          - S'arrête immédiatement si on reçoit un 429 (RateLimitException).
+        """
+        logger.info("Début de la tâche de mise à jour des rôles Valorant (phase ping-pong).")
         users = await get_users_with_update_flag_false()
         logger.info(f"{len(users)} utilisateurs trouvés avec needs_update=FALSE.")
 
-        # 2) S'il n'y a plus personne => on réinitialise TOUT à FALSE pour relancer un cycle complet
         if not users:
-            logger.info("Aucun utilisateur à mettre à jour. On repasse tout le monde à needs_update=FALSE.")
+            # S'il n'y a aucun utilisateur, on réinitialise tout (passe tout le monde en needs_update=FALSE)
+            logger.info("Aucun utilisateur à mettre à jour. On réinitialise needs_update=FALSE pour tout le monde.")
             await reset_all_update_flag_false()
-            logger.info("Fin de la tâche (aucun user). Tout est réinitialisé.")
-            # Mise à jour de l'embed même s'il n'y a pas eu de mise à jour de rang
-            await self.update_embed_with_next_update_time()
+            logger.info("Fin de la tâche (aucun user).")
+            # On ne fait pas de return pour que la boucle continue (dans update_roles_loop).
             return
 
-        # 3) Sinon, on met à jour seulement ceux qui ont needs_update=FALSE
         for record in users:
-            discord_id  = record["discord_id"]
-            pseudo      = record["valorant_pseudo"]
-            tag         = record["valorant_tag"]
-            puuid       = record.get("valorant_puuid")
-            region      = record.get("valorant_region")
+            discord_id = record["discord_id"]
+            pseudo = record["valorant_pseudo"]
+            tag = record["valorant_tag"]
+            puuid = record.get("valorant_puuid")
+            region = record.get("valorant_region")
             current_rank = record.get("valorant_rank")
-            current_elo  = record.get("valorant_elo")
+            current_elo = record.get("valorant_elo")
 
+            # Cherche le Member dans tous les serveurs
             member = None
             for guild in self.bot.guilds:
                 m = guild.get_member(discord_id)
@@ -487,28 +408,26 @@ class EmbedCog(commands.Cog):
 
             if not member:
                 logger.warning(f"[update_roles_task] Member introuvable pour Discord ID {discord_id}.")
-                # Marquer quand même comme mis à jour, pour ne pas le revoir à chaque fois
                 await mark_user_update_flag_true(discord_id)
                 continue
 
-            # Vérification rôle 'ban'
+            # Vérification du rôle "ban"
             try:
                 ban_role_id = await ModerationService.get_ban_role_id(member.guild.id)
                 if ban_role_id:
                     ban_role = member.guild.get_role(ban_role_id)
                     if ban_role and ban_role in member.roles:
                         logger.info(f"[update_roles_task] Skipping {member.display_name} (rôle 'ban').")
-                        # Marquer quand même comme mis à jour
                         await mark_user_update_flag_true(discord_id)
                         continue
             except Exception as e:
                 logger.error(f"[update_roles_task] Erreur vérification ban pour {member.display_name}: {e}")
-                # Marquer quand même comme mis à jour
                 await mark_user_update_flag_true(discord_id)
                 continue
 
-            # Vérifier/récupérer puuid/region si manquants
+            # Vérifier si puuid / region manquants
             if not puuid or not region:
+                # Peut lever RateLimitException
                 valo_info = await get_puuid(pseudo, tag)
                 if valo_info:
                     nom_tag, region, puuid = valo_info
@@ -517,11 +436,10 @@ class EmbedCog(commands.Cog):
                         logger.info(f"[update_roles_task] PUUID/région mis à jour pour Discord ID {discord_id}.")
                 else:
                     logger.warning(f"[update_roles_task] Impossible de récupérer le PUUID pour {pseudo}#{tag}.")
-                    # Marquer quand même comme mis à jour
                     await mark_user_update_flag_true(discord_id)
                     continue
 
-            # Récupérer rang du joueur (API)
+            # Récupérer le rang (peut lever RateLimitException)
             stats = await get_player_rank(region, puuid)
             if stats:
                 new_rank, new_elo = stats
@@ -529,27 +447,25 @@ class EmbedCog(commands.Cog):
                 new_rank, new_elo = None, None
                 logger.info(f"[update_roles_task] Joueur {pseudo}#{tag} n'a pas de rang compétitif ou échec API.")
 
-            # Mettre à jour la DB si rang/Elo ont changé
+            # Mise à jour DB si changement de rank/Elo
             if (new_rank != current_rank) or (new_elo != current_elo):
                 if new_rank and new_elo:
                     updated = await set_valorant_details(discord_id, puuid, region, new_rank, new_elo)
                     if updated:
                         logger.info(f"[update_roles_task] Rang/Elo mis à jour pour {discord_id}: {new_rank} / {new_elo}")
 
-            # Déterminer le nouveau rôle "rang Valorant"
+            # Si pas de nouveau rang, marquer en TRUE et passer au suivant
             if not new_rank:
-                # Joueur pas classé => on pourrait le retirer, etc.
-                # Quoi qu'il en soit, on le marque comme mis à jour
                 await mark_user_update_flag_true(discord_id)
                 continue
-            else:
-                role_config_id = VALORANT_RANK_TO_DB_ID.get(new_rank)
-                if not role_config_id:
-                    logger.warning(f"[update_roles_task] Aucun mapping pour {new_rank}.")
-                    await mark_user_update_flag_true(discord_id)
-                    continue
 
-            # Obtenir l'ID Discord du rôle via roles_configurations
+            role_config_id = VALORANT_RANK_TO_DB_ID.get(new_rank)
+            if not role_config_id:
+                logger.warning(f"[update_roles_task] Aucun mapping pour {new_rank}.")
+                await mark_user_update_flag_true(discord_id)
+                continue
+
+            # Récupérer l'ID Discord du rôle
             try:
                 discord_role_id = await get_role_id_for_config(member.guild.id, member.guild.name, role_config_id)
             except Exception as e:
@@ -567,13 +483,14 @@ class EmbedCog(commands.Cog):
                 await mark_user_update_flag_true(discord_id)
                 continue
 
-            # Supprimer anciens rôles de rang
+            # Récupérer la config de tous les rôles rang
             role_mappings = await get_role_mappings(member.guild.id, member.guild.name)
             if not role_mappings:
                 logger.warning(f"[update_roles_task] Aucune config de rôles pour guild={member.guild.id}.")
                 await mark_user_update_flag_true(discord_id)
                 continue
 
+            # Retirer les anciens rôles Valorant
             rank_role_ids = set(role_mappings.values())
             roles_to_remove = [r for r in member.roles if (r.id in rank_role_ids and r.id != desired_role.id)]
             if roles_to_remove:
@@ -582,7 +499,6 @@ class EmbedCog(commands.Cog):
                     logger.info(f"[update_roles_task] Rôles supprimés pour {member.display_name}: {[r.name for r in roles_to_remove]}")
                 except Exception as e:
                     logger.error(f"[update_roles_task] Erreur remove_roles pour {member.display_name}: {e}")
-                    # Même si on a eu un souci, on le marque comme à jour pour ne pas bloquer
                     await mark_user_update_flag_true(discord_id)
                     continue
 
@@ -593,17 +509,12 @@ class EmbedCog(commands.Cog):
                     logger.info(f"[update_roles_task] Rôle '{desired_role.name}' ajouté à {member.display_name}.")
                 except Exception as e:
                     logger.error(f"[update_roles_task] Erreur add_roles '{desired_role.name}' -> {member.display_name}: {e}")
-                    # Quoi qu'il arrive, on marque comme à jour
                     await mark_user_update_flag_true(discord_id)
                     continue
 
-            # Enfin, on marque cet utilisateur comme mis à jour (needs_update=TRUE) 
             await mark_user_update_flag_true(discord_id)
 
         logger.info("Fin de la tâche de mise à jour des rôles Valorant (phase ping-pong).")
-
-        # Mise à jour de l'embed pour afficher la prochaine heure de mise à jour
-        await self.update_embed_with_next_update_time()
 
     @commands.command(name="reset_valo_updates")
     @commands.has_permissions(administrator=True)
@@ -620,10 +531,6 @@ class EmbedCog(commands.Cog):
 
     @refresh_roles_cache_task.before_loop
     async def before_refresh_roles_cache_task(self):
-        await self.bot.wait_until_ready()
-
-    @update_roles_task.before_loop
-    async def before_update_roles_task(self):
         await self.bot.wait_until_ready()
 
 async def setup(bot: commands.Bot):

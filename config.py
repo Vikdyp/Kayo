@@ -66,6 +66,6 @@ LOGGING = {
     'vocal.creator' : False,
 
     # ACCUEIL
-    'accueil.services' : True
+    'accueil.services' : False
 
 }
