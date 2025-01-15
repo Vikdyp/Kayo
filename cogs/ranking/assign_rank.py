@@ -1,4 +1,4 @@
-#cogs\ranking\assign_rank.py
+# cogs/ranking/assign_rank.py
 import re
 from typing import Optional
 import discord
@@ -26,12 +26,15 @@ from cogs.moderation.services.moderation_service import ModerationService
 from utils.database import database
 import logging
 import asyncio
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo  # Utilisation de la librairie native zoneinfo
 
 from utils.request_manager import enqueue_button_request, enqueue_request
 
 logger = logging.getLogger("assign_rank")
 
 EMBED_MESSAGE_TYPE = "embed_rank"
+
 
 # --- Nouveau helper pour récupérer le salon 'rules' ---
 async def get_rules_channel_id(guild_id: int) -> Optional[int]:
@@ -40,6 +43,7 @@ async def get_rules_channel_id(guild_id: int) -> Optional[int]:
     Désormais basé sur server_id, donc on réutilise get_channel_id.
     """
     return await get_channel_id(guild_id, 'rules')
+
 
 # --- Mapping rang Valorant → ID dans roles_configurations ---
 # Note : "id" ici fait référence à la PK de la table roles_configurations,
@@ -72,6 +76,24 @@ VALORANT_RANK_TO_DB_ID = {
     "Radiant": 11,
     "no_rank": 41,
 }
+
+
+# Fonction pour calculer la prochaine mise à jour en heure de Paris en utilisant zoneinfo
+def get_next_update_time():
+    """
+    Calcule l'heure de la prochaine mise à jour dans le fuseau horaire de Paris,
+    en ajoutant 10 minutes à l'heure actuelle.
+    """
+    try:
+        from zoneinfo import ZoneInfo  # Librairie native zoneinfo
+        paris_tz = ZoneInfo("Europe/Paris")
+    except Exception as e:
+        import pytz
+        paris_tz = pytz.timezone("Europe/Paris")
+    
+    now = datetime.now(paris_tz)
+    next_update = now + timedelta(minutes=10)
+    return next_update.strftime('%H:%M')
 
 class PseudoTagModal(discord.ui.Modal, title="Renseignez votre Pseudo et Tag Valorant"):
     pseudo = discord.ui.TextInput(
@@ -179,22 +201,21 @@ class PseudoTagModal(discord.ui.Modal, title="Renseignez votre Pseudo et Tag Val
                 "Veuillez réessayer plus tard.",
                 ephemeral=True
             )
-            
+
+
 class EmbedButtonsView(discord.ui.View):
     def __init__(self, cog):
         super().__init__(timeout=None)
         self.cog = cog
 
     @discord.ui.button(
-    label="Renseigner Pseudo/Tag Valorant",
-    style=discord.ButtonStyle.primary,
-    custom_id="button:pseudo_tag"
+        label="Renseigner Pseudo/Tag Valorant",
+        style=discord.ButtonStyle.primary,
+        custom_id="button:pseudo_tag"
     )
     @enqueue_button_request("FAST")
     async def pseudo_tag_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-
         modal = PseudoTagModal(interaction.user, self.cog)
-
         if not interaction.response.is_done():
             await interaction.response.send_modal(modal)
 
@@ -226,6 +247,7 @@ class EmbedButtonsView(discord.ui.View):
                 "Une erreur est survenue lors de la suppression de vos données.",
                 ephemeral=True
             )
+
 
 class EmbedCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -309,6 +331,8 @@ class EmbedCog(commands.Cog):
                     "Envoi d'un nouvel embed."
                 )
 
+        next_update_time = get_next_update_time()
+
         embed = discord.Embed(
             title="Gestion de vos informations Valorant",
             description=(
@@ -321,7 +345,8 @@ class EmbedCog(commands.Cog):
                 "   - **Pseudo** : Votre pseudo Valorant (exemple : `globeX`).\n"
                 "   - **Tag** : Votre tag Valorant sans le `#` (exemple : `meow`).\n\n"
                 "*Note : Vous devez d'abord accepter le règlement si vous n'êtes pas encore enregistré.*\n\n"
-                "*Les rôles correspondant à votre rang Valorant sont mis à jour toutes les heures.*"
+                f"*Les rôles correspondant à votre rang Valorant seront mis à jour à {get_next_update_time()} (heure de Paris).*"
+
             ),
             color=discord.Color.blue()
         )
@@ -340,6 +365,58 @@ class EmbedCog(commands.Cog):
         except Exception as e:
             logger.error(f"Erreur lors de l'envoi de l'embed : {e}")
             await ctx.send("Une erreur est survenue lors de l'envoi de l'embed.", delete_after=10)
+
+    async def update_embed_with_next_update_time(self):
+        """
+        Met à jour l'embed existant avec la prochaine heure de mise à jour.
+        """
+        next_update_time = get_next_update_time()
+
+        # Rechercher le message persistant pour chaque guilde
+        for guild in self.bot.guilds:
+            message_data = await get_persistent_message(
+                guild.id,
+                EMBED_MESSAGE_TYPE,
+                guild.name
+            )
+            if not message_data:
+                logger.info(f"Aucun message persistant trouvé pour la guilde {guild.id}.")
+                continue
+
+            channel = guild.get_channel(message_data["channel_id"])
+            if not channel:
+                logger.warning(f"Canal introuvable : {message_data['channel_id']} dans guild_id={guild.id}")
+                continue
+
+            try:
+                message = await channel.fetch_message(message_data["message_id"])
+
+                # Recréer l'embed avec la nouvelle heure
+                embed = discord.Embed(
+                    title="Gestion de vos informations Valorant",
+                    description=(
+                        "Ce message vous permet de **renseigner** ou d'**effacer** vos données Valorant.\n\n"
+                        "**Bouton bleu** : Enregistrer votre pseudo et votre tag Valorant.\n"
+                        "**Bouton rouge** : Supprimer vos informations Valorant de la base.\n\n"
+                        "**Instructions :**\n"
+                        "1. Cliquez sur le bouton bleu pour lier votre compte Valorant.\n"
+                        "2. Un formulaire s'ouvrira où vous devrez entrer :\n"
+                        "   - **Pseudo** : Votre pseudo Valorant (exemple : `globeX`).\n"
+                        "   - **Tag** : Votre tag Valorant sans le `#` (exemple : `meow`).\n\n"
+                        "*Note : Vous devez d'abord accepter le règlement si vous n'êtes pas encore enregistré.*\n\n"
+                        f"*Les rôles Valorant seront mis à jour à {get_next_update_time()} (heure de Paris).*"
+
+                    ),
+                    color=discord.Color.blue()
+                )
+                embed.set_footer(text="Tenez à jour vos informations pour obtenir le rôle correspondant à votre rang.")
+
+                await message.edit(embed=embed)
+                logger.info(f"Embed mis à jour pour le message ID {message.id} dans le canal {channel.name}.")
+            except discord.NotFound:
+                logger.warning(f"Message introuvable : {message_data['message_id']} dans le canal {channel.name}")
+            except Exception as e:
+                logger.error(f"Erreur lors de la mise à jour de l'embed : {e}")
 
     async def notify_duplicate_pseudo_tag(self, existing_user: discord.User, current_user: discord.User, pseudo: str, tag: str):
         """
@@ -370,14 +447,6 @@ class EmbedCog(commands.Cog):
         except Exception as e:
             logger.error(f"Erreur lors de l'envoi de l'embed de doublon : {e}")
 
-    @send_embed.error
-    async def send_embed_error(self, ctx: commands.Context, error):
-        if isinstance(error, commands.MissingPermissions):
-            await ctx.send("Tu n'as pas la permission d'utiliser cette commande.", delete_after=10)
-        else:
-            logger.error(f"Erreur dans send_embed: {error}")
-            await ctx.send("Une erreur est survenue lors de l'exécution de la commande.", delete_after=10)
-
     @commands.command(name="ping")
     async def ping(self, ctx: commands.Context):
         await ctx.send("Pong!")
@@ -395,6 +464,8 @@ class EmbedCog(commands.Cog):
             logger.info("Aucun utilisateur à mettre à jour. On repasse tout le monde à needs_update=FALSE.")
             await reset_all_update_flag_false()
             logger.info("Fin de la tâche (aucun user). Tout est réinitialisé.")
+            # Mise à jour de l'embed même s'il n'y a pas eu de mise à jour de rang
+            await self.update_embed_with_next_update_time()
             return
 
         # 3) Sinon, on met à jour seulement ceux qui ont needs_update=FALSE
@@ -530,6 +601,9 @@ class EmbedCog(commands.Cog):
             await mark_user_update_flag_true(discord_id)
 
         logger.info("Fin de la tâche de mise à jour des rôles Valorant (phase ping-pong).")
+
+        # Mise à jour de l'embed pour afficher la prochaine heure de mise à jour
+        await self.update_embed_with_next_update_time()
 
     @commands.command(name="reset_valo_updates")
     @commands.has_permissions(administrator=True)
