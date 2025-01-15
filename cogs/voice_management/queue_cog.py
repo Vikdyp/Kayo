@@ -340,12 +340,7 @@ class MatchmakingQueue(commands.Cog):
         )
         embed.add_field(name="Solos en attente", value=str(total_solo), inline=True)
         embed.add_field(name="Équipes en attente", value=str(total_team), inline=True)
-        embed.add_field(name="Blocs totaux", value=str(total_entries), inline=True)
-
-        # Optionnel : total teams created
-        embed.add_field(name="Total des équipes créées", 
-                        value=str(self.total_teams_created), 
-                        inline=True)
+        embed.add_field(name="Entrer total", value=str(total_entries), inline=True)
 
         # Rôle prioritaire
         if self.role_counters:

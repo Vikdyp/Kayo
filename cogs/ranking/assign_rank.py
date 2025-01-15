@@ -1,3 +1,4 @@
+#cogs\ranking\assign_rank.py
 import re
 from typing import Optional
 import discord
@@ -77,8 +78,8 @@ VALORANT_RANK_TO_DB_ID = {
 class PseudoTagModal(discord.ui.Modal, title="Renseignez votre Pseudo et Tag Valorant"):
     pseudo = discord.ui.TextInput(
         label="Pseudo",
-        placeholder="Entrez votre pseudo Valorant (exemple: globeX)",
-        max_length=16,
+        placeholder="Entrez votre pseudo Valorant (exemple: Swyzin ぼ)",
+        max_length=32,  # vous pouvez augmenter la taille si besoin
         required=True,
     )
     tag = discord.ui.TextInput(
@@ -96,15 +97,16 @@ class PseudoTagModal(discord.ui.Modal, title="Renseignez votre Pseudo et Tag Val
     async def on_submit(self, interaction: discord.Interaction):
         pseudo = self.pseudo.value.strip()
         tag = self.tag.value.strip()
-        pseudo_pattern = re.compile(r"^[A-Za-z0-9 ]+$")
 
-        if not pseudo_pattern.match(pseudo):
+        # Plus de restriction pour le pseudo : on accepte tout ce qui est non vide
+        if not pseudo:
             await interaction.response.send_message(
-                "Le pseudo ne doit contenir que des lettres, des chiffres et des espaces.",
+                "Le pseudo ne doit pas être vide.",
                 ephemeral=True
             )
             return
 
+        # Pour le tag, on conserve la restriction pour qu'il ne contienne que des lettres et chiffres
         if not tag.isalnum():
             await interaction.response.send_message(
                 "Le tag ne doit contenir que des lettres et des chiffres.",
@@ -152,15 +154,13 @@ class PseudoTagModal(discord.ui.Modal, title="Renseignez votre Pseudo et Tag Val
                 logger.info(f"Utilisateur {interaction.user} a enregistré son pseudo et tag Valorant.")
             else:
                 await interaction.response.send_message(
-                    "Une erreur est survenue lors de l'enregistrement de vos informations. "
-                    "Veuillez réessayer plus tard.",
+                    "Une erreur est survenue lors de l'enregistrement de vos informations. Veuillez réessayer plus tard.",
                     ephemeral=True
                 )
         except Exception as e:
             logger.error(f"Erreur lors de l'enregistrement des données pour {interaction.user}: {e}")
             await interaction.response.send_message(
-                "Une erreur est survenue lors de l'enregistrement de vos informations. "
-                "Veuillez réessayer plus tard.",
+                "Une erreur est survenue lors de l'enregistrement de vos informations. Veuillez réessayer plus tard.",
                 ephemeral=True
             )
 
