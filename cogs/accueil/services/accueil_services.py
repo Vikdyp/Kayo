@@ -1,10 +1,15 @@
 #cogs\accueil\services\accueil_services.py
 from datetime import date, datetime
 from typing import Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 from utils.database import database
 import logging
 
 logger = logging.getLogger("accueil.services")
+
+def get_local_datetime():
+    paris_tz = ZoneInfo("Europe/Paris")
+    return datetime.now(paris_tz)
 
 async def get_welcome_channel_id(guild_id: int) -> Optional[int]:
     server_id = await get_server_id(guild_id)
@@ -46,13 +51,21 @@ async def ensure_today_member_stats(guild_id: int) -> None:
     server_id = await get_server_id(guild_id)
     if server_id is None:
         return
-    today = date.today()
+    
+    # Utilisation explicite de la date locale
+    paris_tz = ZoneInfo("Europe/Paris")
+    today = datetime.now(paris_tz).date()
+
+    logger.debug(f"ensure_today_member_stats - Vérification pour la date : {today}")
     query_select = """
         SELECT 1 FROM member_daily_stats
         WHERE guild_id = $1 AND date = $2;
     """
     record = await database.fetchrow(query_select, server_id, today)
-    if record is None:
+    if record:
+        logger.debug(f"Entrée trouvée pour la date {today} et guild_id {guild_id}.")
+    else:
+        logger.debug(f"Aucune entrée trouvée pour la date {today} et guild_id {guild_id}, création en cours.")
         query_insert = """
             INSERT INTO member_daily_stats (guild_id, date, join_count, leave_count)
             VALUES ($1, $2, 0, 0);

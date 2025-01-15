@@ -55,7 +55,7 @@ LOGGING = {
     'rules_service' : False,
 
     # VOICE MANAGEMENT
-    'five_stack' : True,
+    'five_stack' : False,
     'voice_cleaner' : False,
 
     # ???
@@ -64,5 +64,8 @@ LOGGING = {
     # OTHER
     'vocal.services' : False,
     'vocal.creator' : False,
+
+    # ACCUEIL
+    'accueil.services' : True
 
 }
