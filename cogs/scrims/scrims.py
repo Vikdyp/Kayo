@@ -1,258 +1,344 @@
-# cogs/scrims/scrims.py
-
+import logging
 import discord
 from discord.ext import commands
-from discord import app_commands
-import logging
-from typing import Optional, Dict, Any, List
-from datetime import datetime
-from cogs.utilities.data_manager import DataManager
-from cogs.utilities.request_manager import enqueue_request
-from cogs.utilities.permission_manager import is_admin
-from cogs.utilities.confirmation_view import ConfirmationView
+import asyncio
+from datetime import datetime, timedelta
 
-logger = logging.getLogger("discord.scrims")
+from cogs.scrims.service.scrims_services import ScrimService
 
-VALID_MAPS = ["SUNSET", "LOTUS", "PEARL", "FRACTURE", "BREEZE", "ICEBOX", "BIND", "HAVEN", "SPLIT", "ASCENT"]
+logger = logging.getLogger("scrims")
 
-class Scrims(commands.Cog):
-    """Cog pour la gestion des scrims et des équipes."""
+class ScrimCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.data = DataManager()
-        self.config: Dict[str, Any] = {}
-        self.scrims_data: Dict[str, Any] = {}
-        self.teams_data: Dict[str, Any] = {}
-        self.tournaments_data: Dict[str, Any] = {}
-        self.leaderboard_data: Dict[str, Any] = {}
-        self.bot.loop.create_task(self.load_all_data())
+        self.service = ScrimService()
+        # Lancement des tâches asynchrones au démarrage
+        asyncio.create_task(self.load_persistent_messages())
+        asyncio.create_task(self.load_active_scrims())
+        asyncio.create_task(self.scrim_end_checker())
 
-    async def load_all_data(self):
-        self.config = await self.data.get_config()
-        self.scrims_data = await self.data.get_scrims_data()
-        self.teams_data = await self.data.get_teams_data()
-        self.tournaments_data = await self.data.get_tournaments_data()
-        self.leaderboard_data = await self.data.get_leaderboard_data()
-        logger.info("Scrims: toutes les données chargées.")
+    @commands.command(name="init_scrim")
+    async def init_scrim(self, ctx: commands.Context):
+        """
+        Envoie le message principal contenant le bouton "Créer un scrim" et le persiste.
+        """
+        view = discord.ui.View()
+        view.add_item(CreateScrimButton(self.bot))
+        message = await ctx.send("Cliquez sur le bouton ci-dessous pour créer un scrim :", view=view)
+        internal_guild_id = await self.service.get_internal_server_id(ctx.guild.id)
+        if internal_guild_id is not None:
+            await self.service.persist_message(
+                channel_id=message.channel.id,
+                message_id=message.id,
+                message_type="scrim_creation",
+                guild_id=internal_guild_id
+            )
 
-    async def save_all_data(self):
-        await self.data.save_config(self.config)
-        await self.data.save_scrims_data(self.scrims_data)
-        await self.data.save_teams_data(self.teams_data)
-        await self.data.save_tournaments_data(self.tournaments_data)
-        await self.data.save_leaderboard_data(self.leaderboard_data)
-        logger.info("Scrims: toutes les données sauvegardées.")
+    async def load_persistent_messages(self):
+        """
+        Au démarrage, pour chaque guilde, charge le message persistant principal et y ré-attache la vue.
+        """
+        await self.bot.wait_until_ready()
+        for guild in self.bot.guilds:
+            internal_guild_id = await self.service.get_internal_server_id(guild.id)
+            if internal_guild_id is None:
+                logger.warning(f"Serveur introuvable en BDD pour la guilde {guild.id}.")
+                continue
+            data = await self.service.get_persistent_messages("scrim_creation", internal_guild_id)
+            if data:
+                msg_data = data[0]  # utilisation du premier message persistant
+                channel = guild.get_channel(msg_data.get("channel_id"))
+                if channel:
+                    try:
+                        message = await channel.fetch_message(msg_data.get("message_id"))
+                        view = discord.ui.View()
+                        view.add_item(CreateScrimButton(self.bot))
+                        await message.edit(view=view)
+                        logger.info(f"CreateScrimButton réassigné pour guild (ID interne={internal_guild_id}).")
+                    except Exception as e:
+                        logger.error(f"Erreur lors de la réassignation du CreateScrimButton: {e}")
+            else:
+                logger.warning(f"Aucun message persistant de création de scrim trouvé pour la guilde (ID interne={internal_guild_id}).")
 
-    async def ask_confirmation(self, interaction: discord.Interaction, message: str):
-        view = ConfirmationView(interaction, None)
-        await interaction.response.send_message(message, view=view, ephemeral=True)
-        await view.wait()
-        return view.value
+    async def load_active_scrims(self):
+        """
+        Au démarrage, recharge et ré-attache la vue pour chaque embed de scrim actif.
+        Ceci permet de lier correctement les boutons au scrim correspondant,
+        même après un redémarrage du bot.
+        """
+        await self.bot.wait_until_ready()
+        active_scrims = await self.service.get_active_scrims()  # Retourne id, message_id, channel_id, etc.
+        if not active_scrims:
+            logger.info("Aucun scrim actif trouvé.")
+            return
 
-    def is_user_in_team(self, user_id: int) -> bool:
-        for team_key, team_info in self.teams_data.items():
-            if user_id in team_info["players"] or team_info.get("sub") == user_id or team_info.get("coach") == user_id:
-                return True
-        return False
-
-    # ---------- Commande /create_team ----------
-    @app_commands.command(name="create_team", description="Créer une équipe")
-    @app_commands.describe(
-        team_name="Nom de l'équipe",
-        user1="Joueur 1",
-        user2="Joueur 2",
-        user3="Joueur 3",
-        user4="Joueur 4",
-        user5="Joueur 5",
-        sub="Remplaçant (optionnel)",
-        coach="Coach (optionnel)"
-    )
-    @enqueue_request()
-    async def create_team(
-        self,
-        interaction: discord.Interaction,
-        team_name: str,
-        user1: discord.Member,
-        user2: discord.Member,
-        user3: discord.Member,
-        user4: discord.Member,
-        user5: discord.Member,
-        sub: Optional[discord.Member] = None,
-        coach: Optional[discord.Member] = None
-    ):
-        await interaction.response.defer(ephemeral=True)
-        team_members = [user1, user2, user3, user4, user5]
-        if sub:
-            team_members.append(sub)
-        if coach:
-            team_members.append(coach)
-
-        # Vérifier que personne n'est déjà dans une autre équipe
-        for member in team_members:
-            if self.is_user_in_team(member.id):
-                return await interaction.followup.send(f"{member.mention} est déjà dans une autre équipe.", ephemeral=True)
-
-        # Demander confirmation à chaque membre (sauf le coach, éventuellement)
-        # On part du principe que sub et coach doivent aussi confirmer
-        for member in team_members:
+        for scrim in active_scrims:
+            scrim_id = scrim.get("id")
+            channel_id = scrim.get("channel_id")
+            message_id = scrim.get("message_id")
+            if not all([scrim_id, channel_id, message_id]):
+                continue
+            channel = self.bot.get_channel(channel_id)
+            if not channel:
+                logger.warning(f"Channel {channel_id} introuvable pour scrim {scrim_id}.")
+                continue
             try:
-                view = ConfirmationView(interaction, None)
-                await member.send(f"{interaction.user.display_name} vous propose de rejoindre l'équipe '{team_name}'. Confirmez-vous ?", view=view)
-                await view.wait()
-                if not view.value:
-                    return await interaction.followup.send(f"{member.mention} a refusé de rejoindre l'équipe.", ephemeral=True)
-            except discord.Forbidden:
-                return await interaction.followup.send(f"Impossible d'envoyer un message à {member.mention}.", ephemeral=True)
+                message = await channel.fetch_message(message_id)
             except Exception as e:
-                logger.exception(f"Erreur lors de la demande de confirmation à {member.display_name}: {e}")
-                return await interaction.followup.send("Erreur lors de la demande de confirmation.", ephemeral=True)
+                logger.error(f"Erreur lors de la récupération du message {message_id} pour scrim {scrim_id}: {e}")
+                continue
+            view = ScrimView(scrim_id, cog=self)
+            try:
+                await message.edit(view=view)
+                logger.info(f"Vue ré-attachée pour scrim {scrim_id}.")
+            except Exception as e:
+                logger.error(f"Erreur lors de la ré-attache de la vue pour scrim {scrim_id}: {e}")
 
-        # Tous ont confirmé
-        if not await self.ask_confirmation(interaction, f"Confirmez-vous la création de l'équipe '{team_name}' ?"):
-            return await interaction.followup.send("Action annulée.", ephemeral=True)
+    async def scrim_end_checker(self):
+        """
+        Vérifie périodiquement (toutes les minutes) si des scrims actifs sont arrivés à échéance,
+        et déclenche leur traitement de fin.
+        """
+        await self.bot.wait_until_ready()
+        while not self.bot.is_closed():
+            try:
+                active_scrims = await self.service.get_active_scrims_full_info()
+                now = datetime.now()
+                for scrim in active_scrims:
+                    scrim_id = scrim.get("id")
+                    scrim_datetime = scrim.get("datetime")
+                    if not scrim_datetime:
+                        continue
+                    # Si l'heure du scrim est passée depuis au moins 60 secondes
+                    if now >= scrim_datetime + timedelta(seconds=60):
+                        logger.info("Le scrim %s est arrivé à échéance (prévu pour %s)", scrim_id, scrim_datetime)
+                        asyncio.create_task(self.schedule_scrim_end(scrim_id, scrim_datetime))
+                await asyncio.sleep(60)
+            except Exception as e:
+                logger.error("Erreur dans scrim_end_checker: %s", e)
+                await asyncio.sleep(60)
 
-        # Créer l'équipe
-        team_id = len(self.teams_data) + 1
-        team_key = f"team_{team_id}"
-        players = [user1.id, user2.id, user3.id, user4.id, user5.id]
-        self.teams_data[team_key] = {
-            "id": team_id,
-            "name": team_name,
-            "players": players,
-            "sub": sub.id if sub else None,
-            "coach": coach.id if coach else None,
-            "wins": 0,
-            "losses": 0
-        }
-        await self.save_all_data()
+    async def build_scrim_embed(self, scrim_info: dict, creator_name: str) -> discord.Embed:
+        """
+        Construit l'embed de présentation du scrim.
+        Le titre affiche le nombre de participants inscrits sur le total (ici, 10).
+        """
+        total_max = 10
+        nb_inscrits = scrim_info.get("nb_participants", 0)
+        titre = f"Scrim de {creator_name} {nb_inscrits}/{total_max}"
+        embed = discord.Embed(title=titre, color=discord.Color.blue())
 
-        # Poster dans le forum présentation-équipes
-        forum_channel = self.bot.get_channel(self.config.get("teams_forum_id"))
-        if not forum_channel or forum_channel.type != discord.ChannelType.guild_forum:
-            return await interaction.followup.send("Le forum 'présentation-équipes' est introuvable ou n'est pas un forum.", ephemeral=True)
+        date_obj = scrim_info.get("datetime")
+        date_str = date_obj.strftime("%d/%m/%Y") if date_obj else "-"
+        heure_str = date_obj.strftime("%H:%M") if date_obj else "-"
 
-        embed = discord.Embed(title=f"Équipe {team_name}", color=discord.Color.green())
-        members_str = ""
-        for p_id in players:
-            members_str += f"<@{p_id}>\n"
-        if sub:
-            members_str += f"Sub: <@{sub.id}>\n"
-        if coach:
-            members_str += f"Coach: <@{coach.id}>\n"
-        embed.add_field(name="Membres", value=members_str, inline=False)
-        embed.add_field(name="ID Équipe", value=str(team_id), inline=True)
+        embed.add_field(name="🗺 Map", value=scrim_info.get("map", "-"), inline=True)
+        embed.add_field(name="🥇 Rang", value=scrim_info.get("rang", "-"), inline=True)
+        embed.add_field(name="📅 Date et Heure", value=f"{date_str} à {heure_str}", inline=True)
+        if scrim_info.get("autre"):
+            embed.add_field(name="📰 Autres précisions", value=scrim_info.get("autre"), inline=False)
 
-        thread = await forum_channel.create_thread(name=f"Équipe {team_name}", content=None, embed=embed)
-        await interaction.followup.send(f"Équipe '{team_name}' créée avec succès dans {forum_channel.mention} !", ephemeral=True)
+        team1 = await self.format_team(scrim_info.get("team1", []))
+        team2 = await self.format_team(scrim_info.get("team2", []))
+        embed.add_field(name="Équipe 1", value=team1, inline=True)
+        embed.add_field(name="Équipe 2", value=team2, inline=True)
+        return embed
 
-    # ---------- Commande /remove_team ----------
-    @app_commands.command(name="remove_team", description="Supprimer une équipe")
-    @app_commands.describe(team_id="ID de l'équipe à supprimer")
-    @is_admin()
-    @enqueue_request()
-    async def remove_team(self, interaction: discord.Interaction, team_id: int):
-        await interaction.response.defer(ephemeral=True)
-        team_key = f"team_{team_id}"
-        if team_key not in self.teams_data:
-            return await interaction.followup.send("Équipe introuvable.", ephemeral=True)
+    async def format_team(self, team: list) -> str:
+        mentions = []
+        for internal_id in team:
+            discord_id = await self.service.get_discord_id(internal_id)
+            if discord_id:
+                mentions.append(f"<@{discord_id}>")
+            else:
+                mentions.append("Inconnu")
+        return ", ".join(mentions) if mentions else "En attente..."
 
-        team_name = self.teams_data[team_key]["name"]
-        if not await self.ask_confirmation(interaction, f"Confirmez-vous la suppression de l'équipe '{team_name}' ?"):
-            return await interaction.followup.send("Action annulée.", ephemeral=True)
+    async def schedule_scrim_end(self, scrim_id: int, scrim_datetime: datetime):
+        """
+        Traite la fin du scrim : supprime l'embed, supprime le scrim en BDD et envoie un rappel en MP aux participants.
+        """
+        now = datetime.now()
+        delay = (scrim_datetime - now).total_seconds()
+        if delay < 0:
+            delay = 0
+        await asyncio.sleep(delay)
+        logger.info("Début du traitement de fin de scrim %s", scrim_id)
 
-        del self.teams_data[team_key]
-        await self.save_all_data()
-        await interaction.followup.send(f"L'équipe '{team_name}' a été supprimée avec succès.", ephemeral=True)
+        scrim_info = await self.service.get_scrim_info(scrim_id)
+        if not scrim_info:
+            logger.error("Scrim %s non trouvé en BDD", scrim_id)
+            return
 
-    # ---------- Commande /team_add_member ----------
-    @app_commands.command(name="team_add_member", description="Ajouter un membre dans une équipe")
-    @app_commands.describe(team_id="ID de l'équipe", user="Utilisateur à ajouter", role="player/sub/coach")
-    @is_admin()
-    @enqueue_request()
-    async def team_add_member(self, interaction: discord.Interaction, team_id: int, user: discord.Member, role: str):
-        await interaction.response.defer(ephemeral=True)
-        team_key = f"team_{team_id}"
-        if team_key not in self.teams_data:
-            return await interaction.followup.send("Équipe introuvable.", ephemeral=True)
+        participants = await self.service.get_scrim_participants(scrim_id)
+        if not participants:
+            logger.info("Aucun participant trouvé pour le scrim %s", scrim_id)
 
-        role = role.lower()
-        if role not in ["player", "sub", "coach"]:
-            return await interaction.followup.send("Rôle invalide. Choisir player/sub/coach.", ephemeral=True)
+        channel = self.bot.get_channel(scrim_info.get("channel_id"))
+        if channel:
+            try:
+                message = await channel.fetch_message(scrim_info.get("message_id"))
+                await message.delete()
+                logger.info("Message d'embed du scrim %s supprimé", scrim_id)
+            except Exception as e:
+                logger.error("Erreur lors de la suppression de l'embed du scrim %s: %s", scrim_id, e)
+        else:
+            logger.warning("Channel non trouvé pour scrim %s", scrim_id)
 
-        team_info = self.teams_data[team_key]
-        if self.is_user_in_team(user.id):
-            return await interaction.followup.send(f"{user.mention} est déjà dans une autre équipe.", ephemeral=True)
+        await self.service.delete_scrim(scrim_id)
 
-        # Vérifier slots
-        if role == "player":
-            if len(team_info["players"]) >= 5:
-                return await interaction.followup.send("L'équipe a déjà 5 joueurs.", ephemeral=True)
-        elif role == "sub":
-            if team_info["sub"] is not None:
-                return await interaction.followup.send("Cette équipe a déjà un remplaçant.", ephemeral=True)
-        elif role == "coach":
-            if team_info["coach"] is not None:
-                return await interaction.followup.send("Cette équipe a déjà un coach.", ephemeral=True)
+        # Envoi d'un rappel par MP aux participants
+        for internal_user_id in participants:
+            discord_id = await self.service.get_discord_id(internal_user_id)
+            if discord_id:
+                user = self.bot.get_user(discord_id)
+                if not user:
+                    try:
+                        user = await self.bot.fetch_user(discord_id)
+                    except Exception as fetch_err:
+                        logger.error("Erreur lors de la récupération de l'utilisateur %s: %s", discord_id, fetch_err)
+                        continue
+                try:
+                    await user.send("Rappel : Le scrim auquel vous étiez inscrit vient de débuter !")
+                    logger.info("Rappel envoyé à l'utilisateur %s", discord_id)
+                except Exception as e:
+                    logger.error("Erreur lors de l'envoi du DM à l'utilisateur %s: %s", discord_id, e)
+            else:
+                logger.warning("Impossible de retrouver le discord_id pour l'utilisateur interne %s", internal_user_id)
 
-        # Demander confirmation au user
+# ---- Vues et interactions ----
+
+class CreateScrimButton(discord.ui.Button):
+    def __init__(self, bot: commands.Bot):
+        super().__init__(label="Créer un scrim", style=discord.ButtonStyle.primary, custom_id="create_scrim")
+        self.bot = bot
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(ScrimModal(self.bot))
+
+class ScrimModal(discord.ui.Modal, title="Créer un scrim"):
+    date = discord.ui.TextInput(
+        label="Date (JJ/MM/YYYY)",
+        placeholder="Ex : 25/12/2025",
+        required=True
+    )
+    heure = discord.ui.TextInput(
+        label="Heure (HH:MM)",
+        placeholder="Ex : 20:00",
+        required=True
+    )
+    map = discord.ui.TextInput(
+        label="Map",
+        placeholder="Nom de la map",
+        required=True
+    )
+    rang = discord.ui.TextInput(
+        label="Rang",
+        placeholder="Ex : Bronze, Argent, Or...",
+        required=True
+    )
+    autres_precision = discord.ui.TextInput(
+        label="Autres précisions",
+        placeholder="Informations supplémentaires",
+        style=discord.TextStyle.paragraph,
+        required=False
+    )
+
+    def __init__(self, bot: commands.Bot):
+        super().__init__()
+        self.bot = bot
+        self.service = ScrimService()
+
+    async def on_submit(self, interaction: discord.Interaction):
         try:
-            view = ConfirmationView(interaction, None)
-            await user.send(f"{interaction.user.display_name} vous propose de rejoindre l'équipe {team_info['name']} en tant que {role}. Confirmez-vous ?", view=view)
-            await view.wait()
-            if not view.value:
-                return await interaction.followup.send(f"{user.mention} a refusé de rejoindre l'équipe.", ephemeral=True)
-        except discord.Forbidden:
-            return await interaction.followup.send(f"Impossible d'envoyer un message à {user.mention}.", ephemeral=True)
-        except Exception as e:
-            logger.exception(f"Erreur lors de la demande de confirmation à {user.display_name}: {e}")
-            return await interaction.followup.send("Erreur lors de la demande de confirmation.", ephemeral=True)
+            scrim_datetime = datetime.strptime(f"{self.date.value} {self.heure.value}", "%d/%m/%Y %H:%M")
+        except ValueError:
+            return await interaction.response.send_message("Format de date ou d'heure invalide.", ephemeral=True)
 
-        # User a confirmé
-        if not await self.ask_confirmation(interaction, f"Confirmez-vous l'ajout de {user.mention} en tant que {role} dans {team_info['name']} ?"):
-            return await interaction.followup.send("Action annulée.", ephemeral=True)
+        channel_id = interaction.channel.id
+        internal_guild_id = await self.service.get_internal_server_id(interaction.guild.id)
+        if internal_guild_id is None:
+            return await interaction.response.send_message("Le serveur n'est pas enregistré en BDD.", ephemeral=True)
 
-        if role == "player":
-            team_info["players"].append(user.id)
-        elif role == "sub":
-            team_info["sub"] = user.id
-        elif role == "coach":
-            team_info["coach"] = user.id
+        creator_discord_id = interaction.user.id
+        internal_user_id = await self.service.get_internal_user_id(creator_discord_id)
+        if internal_user_id is None:
+            return await interaction.response.send_message("Vous n'êtes pas enregistré dans la BDD.", ephemeral=True)
 
-        self.teams_data[team_key] = team_info
-        await self.save_all_data()
+        scrim_id = await self.service.create_scrim(
+            scrim_datetime=scrim_datetime,
+            map_name=self.map.value,
+            rang=self.rang.value,
+            autre=self.autres_precision.value,
+            initial_participants=[internal_user_id],
+            message_id=0,  # Mise à jour ultérieure
+            channel_id=channel_id,
+            guild_id=internal_guild_id
+        )
+        if scrim_id is None:
+            return await interaction.response.send_message("Erreur lors de la création du scrim.", ephemeral=True)
 
-        await interaction.followup.send(f"{user.mention} a été ajouté comme {role} dans l'équipe {team_info['name']}.", ephemeral=True)
+        scrim_info = await self.service.update_scrim_embed_info(scrim_id)
+        if scrim_info:
+            scrim_info["scrim_id"] = scrim_id
+        creator_name = interaction.user.name
 
-    # ---------- Commande /team_remove_member ----------
-    @app_commands.command(name="team_remove_member", description="Retirer un membre d'une équipe")
-    @app_commands.describe(team_id="ID de l'équipe", user="Utilisateur à retirer")
-    @is_admin()
-    @enqueue_request()
-    async def team_remove_member(self, interaction: discord.Interaction, team_id: int, user: discord.Member):
-        await interaction.response.defer(ephemeral=True)
-        team_key = f"team_{team_id}"
-        if team_key not in self.teams_data:
-            return await interaction.followup.send("Équipe introuvable.", ephemeral=True)
-        team_info = self.teams_data[team_key]
+        # Création de l'embed et de la vue pour le scrim
+        cog_instance = self.bot.get_cog("ScrimCog")
+        embed = await cog_instance.build_scrim_embed(scrim_info, creator_name)
+        view = ScrimView(scrim_id, cog=cog_instance)
+        scrim_message = await interaction.channel.send(embed=embed, view=view)
+        await self.service.update_scrim_message(scrim_id, scrim_message.id)
 
-        if user.id not in team_info["players"] and team_info.get("sub") != user.id and team_info.get("coach") != user.id:
-            return await interaction.followup.send(f"{user.mention} n'est pas dans cette équipe.", ephemeral=True)
+        # Planifier le traitement de fin du scrim dès que l'heure arrive
+        asyncio.create_task(cog_instance.schedule_scrim_end(scrim_id, scrim_datetime))
+                
+        await interaction.response.send_message("Scrim créé avec succès !", ephemeral=True)
 
-        if not await self.ask_confirmation(interaction, f"Confirmez-vous le retrait de {user.mention} de l'équipe {team_info['name']} ?"):
-            return await interaction.followup.send("Action annulée.", ephemeral=True)
+class ScrimView(discord.ui.View):
+    def __init__(self, scrim_id: int, cog):
+        super().__init__(timeout=None)
+        self.scrim_id = scrim_id
+        self.cog = cog
 
-        if user.id in team_info["players"]:
-            team_info["players"].remove(user.id)
-        elif team_info.get("sub") == user.id:
-            team_info["sub"] = None
-        elif team_info.get("coach") == user.id:
-            team_info["coach"] = None
+    @discord.ui.button(label="Rejoindre le scrim", style=discord.ButtonStyle.success, custom_id="join_scrim")
+    async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Utilisation de l'instance de service partagée dans le cog
+        service = self.cog.service
+        internal_user_id = await service.get_internal_user_id(interaction.user.id)
+        if internal_user_id is None:
+            return await interaction.response.send_message("Vous n'êtes pas enregistré en BDD.", ephemeral=True)
+        if await service.is_user_registered(self.scrim_id, internal_user_id):
+            return await interaction.response.send_message("Vous êtes déjà inscrit.", ephemeral=True)
+        if not await service.add_participant(self.scrim_id, internal_user_id):
+            return await interaction.response.send_message("Erreur lors de l'inscription.", ephemeral=True)
 
-        self.teams_data[team_key] = team_info
-        await self.save_all_data()
+        new_info = await service.update_scrim_embed_info(self.scrim_id)
+        if new_info is not None:
+            # Récupération du nom du créateur
+            creator_name = new_info.get("creator_name", interaction.user.name)
+            new_embed = await self.cog.build_scrim_embed(new_info, creator_name)
+            await interaction.message.edit(embed=new_embed, view=self)
+        await interaction.response.send_message("Inscription validée !", ephemeral=True)
 
-        await interaction.followup.send(f"{user.mention} a été retiré(e) de l'équipe {team_info['name']}.", ephemeral=True)
+    @discord.ui.button(label="Quitter le scrim", style=discord.ButtonStyle.danger, custom_id="leave_scrim")
+    async def leave_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        service = self.cog.service
+        internal_user_id = await service.get_internal_user_id(interaction.user.id)
+        if internal_user_id is None:
+            return await interaction.response.send_message("Vous n'êtes pas reconnu dans la BDD.", ephemeral=True)
+        if not await service.is_user_registered(self.scrim_id, internal_user_id):
+            return await interaction.response.send_message("Vous n'êtes pas inscrit.", ephemeral=True)
+        if not await service.remove_participant(self.scrim_id, internal_user_id):
+            return await interaction.response.send_message("Erreur lors de la désinscription.", ephemeral=True)
+        
+        new_info = await service.update_scrim_embed_info(self.scrim_id)
+        if new_info is not None:
+            creator_name = new_info.get("creator_name", interaction.user.name)
+            new_embed = await self.cog.build_scrim_embed(new_info, creator_name)
+            await interaction.message.edit(embed=new_embed, view=self)
+        await interaction.response.send_message("Vous avez quitté le scrim.", ephemeral=True)
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(Scrims(bot))
-    logger.info("Scrims Cog chargé avec succès.")
+    await bot.add_cog(ScrimCog(bot))
+    logger.info("ScrimCog chargé.")

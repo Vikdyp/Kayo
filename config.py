@@ -24,6 +24,7 @@ TEST_MODE = False
 
 # Configuration des logs
 LOGGING = {
+    
     'bot': True,
 
     # CONFIGURATION
@@ -66,6 +67,10 @@ LOGGING = {
     'vocal.creator' : False,
 
     # ACCUEIL
-    'accueil.services' : False
+    'accueil.services' : False,
+
+    # SCRIMS
+    'scrims.services' : True,
+    'scrims' : True,
 
 }

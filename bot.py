@@ -74,6 +74,7 @@ cog_paths = [
     'cogs.reputation.reputation',
     #'cogs.other.test',
     'cogs.other.vocal_creator',
+    'cogs.scrims.scrims',
 ]
 
 @bot.event

@@ -326,7 +326,6 @@ class MatchmakingQueue(commands.Cog):
         - solos en attente
         - équipes en attente
         - total blocs dans la queue
-        - total équipes créées (self.total_teams_created)
         - rôle prioritaire (self.role_counters => min)
         """
         total_solo = await MatchmakingService.count_solos_in_queue()
