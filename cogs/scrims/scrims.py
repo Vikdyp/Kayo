@@ -1,3 +1,4 @@
+#cogs\scrims\scrims.py
 import logging
 import discord
 from discord.ext import commands
@@ -22,7 +23,7 @@ class ScrimCog(commands.Cog):
         """
         Envoie le message principal contenant le bouton "Créer un scrim" et le persiste.
         """
-        view = discord.ui.View()
+        view = discord.ui.View()(timeout=None)
         view.add_item(CreateScrimButton(self.bot))
         message = await ctx.send("Cliquez sur le bouton ci-dessous pour créer un scrim :", view=view)
         internal_guild_id = await self.service.get_internal_server_id(ctx.guild.id)
