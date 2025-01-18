@@ -1,15 +1,15 @@
+#cogs\rules\rules.py
 import discord
 from discord.ext import commands, tasks
-from utils.request_manager import enqueue_button_request
-from utils.database import database
 import logging
 
 from cogs.rules.service.rules_services import (
     get_rules_channel_id,
+    has_accepted_rules,
     store_rules_message,
     get_persistent_message,
     delete_persistent_message,
-    accept_rules_user  # Import de la fonction de service
+    accept_rules_user  
 )
 
 logger = logging.getLogger("rules")
@@ -24,21 +24,31 @@ class AcceptRulesView(discord.ui.View):
         style=discord.ButtonStyle.success,
         custom_id="button:accept_rules"
     )
-    @enqueue_button_request("FAST")
     async def accept_rules_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         discord_id = interaction.user.id
-        success = await accept_rules_user(discord_id)  # Utilisation de la fonction de service
-        if success:
+
+        # Vérification si l'utilisateur a déjà accepté le règlement
+        already_accepted = await has_accepted_rules(discord_id)
+        if already_accepted:
+            # Réponse si l'utilisateur est déjà enregistré
             await interaction.response.send_message(
-                "Vous avez accepté le règlement. Bienvenue !",
+                "Vous avez déjà accepté le règlement !",
                 ephemeral=True
             )
         else:
-            await interaction.response.send_message(
-                "Une erreur est survenue lors de l'enregistrement. Veuillez réessayer plus tard.",
-                ephemeral=True
-            )
-
+            # Enregistrement de l'utilisateur dans la base de données
+            success = await accept_rules_user(discord_id)
+            if success:
+                await interaction.response.send_message(
+                    "Vous avez accepté le règlement. Bienvenue !",
+                    ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(
+                    "Une erreur est survenue lors de l'enregistrement. Veuillez réessayer plus tard.",
+                    ephemeral=True
+                )
+                
 class RulesCog(commands.Cog):
     """Cog pour gérer les règles avec des boutons persistants."""
 

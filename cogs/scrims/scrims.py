@@ -23,7 +23,8 @@ class ScrimCog(commands.Cog):
         """
         Envoie le message principal contenant le bouton "Créer un scrim" et le persiste.
         """
-        view = discord.ui.View()(timeout=None)
+        # Création de la vue persistante (sans timeout)
+        view = discord.ui.View(timeout=None)
         view.add_item(CreateScrimButton(self.bot))
         message = await ctx.send("Cliquez sur le bouton ci-dessous pour créer un scrim :", view=view)
         internal_guild_id = await self.service.get_internal_server_id(ctx.guild.id)
@@ -52,7 +53,7 @@ class ScrimCog(commands.Cog):
                 if channel:
                     try:
                         message = await channel.fetch_message(msg_data.get("message_id"))
-                        view = discord.ui.View()
+                        view = discord.ui.View(timeout=None)
                         view.add_item(CreateScrimButton(self.bot))
                         await message.edit(view=view)
                         logger.info(f"CreateScrimButton réassigné pour guild (ID interne={internal_guild_id}).")
@@ -304,41 +305,55 @@ class ScrimView(discord.ui.View):
 
     @discord.ui.button(label="Rejoindre le scrim", style=discord.ButtonStyle.success, custom_id="join_scrim")
     async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Utilisation de l'instance de service partagée dans le cog
+        await interaction.response.defer(ephemeral=True)  # Réponse différée pour éviter le timeout
         service = self.cog.service
         internal_user_id = await service.get_internal_user_id(interaction.user.id)
         if internal_user_id is None:
-            return await interaction.response.send_message("Vous n'êtes pas enregistré en BDD.", ephemeral=True)
+            # Génération du lien vers le salon
+            rules_channel_id = 1236392632079618108
+            rules_channel_link = f"https://discord.com/channels/{interaction.guild.id}/{rules_channel_id}"
+            return await interaction.followup.send(
+                f"Veuillez d'abord accepter le règlement{rules_channel_link}.",
+                ephemeral=True
+            )
         if await service.is_user_registered(self.scrim_id, internal_user_id):
-            return await interaction.response.send_message("Vous êtes déjà inscrit.", ephemeral=True)
+            return await interaction.followup.send("Vous êtes déjà inscrit.", ephemeral=True)
         if not await service.add_participant(self.scrim_id, internal_user_id):
-            return await interaction.response.send_message("Erreur lors de l'inscription.", ephemeral=True)
+            return await interaction.followup.send("Erreur lors de l'inscription.", ephemeral=True)
 
         new_info = await service.update_scrim_embed_info(self.scrim_id)
         if new_info is not None:
-            # Récupération du nom du créateur
             creator_name = new_info.get("creator_name", interaction.user.name)
             new_embed = await self.cog.build_scrim_embed(new_info, creator_name)
             await interaction.message.edit(embed=new_embed, view=self)
-        await interaction.response.send_message("Inscription validée !", ephemeral=True)
+
+        await interaction.followup.send("Inscription validée !", ephemeral=True)
 
     @discord.ui.button(label="Quitter le scrim", style=discord.ButtonStyle.danger, custom_id="leave_scrim")
     async def leave_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)  # Réponse différée pour éviter le timeout
         service = self.cog.service
         internal_user_id = await service.get_internal_user_id(interaction.user.id)
         if internal_user_id is None:
-            return await interaction.response.send_message("Vous n'êtes pas reconnu dans la BDD.", ephemeral=True)
+            # Génération du lien vers le salon
+            rules_channel_id = 1236392632079618108
+            rules_channel_link = f"https://discord.com/channels/{interaction.guild.id}/{rules_channel_id}"
+            return await interaction.followup.send(
+                f"Veuillez d'abord accepter le règlement{rules_channel_link}.",
+                ephemeral=True
+            )
         if not await service.is_user_registered(self.scrim_id, internal_user_id):
-            return await interaction.response.send_message("Vous n'êtes pas inscrit.", ephemeral=True)
+            return await interaction.followup.send("Vous n'êtes pas inscrit.", ephemeral=True)
         if not await service.remove_participant(self.scrim_id, internal_user_id):
-            return await interaction.response.send_message("Erreur lors de la désinscription.", ephemeral=True)
-        
+            return await interaction.followup.send("Erreur lors de la désinscription.", ephemeral=True)
+
         new_info = await service.update_scrim_embed_info(self.scrim_id)
         if new_info is not None:
             creator_name = new_info.get("creator_name", interaction.user.name)
             new_embed = await self.cog.build_scrim_embed(new_info, creator_name)
             await interaction.message.edit(embed=new_embed, view=self)
-        await interaction.response.send_message("Vous avez quitté le scrim.", ephemeral=True)
+
+        await interaction.followup.send("Vous avez quitté le scrim.", ephemeral=True)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ScrimCog(bot))

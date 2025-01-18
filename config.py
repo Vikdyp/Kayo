@@ -52,8 +52,8 @@ LOGGING = {
     'rank_service' : False,
 
     # RULES
-    'rules' : False,
-    'rules_service' : False,
+    'rules' : True,
+    'rules_service' : True,
 
     # VOICE MANAGEMENT
     'five_stack' : False,
@@ -70,7 +70,7 @@ LOGGING = {
     'accueil.services' : False,
 
     # SCRIMS
-    'scrims.services' : True,
-    'scrims' : True,
+    'scrims.services' : False,
+    'scrims' : False,
 
 }
