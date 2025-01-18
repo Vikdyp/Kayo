@@ -52,8 +52,8 @@ LOGGING = {
     'rank_service' : False,
 
     # RULES
-    'rules' : True,
-    'rules_service' : True,
+    'rules' : False,
+    'rules_service' : False,
 
     # VOICE MANAGEMENT
     'five_stack' : False,
