@@ -178,17 +178,35 @@ async def get_aggregated_stats(guild_id: int) -> dict:
         "join_leave_ratio": ratio,
     }
 
-async def get_member_evolution(guild_id: int, days: int = 30) -> List[Dict]:
+async def get_member_evolution(guild_id: int, days: Optional[int] = 30) -> List[Dict]:
+    """
+    Retourne la liste (date, join_count, leave_count) pour 'days' jours ou 'total' si days=None.
+    Ordonnée par date ASC.
+    """
     server_id = await get_server_id(guild_id)
     if server_id is None:
         return []
-    query = """
+
+    if days is None:
+        # Pas de limite de date -> on récupère tout
+        query = """
+            SELECT date, join_count, leave_count
+            FROM member_daily_stats
+            WHERE guild_id = $1
+            ORDER BY date ASC;
+        """
+        records = await database.fetch(query, server_id)
+    else:
+        # Sur X jours
+        query = """
         SELECT date, join_count, leave_count
         FROM member_daily_stats
-        WHERE guild_id = $1 AND date >= (CURRENT_DATE - $2::integer)
+        WHERE guild_id = $1
+        AND date >= (CURRENT_DATE - ($2::integer - 1))
         ORDER BY date ASC;
     """
     records = await database.fetch(query, server_id, days)
+
     return [dict(record) for record in records]
 
 # =========================
@@ -238,3 +256,51 @@ async def save_persistent_message(discord_guild_id: int, message_type: str,
         logger.info(f"Message persistant '{message_type}' sauvegardé pour guild {discord_guild_id}.")
     except Exception as e:
         logger.error(f"Erreur save_persistent_message: {e}")
+
+async def get_period_stats(guild_id: int, days: Optional[int]) -> dict:
+    """
+    Retourne la somme des adhésions et départs sur 'days' derniers jours.
+    Si days vaut None, on récupère TOUT l'historique (total).
+    Renvoie un dict avec 'join_count', 'leave_count' et 'join_leave_ratio'.
+    """
+    server_id = await get_server_id(guild_id)
+    if server_id is None:
+        return {"join_count": 0, "leave_count": 0, "join_leave_ratio": 0}
+
+    # On s'assure que la ligne du jour existe (bonne pratique),
+    # même si pour un total ça changera peu
+    await ensure_today_member_stats(guild_id)
+
+    if days is None:
+        # total
+        query = """
+            SELECT COALESCE(SUM(join_count), 0) AS join_count,
+                   COALESCE(SUM(leave_count), 0) AS leave_count
+            FROM member_daily_stats
+            WHERE guild_id = $1
+        """
+        record = await database.fetchrow(query, server_id)
+    else:
+        # sur X jours
+        query = f"""
+            SELECT COALESCE(SUM(join_count), 0) AS join_count,
+                   COALESCE(SUM(leave_count), 0) AS leave_count
+            FROM member_daily_stats
+            WHERE guild_id = $1
+              AND date >= (CURRENT_DATE - {days})
+        """
+        record = await database.fetchrow(query, server_id)
+
+    if not record:
+        return {"join_count": 0, "leave_count": 0, "join_leave_ratio": 0}
+
+    join_count = record["join_count"]
+    leave_count = record["leave_count"]
+    # Pour éviter la division par zéro
+    join_leave_ratio = float(join_count) if leave_count == 0 else round(join_count / leave_count, 2)
+
+    return {
+        "join_count": join_count,
+        "leave_count": leave_count,
+        "join_leave_ratio": join_leave_ratio
+    }

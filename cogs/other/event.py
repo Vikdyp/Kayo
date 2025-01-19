@@ -8,8 +8,8 @@ from utils.database import database  # Assurez-vous que le chemin est correct
 logger = logging.getLogger("event_cog")
 
 # Constantes / Configuration
-MIN_INVITES_REQUIRED = 5    # Nombre minimum d'invitations nécessaires pour participer
-OBJECTIF_PARTICIPANTS = 50  # Objectif du nombre de participants à atteindre
+MIN_INVITES_REQUIRED = 3    # Nombre minimum d'invitations nécessaires pour participer
+OBJECTIF_PARTICIPANTS = 65  # Objectif du nombre de participants à atteindre
 MESSAGE_TYPE_EVENT = "event"  # Type pour l'event dans persistent_messages
 
 # ----------------- Bouton et Vue -----------------

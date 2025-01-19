@@ -1,26 +1,49 @@
-#utils\database.py
+# utils/database.py
 from typing import Optional
 import asyncpg
 import logging
 import asyncio
 import os
+import time
+
 import discord
 from config import DATABASE
 
 logger = logging.getLogger("database")
 
 class Database:
+    """
+    Classe gérant la connexion à la base de données via un pool asyncpg, et
+    proposant différentes méthodes pour l'exécution de requêtes (fetch, execute, etc.).
+    """
+
     def __init__(self):
+        """
+        Initialise la classe Database.
+        """
         self.pool = None
         self.bot = None
         self.max_retries = 3
         self.retry_delay = 5
-        self.log_channel_id = 12458882356040213480 #faux id pour ne pas resevoir de message
+
+        # ID de salon Discord utilisé pour envoyer les logs en cas d'échec de reconnexion.
+        self.log_channel_id = 12458882356040213480  # faux ID pour ne pas recevoir de message
+
+        # Gestion des vérifications de connexion
+        self._last_connection_check = 0       # Timestamp de la dernière vérification
+        self._check_interval = 60            # Intervalle minimal (en secondes) entre deux vérifications
 
     def set_bot_reference(self, bot: discord.Client):
+        """
+        Associe une référence à l'instance du bot Discord
+        afin d'envoyer éventuellement des logs sur un salon.
+        """
         self.bot = bot
 
     async def connect(self):
+        """
+        Initialise un pool de connexion à la base de données.
+        """
         try:
             self.pool = await asyncpg.create_pool(
                 user=DATABASE['user'],
@@ -29,7 +52,7 @@ class Database:
                 host=DATABASE['host'],
                 port=DATABASE['port'],
                 ssl=DATABASE.get('ssl', False),
-                min_size=5,
+                min_size=1,
                 max_size=20,
                 max_inactive_connection_lifetime=600
             )
@@ -39,28 +62,57 @@ class Database:
             self.pool = None
 
     async def disconnect(self):
+        """
+        Ferme proprement le pool de connexions à la base de données.
+        """
         if self.pool:
             await self.pool.close()
             self.pool = None
             logger.info("Déconnexion de la base de données.")
 
     async def ensure_connected(self):
+        """
+        Vérifie si la connexion au pool est toujours active.
+        - Si self.pool est None, on tente une reconnexion.
+        - Sinon, on ne refait le test de connexion (SELECT 1;) que si l'intervalle
+          minimal depuis le dernier check est dépassé.
+        """
+        # Pool inexistant -> on tente directement de se reconnecter
         if self.pool is None:
             logger.warning("Le pool est None. Tentative de reconnexion...")
             await self.attempt_reconnect()
+            return
+
+        # Vérifie s'il est temps de retester la connexion
+        current_time = time.time()
+        if current_time - self._last_connection_check < self._check_interval:
+            # Trop peu de temps depuis le dernier test, on ne refait pas SELECT 1.
+            return
+
+        # Mets à jour le dernier timestamp de vérification
+        self._last_connection_check = current_time
+
+        # Teste la connexion avec un SELECT 1
+        try:
+            async with self.pool.acquire() as connection:
+                await connection.execute('SELECT 1;')
+        except (asyncpg.exceptions.ConnectionDoesNotExistError, asyncpg.exceptions.InterfaceError):
+            logger.warning("La connexion au pool semble inactive. Tentative de reconnexion...")
+            # On réinitialise le timer pour retenter un check rapidement après reconnexion
+            self._last_connection_check = 0
+            await self.attempt_reconnect()
+        except Exception as e:
+            logger.error(f"Erreur inattendue lors de la vérification de la connexion : {e}")
+            self._last_connection_check = 0
+            await self.attempt_reconnect()
         else:
-            try:
-                async with self.pool.acquire() as connection:
-                    await connection.execute('SELECT 1;')
-            except (asyncpg.exceptions.ConnectionDoesNotExistError, asyncpg.exceptions.InterfaceError):
-                logger.warning("La connexion au pool semble inactive. Tentative de reconnexion...")
-                await self.attempt_reconnect()
-            except Exception as e:
-                logger.error(f"Erreur inattendue lors de la vérification de la connexion : {e}")
-                await self.attempt_reconnect()
-        logger.debug("ensure_connected terminé, pool prêt à être utilisé.")
+            logger.debug("Test de connexion réussi. Le pool est actif.")
 
     async def attempt_reconnect(self):
+        """
+        Tente de se reconnecter à la base de données jusqu'à max_retries,
+        en laissant un délai de retry_delay entre chaque essai.
+        """
         for attempt in range(1, self.max_retries + 1):
             await self.connect()
             if self.pool is not None:
@@ -69,12 +121,18 @@ class Database:
                     async with self.pool.acquire() as connection:
                         await connection.execute('SELECT 1;')
                     logger.info(f"Reconnexion réussie après {attempt} tentative(s).")
+                    # Réinitialise le dernier check de connexion
+                    self._last_connection_check = time.time()
                     return
                 except Exception as e:
                     logger.error(f"Échec du test de connexion après reconnexion : {e}")
                     self.pool = None
+
             if attempt < self.max_retries:
-                logger.warning(f"Tentative de reconnexion {attempt} échouée. Nouvelle tentative dans {self.retry_delay}s.")
+                logger.warning(
+                    f"Tentative de reconnexion {attempt} échouée. "
+                    f"Nouvelle tentative dans {self.retry_delay}s."
+                )
                 await asyncio.sleep(self.retry_delay)
 
         # Toutes les tentatives ont échoué
@@ -82,6 +140,10 @@ class Database:
         await self.send_logs_to_channel()
 
     async def send_logs_to_channel(self):
+        """
+        Envoie le fichier de logs (bot.log) dans le channel Discord défini,
+        afin de pouvoir diagnostiquer l'erreur de connexion.
+        """
         if not self.bot:
             logger.error("Impossible d'envoyer les logs : bot non défini dans database.")
             return
@@ -91,7 +153,6 @@ class Database:
             logger.error(f"Salon introuvable pour l'ID {self.log_channel_id}.")
             return
 
-        # Envoi du fichier de logs 'bot.log' généré par notre FileHandler
         if os.path.exists('bot.log'):
             try:
                 await channel.send(
@@ -103,7 +164,11 @@ class Database:
         else:
             logger.error("Le fichier de logs 'bot.log' est introuvable, impossible d'envoyer les logs.")
 
-    async def execute(self, query, *args):
+    async def execute(self, query: str, *args):
+        """
+        Exécute une requête SQL (INSERT, UPDATE, DELETE, etc.) sans retour particulier.
+        Retourne le status de la requête (ex: 'INSERT 0 1') ou None en cas d'erreur.
+        """
         await self.ensure_connected()
         if self.pool is None:
             logger.error("Impossible d'exécuter la requête: le pool est toujours None.")
@@ -115,7 +180,10 @@ class Database:
             logger.error(f"Erreur lors de l'exécution de la requête : {e}")
             return None
 
-    async def fetch(self, query, *args):
+    async def fetch(self, query: str, *args):
+        """
+        Exécute une requête SQL (SELECT) et retourne plusieurs lignes.
+        """
         await self.ensure_connected()
         if self.pool is None:
             logger.error("Impossible de fetch: le pool est toujours None.")
@@ -127,7 +195,10 @@ class Database:
             logger.error(f"Erreur lors de la récupération des données : {e}")
             return []
 
-    async def fetchrow(self, query, *args):
+    async def fetchrow(self, query: str, *args):
+        """
+        Exécute une requête SQL (SELECT) et retourne la première ligne du résultat.
+        """
         await self.ensure_connected()
         if self.pool is None:
             logger.error("Impossible de fetchrow: le pool est toujours None.")
@@ -139,7 +210,10 @@ class Database:
             logger.error(f"Erreur lors de la récupération d'une ligne : {e}")
             return None
 
-    async def fetchval(self, query, *args):
+    async def fetchval(self, query: str, *args):
+        """
+        Exécute une requête SQL (SELECT) et retourne la première valeur de la première ligne.
+        """
         await self.ensure_connected()
         if self.pool is None:
             logger.error("Impossible de fetchval: le pool est toujours None.")
@@ -152,31 +226,47 @@ class Database:
             return None
 
     async def purge_old_logs_and_clean_relations(self, days=30):
+        """
+        Supprime les logs obsolètes (plus vieux que 'days' jours) dans la table `message_deletions`
+        et nettoie les tables relationnelles (user_id, channel_id, serveur_id, nombre_id)
+        afin d'ôter les entrées non utilisées.
+        """
+        # Suppression des anciennes entrées
         await self.execute(f"DELETE FROM message_deletions WHERE timestamp < NOW() - INTERVAL '{days} days';")
+
+        # Nettoyage des tables associées
         clean_user_query = """
             DELETE FROM user_id
             WHERE id NOT IN (SELECT DISTINCT deleted_by FROM message_deletions)
             AND id NOT IN (SELECT DISTINCT target_user FROM message_deletions);
         """
         await self.execute(clean_user_query)
+
         clean_channel_query = """
             DELETE FROM channel_id
             WHERE id NOT IN (SELECT DISTINCT channel_id FROM message_deletions);
         """
         await self.execute(clean_channel_query)
+
         clean_server_query = """
             DELETE FROM serveur_id
             WHERE id NOT IN (SELECT DISTINCT guild_id FROM message_deletions);
         """
         await self.execute(clean_server_query)
+
         clean_number_query = """
             DELETE FROM nombre_id
             WHERE id NOT IN (SELECT DISTINCT message_count FROM message_deletions);
         """
         await self.execute(clean_number_query)
+
         logger.info("Logs obsolètes et données relationnelles non utilisées supprimés.")
 
-    async def get_or_create_id(self, table, column, value):
+    async def get_or_create_id(self, table: str, column: str, value):
+        """
+        Récupère l'ID correspondant à 'value' dans la table/colonne indiquée,
+        ou insère une nouvelle ligne si elle n'existe pas encore.
+        """
         if not value:
             raise ValueError(f"La valeur pour {column} ne peut pas être vide.")
 
@@ -196,6 +286,9 @@ class Database:
             raise
 
     async def get_message_deletions(self, limit=50):
+        """
+        Récupère les dernières suppressions de messages (limit par défaut : 50).
+        """
         query = """
             SELECT 
                 md.id,
@@ -218,15 +311,15 @@ class Database:
             LIMIT $1;
         """
         return await self.fetch(query, limit)
-    
+
     async def log_message_deletion(
         self,
-        deleted_by: int,  # Utilisation de l'ID Discord
-        channel: str,
-        guild: str,
-        deletion_type: str,
-        target_user: Optional[int],  # Discord ID pour target_user
-        message_count: int
+        deleted_by: int,     # ID Discord de l'utilisateur ayant supprimé
+        channel: str,        # Nom du channel
+        guild: str,          # Nom du serveur
+        deletion_type: str,  # Type de suppression (ban, purge, etc.)
+        target_user: Optional[int],  # ID Discord d'un utilisateur ciblé (ou None)
+        message_count: int   # Nombre de messages supprimés
     ):
         """
         Enregistre une suppression de messages dans la table `message_deletions`.
@@ -246,8 +339,8 @@ class Database:
 
             # Insérer les données dans la table `message_deletions`
             query = """
-            INSERT INTO message_deletions (deleted_by, channel_id, guild_id, deletion_type, target_user, message_count)
-            VALUES ($1, $2, $3, $4, $5, $6);
+                INSERT INTO message_deletions (deleted_by, channel_id, guild_id, deletion_type, target_user, message_count)
+                VALUES ($1, $2, $3, $4, $5, $6);
             """
             await self.execute(query, deleted_by_id, channel_id, guild_id, deletion_type_id, target_user_id, message_count_id)
 
@@ -255,6 +348,5 @@ class Database:
         except Exception as e:
             logger.error(f"Erreur lors de l'enregistrement de la suppression de messages : {e}")
 
-
-
+# Instanciation globale (optionnelle, selon votre architecture)
 database = Database()
