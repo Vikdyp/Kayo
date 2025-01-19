@@ -15,7 +15,7 @@ class Database:
         self.bot = None
         self.max_retries = 3
         self.retry_delay = 5
-        self.log_channel_id = 1245888235604021348
+        self.log_channel_id = 12458882356040213480 #faux id pour ne pas resevoir de message
 
     def set_bot_reference(self, bot: discord.Client):
         self.bot = bot
@@ -30,8 +30,8 @@ class Database:
                 port=DATABASE['port'],
                 ssl=DATABASE.get('ssl', False),
                 min_size=5,
-                max_size=100,
-                max_inactive_connection_lifetime=3600
+                max_size=20,
+                max_inactive_connection_lifetime=600
             )
             logger.info("Connexion à la base de données réussie.")
         except Exception as e:

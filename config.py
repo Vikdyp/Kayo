@@ -65,6 +65,8 @@ LOGGING = {
     # OTHER
     'vocal.services' : False,
     'vocal.creator' : False,
+    'invite_tracker' : False,
+    'event_cog' : False,
 
     # ACCUEIL
     'accueil.services' : False,

@@ -1,16 +1,16 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 import logging
 import time
+from zoneinfo import ZoneInfo
 
 from utils.database import database  # Module d'accès à la BDD
 
 logger = logging.getLogger("scrims.services")
 
-# Implémentation d'un cache simple
 class SimpleCache:
     def __init__(self, ttl=300):
-        self.ttl = ttl  # Durée de vie (en secondes)
+        self.ttl = ttl
         self.cache = {}
 
     def get(self, key):
@@ -24,13 +24,11 @@ class SimpleCache:
     def set(self, key, value):
         self.cache[key] = (value, time.time())
 
-# Instanciation d'un cache global (avec ttl de 600 secondes par exemple)
 cache = SimpleCache(ttl=600)
 
 class ScrimService:
     """Gestion des scrims et de la persistance via la base de données."""
 
-    # --- Récupération de l'ID interne du serveur ---
     async def get_internal_server_id(self, discord_guild_id: int) -> Optional[int]:
         cache_key = f"guild_id:{discord_guild_id}"
         cached = cache.get(cache_key)
@@ -47,7 +45,6 @@ class ScrimService:
             logger.exception("Erreur lors de la récupération de l'ID interne du serveur:")
             return None
 
-    # --- Création d'un scrim ---
     async def create_scrim(
         self,
         scrim_datetime: datetime,
@@ -80,7 +77,6 @@ class ScrimService:
         query = "UPDATE scrims SET message_id = $1 WHERE id = $2;"
         await database.execute(query, message_id, scrim_id)
 
-    # --- Gestion des participants ---
     async def get_internal_user_id(self, discord_id: int) -> Optional[int]:
         query = "SELECT id FROM user_id WHERE discord_id = $1;"
         return await database.fetchval(query, discord_id)
@@ -120,7 +116,6 @@ class ScrimService:
             logger.error("Erreur lors de la suppression d'un participant: %s", e)
             return False
 
-    # --- Informations et mise à jour de l'embed du scrim ---
     async def get_scrim_info(self, scrim_id: int) -> Optional[Dict[str, Any]]:
         query = """
             SELECT datetime, map, rang, autre, participants, message_id, channel_id, guild_id 
@@ -139,7 +134,6 @@ class ScrimService:
         info["team2"] = participants[5:10]
         return info
 
-    # --- Suppression d'un scrim ---
     async def delete_scrim(self, scrim_id: int) -> bool:
         query = "DELETE FROM scrims WHERE id = $1;"
         try:
@@ -150,7 +144,6 @@ class ScrimService:
             logger.error("Erreur lors de la suppression du scrim %s: %s", scrim_id, e)
             return False
 
-    # --- Gestion des victoires ---
     async def increment_victory(self, internal_user_id: int) -> None:
         update_query = "UPDATE scrim_wins SET wins = wins + 1 WHERE internal_user_id = $1;"
         result = await database.execute(update_query, internal_user_id)
@@ -163,7 +156,6 @@ class ScrimService:
         records = await database.fetch(query)
         return [dict(record) for record in records] if records else []
 
-    # --- Messages persistants ---
     async def persist_message(
         self,
         channel_id: int,
@@ -191,7 +183,6 @@ class ScrimService:
         records = await database.fetch(query, guild_id, message_type)
         return [dict(record) for record in records] if records else []
 
-    # --- Récupération du Discord ID d'un utilisateur ---
     async def get_discord_id(self, internal_id: int) -> Optional[int]:
         query = "SELECT discord_id FROM user_id WHERE id = $1;"
         try:
