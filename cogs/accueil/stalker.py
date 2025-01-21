@@ -91,10 +91,11 @@ class StalkerCog(commands.Cog):
                     except Exception as e:
                         logger.error(f"Erreur lors du chargement du message persistant: {e}")
 
-    # *** CHANGE ***
     async def generate_member_evolution_graph(self, guild: discord.Guild, period: str = "default") -> discord.File:
         """
         Génère un graphique de l'évolution des membres sur la période donnée.
+        Corrige le tri des données et applique plt.tight_layout() pour éviter tout
+        problème d'affichage dans l'embed.
         """
         if period == "7j":
             days = 7
@@ -112,22 +113,27 @@ class StalkerCog(commands.Cog):
             logger.info("Aucune donnée d'évolution trouvée pour la période demandée.")
             return None
 
+        # --- Correction : trier les données par date ASC avant de construire net_changes ---
+        data.sort(key=lambda x: x['date'])
+
         dates = []
         net_changes = []
-        # On construit la liste en se basant sur la BDD
+        # On construit les listes de base
         for record in data:
-            # On formatte la date
             dates.append(record['date'].strftime('%d-%m'))
             net_changes.append(record['join_count'] - record['leave_count'])
 
-        # Calcul cumulatif en partant du count actuel
-        cumulative = []
+        # Calcul cumulatif en partant du count actuel (logique "reverse" inchangée)
         current_total = guild.member_count
-        temp_net = list(reversed(net_changes))
+        temp_net = list(reversed(net_changes))    # net_changes en sens inverse
+        temp_dates = list(reversed(dates))        # idem pour les dates
+
         cumulative_rev = [current_total]
         for change in temp_net[:-1]:
             cumulative_rev.append(cumulative_rev[-1] - change)
+
         cumulative = list(reversed(cumulative_rev))
+        dates = list(reversed(temp_dates))
 
         plt.figure(figsize=(8, 4))
         plt.plot(range(len(dates)), cumulative, marker='o', linestyle='-', color='green')
@@ -137,6 +143,8 @@ class StalkerCog(commands.Cog):
         ax = plt.gca()
         ax.xaxis.set_major_locator(ticker.FixedLocator(range(len(dates))))
         ax.set_xticklabels(dates, rotation=45)
+
+        # Pour éviter que les labels soient tronqués
         plt.tight_layout()
 
         buf = io.BytesIO()
@@ -145,7 +153,6 @@ class StalkerCog(commands.Cog):
         plt.close()
         return discord.File(fp=buf, filename="evolution_membres.png")
 
-    # *** CHANGE ***
     async def update_stats_embed(self, guild: discord.Guild, period: str = "default"):
         """
         Construit et met à jour l'embed de statistiques dans le salon configuré,
@@ -174,7 +181,6 @@ class StalkerCog(commands.Cog):
             days = 30
             period_label = "30 jours"
 
-        # On récupère un simple résumé (join_count, leave_count, ratio)
         stats_period = await accueil_services.get_period_stats(guild.id, days)
         current_members = guild.member_count
 
@@ -184,7 +190,7 @@ class StalkerCog(commands.Cog):
             color=discord.Color.green()
         )
 
-        # Infos générales
+        # Infos principales
         embed.add_field(name="Membres actuels", value=str(current_members), inline=False)
         embed.add_field(name="Adhésions ✔", value=str(stats_period["join_count"]), inline=True)
         embed.add_field(name="Départs ✖", value=str(stats_period["leave_count"]), inline=True)
@@ -197,6 +203,8 @@ class StalkerCog(commands.Cog):
 
         # Graphique
         graph_file = await self.generate_member_evolution_graph(guild, period=period)
+
+        # On assigne l'image dans l'embed seulement si on a un fichier
         if graph_file:
             embed.set_image(url=f"attachment://{graph_file.filename}")
 
