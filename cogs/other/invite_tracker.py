@@ -132,8 +132,7 @@ class InviteTrackerCog(commands.Cog):
             if log_channel:
                 count = await self.get_invite_count(inviter.id)
                 await log_channel.send(
-                    f"{member.mention} a rejoint grâce à l'invitation de {inviter.mention}.\n"
-                    f"Bravo {inviter.mention}, tu as désormais invité {count} membre{'s' if count != 1 else ''} !"
+                    f"{member.mention} a rejoint grâce à l'invitation de {inviter.mention} (total des invite : {count} membre{'s' if count != 1 else ''})."
                 )
         else:
             logger.info(
@@ -153,8 +152,7 @@ class InviteTrackerCog(commands.Cog):
                 inviter = guild.get_member(inviter_id)
                 if inviter:
                     await log_channel.send(
-                        f"{member.mention} a quitté le serveur. "
-                        f"{inviter.mention} passe à {count} invitation{'s' if count != 1 else ''}."
+                        f"{member.mention} a quitté le serveur,{inviter.mention} passe à {count} invitation{'s' if count != 1 else ''}."
                     )
             # Supprimer le mapping en BDD
             await self.delete_member_inviter(member.id)
