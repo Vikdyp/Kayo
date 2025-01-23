@@ -1,3 +1,4 @@
+#cogs\voice_management\team_cog.py
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
@@ -51,7 +52,7 @@ class TeamManager(commands.Cog):
     async def initialize(self):
         """
         Au démarrage, on charge toutes les équipes existantes
-        et on supprime TOUTES les entrées (threads/vocaux + base).
+        et on supprime TOUTES les entrées (threads/forums + vocal + BD).
         """
         await self.load_existing_teams()
         await self.delete_all_teams()
@@ -308,6 +309,7 @@ class TeamManager(commands.Cog):
             return
 
         user = interaction.user
+        # Vérifie si l'utilisateur est admin
         is_admin = any(r.permissions.administrator for r in user.roles)
 
         if not is_admin and user.id != team["leader_id"]:
@@ -421,9 +423,17 @@ class TeamManager(commands.Cog):
         if team["visibility"] == "public":
             desc = f"Code secret : ||{team['code']}||"
 
+        # Récupérer l'objet Member du leader
+        leader = guild.get_member(team["leader_id"])
+        if not leader:
+            logger.error(f"Leader avec l'ID {team['leader_id']} introuvable dans la guilde {guild.id}.")
+            leader_mention = f"<@{team['leader_id']}>"
+        else:
+            leader_mention = leader.mention
+
         embed = discord.Embed(
-            title=f"Équipe de <@{team['leader_id']}>",
-            description=desc,
+            title="Équipe",  # Titre général sans mention
+            description=f"**Leader :** {leader_mention}\n{desc}",
             color=discord.Color.blue()
         )
         embed.add_field(name="Visibilité", value=team["visibility"].capitalize(), inline=False)
@@ -448,6 +458,7 @@ class TeamManager(commands.Cog):
                 await thread.send(embed=embed)
         except Exception as e:
             logger.error(f"Erreur update_team_thread {code}: {e}")
+
 
     async def create_voice_channel_and_invite(self, team: Dict):
         """
@@ -502,7 +513,7 @@ class TeamManager(commands.Cog):
     async def delete_team_resources(self, team: Dict):
         """
         Supprime le thread + le salon vocal associés à l'équipe.
-        (Ne supprime pas directement l'équipe en BD, 
+        (Ne supprime pas directement l'équipe en BD,
          c'est fait par delete_team(...) ci-dessus ou dans delete_all_teams().)
         """
         forum_channel = self.bot.get_channel(team["forum_channel_id"])

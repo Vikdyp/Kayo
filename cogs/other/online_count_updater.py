@@ -57,7 +57,7 @@ class RankUpdater:
             self.task.cancel()
             logger.info("Tâche périodique de mise à jour des salons arrêtée.")
 
-    @tasks.loop(minutes=5)
+    @tasks.loop(minutes=10)
     async def _task_loop(self):
         """Tâche principale pour mettre à jour les salons des rangs."""
         logger.info("Exécution de la tâche de mise à jour des salons.")

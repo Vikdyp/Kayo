@@ -1,3 +1,4 @@
+#cogs\voice_management\services\five_stack_service.py
 import datetime
 import logging
 from typing import Optional, List, Tuple, Dict
@@ -672,5 +673,30 @@ class MatchmakingService:
         except Exception as e:
             logger.error(f"Erreur get_roles_for_discord_member {discord_id}: {e}")
             return None
+        
+    @classmethod
+    async def update_team_leader(cls, code: str, new_leader_id: int) -> bool:
+        """
+        Met à jour le leader de l'équipe (table 'teams').
+        Retourne True si une ligne a été mise à jour, False sinon.
+        """
+        query = """
+            UPDATE teams
+            SET leader_id=$1
+            WHERE code=$2
+        """
+        try:
+            result = await database.execute(query, new_leader_id, code)
+            # Souvent, asyncpg renvoie un string style "UPDATE 1" si 1 ligne mise à jour.
+            if result == "UPDATE 1":
+                logger.info(f"Leader mis à jour: {new_leader_id} pour équipe '{code}'.")
+                return True
+            else:
+                logger.warning(f"UPDATE leader échouée ou 0 lignes impactées (code='{code}').")
+                return False
+        except Exception as e:
+            logger.error(f"Erreur update_team_leader: {e}")
+            return False
+
 
     # Fin

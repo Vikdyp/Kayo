@@ -51,6 +51,10 @@ LOGGING = {
     'assign_rank' : False,
     'rank_service' : False,
 
+    # REPUTATION
+    'reputation' : True,
+    'profil' : True,
+
     # RULES
     'rules' : False,
     'rules_service' : False,
