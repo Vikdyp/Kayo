@@ -9,14 +9,18 @@ logger = logging.getLogger("event_cog")
 
 # Constantes / Configuration
 MIN_INVITES_REQUIRED = 1    # Nombre minimum d'invitations nécessaires pour participer
-OBJECTIF_PARTICIPANTS = 500  # Objectif du nombre de participants à atteindre
+OBJECTIF_PARTICIPANTS = 50  # Objectif du nombre de participants à atteindre
 MESSAGE_TYPE_EVENT = "event"  # Type pour l'event dans persistent_messages
 
 # ----------------- Bouton et Vue -----------------
 
 class ParticipateButton(Button):
     def __init__(self, cog, event_embed):
-        super().__init__(style=discord.ButtonStyle.success, label="Participer")
+        super().__init__(
+            style=discord.ButtonStyle.success,
+            label="Participer",
+            custom_id="participate_button"  # Custom ID fixé pour la persistance du bouton
+        )
         self.cog = cog
         self.event_embed = event_embed
 
@@ -92,13 +96,13 @@ class EventCog(commands.Cog):
                 message_id = EXCLUDED.message_id;
         """
         await database.execute(query, channel_id, message_id, MESSAGE_TYPE_EVENT, internal_server_id)
-        logger.info(f"Message persistant enregistré pour le server interne {internal_server_id}.")
+        logger.info(f"Message persistant enregistré pour le serveur interne {internal_server_id}.")
 
     async def reattach_event_message(self, guild: discord.Guild):
         """
-        Sur le démarrage du bot, rechercher dans persistent_messages un message de type event pour ce serveur.
+        Sur le démarrage du bot, recherche dans persistent_messages un message de type event pour ce serveur.
         Si trouvé, récupère le message et réattache la vue du bouton.
-        Si le message n'est pas trouvé, recréer l'embed d'événement.
+        Sinon, recrée l'embed d'événement.
         """
         internal_server_id = await self.get_internal_server_id(guild)
         if not internal_server_id:
@@ -125,58 +129,44 @@ class EventCog(commands.Cog):
                 except Exception as e:
                     logger.error(f"Erreur lors de la récupération du message persistant: {e}")
 
-        # Si le message n'existe pas, on recrée l'embed et on l'envoie, puis on met à jour la BDD
+        # Préparation de l'embed mis à jour
+        total_members = guild.member_count
+        current_participants = await self.get_participant_count()
+        embed = discord.Embed(
+            title="🎁GIVEAWAY🎁",
+            description=(
+                f"Participe à notre événement et tente de gagner 1 mois de Nitro ou une carte cadeau Valorant !\n\n"
+                f"Le concours se terminera quand nous aurons atteint l'objectif de participants.\n\n"
+                f"*Attention : seuls les membres ayant invité au moins {MIN_INVITES_REQUIRED} personnes peuvent participer.*"
+            ),
+            color=discord.Color.blue()
+        )
+        embed.add_field(name="👤Participants", value=f"{current_participants} / {OBJECTIF_PARTICIPANTS}", inline=False)
+        embed.set_footer(text="Clique sur 'Participer' pour t'inscrire!")
+        view = EventView(self, embed, timeout=None)
+        
+        # Enregistrement de la vue auprès du bot pour la rendre persistante
+        self.bot.add_view(view)
+        
         if message is None:
             logger.info("Recréation du message d'événement persistant.")
-            total_members = guild.member_count
-            current_participants = await self.get_participant_count()
-            embed = discord.Embed(
-                title="🎁GIVEAWAY🎁",
-                description=(
-                    f"Participe à notre événement et tente de gagner 1 mois de Nitro ou une carte cadeau Valorant !\n\n"
-                    f"Le concours se terminera quand nous aurons atteint l'objectif de participants.\n\n"
-                    f"*Attention : seuls les membres ayant invité au moins {MIN_INVITES_REQUIRED} personnes peuvent participer.*"
-                ),
-                color=discord.Color.blue()
-            )
-            embed.add_field(name="👤Participants", value=f"{current_participants} / {OBJECTIF_PARTICIPANTS}", inline=False)
-            embed.set_footer(text="Clique sur 'Participer' pour t'inscrire!")
-            view = EventView(self, embed, timeout=None)
-
             try:
-                # Envoi du message dans le même salon que précédemment ou dans le premier salon textuel si non défini
                 if channel is None:
                     channel = guild.text_channels[0]
                 message = await channel.send(embed=embed, view=view)
-                # Met à jour la BDD avec le nouveau message
+                # Mise à jour de la BDD avec le nouveau message
                 await self.persist_message(guild, channel.id, message.id)
                 logger.info(f"Message d'événement recréé et persistant enregistré dans le salon {channel.id}.")
             except Exception as e:
                 logger.error(f"Erreur lors de la recréation du message d'événement persistant: {e}")
         else:
-            # Le message est trouvé, réattache la vue
-            total_members = guild.member_count
-            current_participants = await self.get_participant_count()
-            embed = discord.Embed(
-                title="🎁GIVEAWAY🎁",
-                description=(
-                    f"Participe à notre événement et tente de gagner 1 mois de Nitro ou une carte cadeau Valorant !\n\n"
-                    f"Le concours se terminera quand nous aurons atteint l'objectif de participants.\n\n"
-                    f"*Attention : seuls les membres ayant invité au moins {MIN_INVITES_REQUIRED} personnes peuvent participer.*"
-                ),
-                color=discord.Color.blue()
-            )
-            embed.add_field(name="👤Participants", value=f"{current_participants} / {OBJECTIF_PARTICIPANTS}", inline=False)
-            embed.set_footer(text="Clique sur 'Participer' pour t'inscrire!")
-            view = EventView(self, embed, timeout=None)
             try:
                 await message.edit(embed=embed, view=view)
                 logger.info(f"Vue réattachée au message persistant dans le salon {channel.id}.")
             except Exception as e:
                 logger.error(f"Erreur lors de la réattache de la vue: {e}")
 
-
-    # Méthodes d'accès à la BDD pour l'invitation et participants
+    # Méthodes d'accès à la BDD pour l'invitation et les participants
 
     async def get_invite_count(self, user_id: int) -> int:
         await database.ensure_connected()
@@ -219,20 +209,25 @@ class EventCog(commands.Cog):
         """
         Envoie un embed d'événement avec un bouton pour participer.
         Seuls les membres ayant invité au moins MIN_INVITES_REQUIRED personnes pourront participer.
-        L'embed affiche aussi le nombre actuel de membres du serveur et l'objectif de participants.
+        L'embed affiche aussi le nombre actuel de participants et l'objectif de participants.
         """
-        total_members = ctx.guild.member_count
         embed = discord.Embed(
             title="🎁GIVEAWAY🎁",
-            description=f"Participe à notre événement et tente de gagner 1 mois de Nitro ou une carte cadeau Valorant !\n\nLe concours se terminera quand nous aurons atteint l'objectif de participants.\n\n*Attention : seuls les membres ayant invité au moins {MIN_INVITES_REQUIRED} personnes peuvent participer.*",
+            description=(
+                f"Participe à notre événement et tente de gagner 1 mois de Nitro ou une carte cadeau Valorant !\n\n"
+                f"Le concours se terminera quand nous aurons atteint l'objectif de participants.\n\n"
+                f"*Attention : seuls les membres ayant invité au moins {MIN_INVITES_REQUIRED} personnes peuvent participer.*"
+            ),
             color=discord.Color.blue()
         )
         embed.add_field(name="👤Participants", value=f"0 / {OBJECTIF_PARTICIPANTS}", inline=False)
         embed.set_footer(text="Clique sur 'Participer' pour t'inscrire!")
         view = EventView(self, embed, timeout=None)
+        # Enregistrement de la vue pour la persistance
+        self.bot.add_view(view)
         message = await ctx.send(embed=embed, view=view)
 
-        # Persistance du message : on récupère l'ID interne du serveur puis on enregistre le message dans persistent_messages
+        # Persistance du message dans la BDD
         await self.persist_message(ctx.guild, message.channel.id, message.id)
 
     @commands.command(name="tirage")

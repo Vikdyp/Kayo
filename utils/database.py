@@ -77,28 +77,22 @@ class Database:
         - Sinon, on ne refait le test de connexion (SELECT 1;) que si l'intervalle
           minimal depuis le dernier check est dépassé.
         """
-        # Pool inexistant -> on tente directement de se reconnecter
         if self.pool is None:
             logger.warning("Le pool est None. Tentative de reconnexion...")
             await self.attempt_reconnect()
             return
 
-        # Vérifie s'il est temps de retester la connexion
         current_time = time.time()
         if current_time - self._last_connection_check < self._check_interval:
-            # Trop peu de temps depuis le dernier test, on ne refait pas SELECT 1.
             return
 
-        # Mets à jour le dernier timestamp de vérification
         self._last_connection_check = current_time
 
-        # Teste la connexion avec un SELECT 1
         try:
             async with self.pool.acquire() as connection:
                 await connection.execute('SELECT 1;')
         except (asyncpg.exceptions.ConnectionDoesNotExistError, asyncpg.exceptions.InterfaceError):
             logger.warning("La connexion au pool semble inactive. Tentative de reconnexion...")
-            # On réinitialise le timer pour retenter un check rapidement après reconnexion
             self._last_connection_check = 0
             await self.attempt_reconnect()
         except Exception as e:
@@ -116,12 +110,10 @@ class Database:
         for attempt in range(1, self.max_retries + 1):
             await self.connect()
             if self.pool is not None:
-                # Tester immédiatement la connexion
                 try:
                     async with self.pool.acquire() as connection:
                         await connection.execute('SELECT 1;')
                     logger.info(f"Reconnexion réussie après {attempt} tentative(s).")
-                    # Réinitialise le dernier check de connexion
                     self._last_connection_check = time.time()
                     return
                 except Exception as e:
@@ -130,12 +122,10 @@ class Database:
 
             if attempt < self.max_retries:
                 logger.warning(
-                    f"Tentative de reconnexion {attempt} échouée. "
-                    f"Nouvelle tentative dans {self.retry_delay}s."
+                    f"Tentative de reconnexion {attempt} échouée. Nouvelle tentative dans {self.retry_delay}s."
                 )
                 await asyncio.sleep(self.retry_delay)
 
-        # Toutes les tentatives ont échoué
         logger.error(f"Impossible de rétablir la connexion après {self.max_retries} tentatives.")
         await self.send_logs_to_channel()
 
@@ -229,38 +219,44 @@ class Database:
         """
         Supprime les logs obsolètes (plus vieux que 'days' jours) dans la table `message_deletions`
         et nettoie les tables relationnelles (user_id, channel_id, serveur_id, nombre_id)
-        afin d'ôter les entrées non utilisées.
+        uniquement si des logs existent.
         """
-        # Suppression des anciennes entrées
+        # Supprime les anciennes entrées de logs
         await self.execute(f"DELETE FROM message_deletions WHERE timestamp < NOW() - INTERVAL '{days} days';")
 
-        # Nettoyage des tables associées
-        clean_user_query = """
-            DELETE FROM user_id
-            WHERE id NOT IN (SELECT DISTINCT deleted_by FROM message_deletions)
-            AND id NOT IN (SELECT DISTINCT target_user FROM message_deletions);
-        """
-        await self.execute(clean_user_query)
+        # Vérifie si des logs existent après suppression
+        count_result = await self.fetchval("SELECT COUNT(*) FROM message_deletions;")
+        count = int(count_result) if count_result is not None else 0
 
-        clean_channel_query = """
-            DELETE FROM channel_id
-            WHERE id NOT IN (SELECT DISTINCT channel_id FROM message_deletions);
-        """
-        await self.execute(clean_channel_query)
+        if count > 0:
+            clean_user_query = """
+                DELETE FROM user_id
+                WHERE id NOT IN (SELECT DISTINCT deleted_by FROM message_deletions)
+                AND id NOT IN (SELECT DISTINCT target_user FROM message_deletions);
+            """
+            await self.execute(clean_user_query)
 
-        clean_server_query = """
-            DELETE FROM serveur_id
-            WHERE id NOT IN (SELECT DISTINCT guild_id FROM message_deletions);
-        """
-        await self.execute(clean_server_query)
+            clean_channel_query = """
+                DELETE FROM channel_id
+                WHERE id NOT IN (SELECT DISTINCT channel_id FROM message_deletions);
+            """
+            await self.execute(clean_channel_query)
 
-        clean_number_query = """
-            DELETE FROM nombre_id
-            WHERE id NOT IN (SELECT DISTINCT message_count FROM message_deletions);
-        """
-        await self.execute(clean_number_query)
+            clean_server_query = """
+                DELETE FROM serveur_id
+                WHERE id NOT IN (SELECT DISTINCT guild_id FROM message_deletions);
+            """
+            await self.execute(clean_server_query)
 
-        logger.info("Logs obsolètes et données relationnelles non utilisées supprimés.")
+            clean_number_query = """
+                DELETE FROM nombre_id
+                WHERE id NOT IN (SELECT DISTINCT message_count FROM message_deletions);
+            """
+            await self.execute(clean_number_query)
+
+            logger.info("Logs obsolètes et données relationnelles non utilisées supprimés.")
+        else:
+            logger.info("Aucun log trouvé, nettoyage des relations non effectué.")
 
     async def get_or_create_id(self, table: str, column: str, value):
         """
@@ -337,7 +333,6 @@ class Database:
 
             message_count_id = await self.get_or_create_id("nombre_id", "nombre", message_count)
 
-            # Insérer les données dans la table `message_deletions`
             query = """
                 INSERT INTO message_deletions (deleted_by, channel_id, guild_id, deletion_type, target_user, message_count)
                 VALUES ($1, $2, $3, $4, $5, $6);
