@@ -96,17 +96,13 @@ class ScrimCog(commands.Cog):
         while not self.bot.is_closed():
             try:
                 active_scrims = await self.service.get_active_scrims_full_info()
-                # Récupère l'heure actuelle en Europe/Paris
                 now = datetime.now(ZoneInfo("Europe/Paris"))
                 for scrim in active_scrims:
                     scrim_id = scrim.get("id")
                     scrim_datetime = scrim.get("datetime")
                     if not scrim_datetime:
                         continue
-                    # On suppose que scrim_datetime est enregistré en heure de Paris (timestamptz)
-                    # Convertir explicitement en fuseau Europe/Paris
                     scrim_datetime = scrim_datetime.astimezone(ZoneInfo("Europe/Paris"))
-                    # Si l'heure actuelle est au moins 60 secondes après scrim_datetime
                     if now >= scrim_datetime + timedelta(seconds=60):
                         logger.info("Le scrim %s est arrivé à échéance (prévu pour %s)", scrim_id, scrim_datetime)
                         asyncio.create_task(self.schedule_scrim_end(scrim_id, scrim_datetime))
@@ -116,10 +112,6 @@ class ScrimCog(commands.Cog):
                 await asyncio.sleep(60)
 
     async def schedule_scrim_end(self, scrim_id: int, scrim_datetime: datetime):
-        """
-        Traite la fin du scrim : supprime l'embed, supprime le scrim en BDD et envoie un rappel en MP aux participants.
-        """
-        # Récupère l'heure actuelle en Europe/Paris
         now = datetime.now(ZoneInfo("Europe/Paris"))
         delay = (scrim_datetime - now).total_seconds()
         if delay < 0:
@@ -132,6 +124,7 @@ class ScrimCog(commands.Cog):
             logger.error("Scrim %s non trouvé en BDD", scrim_id)
             return
 
+        # Suppression de l'embed
         participants = await self.service.get_scrim_participants(scrim_id)
         if not participants:
             logger.info("Aucun participant trouvé pour le scrim %s", scrim_id)
@@ -162,7 +155,6 @@ class ScrimCog(commands.Cog):
                         continue
                 try:
                     await user.send("Rappel : Le scrim auquel vous étiez inscrit vient de débuter! **Perfect Team**")
-                    
                     logger.info("Rappel envoyé à l'utilisateur %s", discord_id)
                 except Exception as e:
                     logger.error("Erreur lors de l'envoi du DM à l'utilisateur %s: %s", discord_id, e)
@@ -170,14 +162,12 @@ class ScrimCog(commands.Cog):
                 logger.warning("Impossible de retrouver le discord_id pour l'utilisateur interne %s", internal_user_id)
 
     async def build_scrim_embed(self, scrim_info: dict, creator_name: str) -> discord.Embed:
-        total_max = 10
-        nb_inscrits = scrim_info.get("nb_participants", 0)
-        titre = f"Scrim de {creator_name} {nb_inscrits}/{total_max}"
+        # Titre statique, sans mise à jour du nombre de participants
+        titre = f"Scrim de {creator_name}"
         embed = discord.Embed(title=titre, color=discord.Color.blue())
 
         date_obj = scrim_info.get("datetime")
         if date_obj:
-            # Convertir la date en fuseau Europe/Paris avant de la formater
             date_obj = date_obj.astimezone(ZoneInfo("Europe/Paris"))
             date_str = date_obj.strftime("%d/%m/%Y")
             heure_str = date_obj.strftime("%H:%M")
@@ -191,10 +181,11 @@ class ScrimCog(commands.Cog):
         if scrim_info.get("autre"):
             embed.add_field(name="📰 Autres précisions", value=scrim_info.get("autre"), inline=False)
 
+        # Affichage des équipes en colonnes (un membre par ligne)
         team1 = await self.format_team(scrim_info.get("team1", []))
         team2 = await self.format_team(scrim_info.get("team2", []))
-        embed.add_field(name="Équipe 1", value=team1, inline=True)
-        embed.add_field(name="Équipe 2", value=team2, inline=True)
+        embed.add_field(name="Équipe 1", value=team1, inline=False)
+        embed.add_field(name="Équipe 2", value=team2, inline=False)
         return embed
 
     async def format_team(self, team: list) -> str:
@@ -205,7 +196,7 @@ class ScrimCog(commands.Cog):
                 mentions.append(f"<@{discord_id}>")
             else:
                 mentions.append("Inconnu")
-        return ", ".join(mentions) if mentions else "En attente..."
+        return "\n".join(mentions) if mentions else "En attente..."
 
 # ---- Vues et interactions ----
 
@@ -251,11 +242,9 @@ class ScrimModal(discord.ui.Modal, title="Créer un scrim"):
         self.service = ScrimService()
 
     async def on_submit(self, interaction: discord.Interaction):
-        # Différer la réponse pour éviter le timeout
         await interaction.response.defer(ephemeral=True)
         
         try:
-            # On parse la date et l'heure selon le format, puis on la convertit en heure de Paris
             scrim_datetime = datetime.strptime(f"{self.date.value} {self.heure.value}", "%d/%m/%Y %H:%M")
             from zoneinfo import ZoneInfo
             scrim_datetime = scrim_datetime.replace(tzinfo=ZoneInfo("Europe/Paris"))
@@ -277,6 +266,7 @@ class ScrimModal(discord.ui.Modal, title="Créer un scrim"):
                 ephemeral=True
             )
 
+        # Lors de la création, le créateur est ajouté par défaut dans team1
         scrim_id = await self.service.create_scrim(
             scrim_datetime=scrim_datetime,
             map_name=self.map.value,
@@ -301,8 +291,6 @@ class ScrimModal(discord.ui.Modal, title="Créer un scrim"):
         view = ScrimView(scrim_id, cog=cog_instance)
         scrim_message = await interaction.channel.send(embed=embed, view=view)
         await self.service.update_scrim_message(scrim_id, scrim_message.id)
-
-        # Planifier le traitement de fin du scrim dès que l'heure arrive
         asyncio.create_task(cog_instance.schedule_scrim_end(scrim_id, scrim_datetime))
                     
         await interaction.followup.send("Scrim créé avec succès !", ephemeral=True)
@@ -313,8 +301,8 @@ class ScrimView(discord.ui.View):
         self.scrim_id = scrim_id
         self.cog = cog
 
-    @discord.ui.button(label="Rejoindre le scrim", style=discord.ButtonStyle.success, custom_id="join_scrim")
-    async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="Rejoindre Équipe 1", style=discord.ButtonStyle.success, custom_id="join_team1")
+    async def join_team1_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
         service = self.cog.service
         internal_user_id = await service.get_internal_user_id(interaction.user.id)
@@ -325,10 +313,10 @@ class ScrimView(discord.ui.View):
                 f"Veuillez d'abord accepter le règlement {rules_channel_link}.",
                 ephemeral=True
             )
-        if await service.is_user_registered(self.scrim_id, internal_user_id):
-            return await interaction.followup.send("Vous êtes déjà inscrit.", ephemeral=True)
-        if not await service.add_participant(self.scrim_id, internal_user_id):
-            return await interaction.followup.send("Erreur lors de l'inscription.", ephemeral=True)
+        if await service.is_user_registered_in_any_team(self.scrim_id, internal_user_id):
+            return await interaction.followup.send("Vous êtes déjà inscrit dans une équipe.", ephemeral=True)
+        if not await service.add_team_participant(self.scrim_id, "team1", internal_user_id):
+            return await interaction.followup.send("Erreur lors de l'inscription à l'équipe 1.", ephemeral=True)
 
         new_info = await service.update_scrim_embed_info(self.scrim_id)
         if new_info is not None:
@@ -336,7 +324,32 @@ class ScrimView(discord.ui.View):
             new_embed = await self.cog.build_scrim_embed(new_info, creator_name)
             await interaction.message.edit(embed=new_embed, view=self)
 
-        await interaction.followup.send("Inscription validée !", ephemeral=True)
+        await interaction.followup.send("Inscription validée pour l'équipe 1 !", ephemeral=True)
+
+    @discord.ui.button(label="Rejoindre Équipe 2", style=discord.ButtonStyle.success, custom_id="join_team2")
+    async def join_team2_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        service = self.cog.service
+        internal_user_id = await service.get_internal_user_id(interaction.user.id)
+        if internal_user_id is None:
+            rules_channel_id = 1236392632079618108
+            rules_channel_link = f"https://discord.com/channels/{interaction.guild.id}/{rules_channel_id}"
+            return await interaction.followup.send(
+                f"Veuillez d'abord accepter le règlement {rules_channel_link}.",
+                ephemeral=True
+            )
+        if await service.is_user_registered_in_any_team(self.scrim_id, internal_user_id):
+            return await interaction.followup.send("Vous êtes déjà inscrit dans une équipe.", ephemeral=True)
+        if not await service.add_team_participant(self.scrim_id, "team2", internal_user_id):
+            return await interaction.followup.send("Erreur lors de l'inscription à l'équipe 2.", ephemeral=True)
+
+        new_info = await service.update_scrim_embed_info(self.scrim_id)
+        if new_info is not None:
+            creator_name = new_info.get("creator_name", interaction.user.name)
+            new_embed = await self.cog.build_scrim_embed(new_info, creator_name)
+            await interaction.message.edit(embed=new_embed, view=self)
+
+        await interaction.followup.send("Inscription validée pour l'équipe 2 !", ephemeral=True)
 
     @discord.ui.button(label="Quitter le scrim", style=discord.ButtonStyle.danger, custom_id="leave_scrim")
     async def leave_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -350,9 +363,9 @@ class ScrimView(discord.ui.View):
                 f"Veuillez d'abord accepter le règlement {rules_channel_link}.",
                 ephemeral=True
             )
-        if not await service.is_user_registered(self.scrim_id, internal_user_id):
-            return await interaction.followup.send("Vous n'êtes pas inscrit.", ephemeral=True)
-        if not await service.remove_participant(self.scrim_id, internal_user_id):
+        if not await service.is_user_registered_in_any_team(self.scrim_id, internal_user_id):
+            return await interaction.followup.send("Vous n'êtes pas inscrit dans une équipe.", ephemeral=True)
+        if not await service.remove_team_participant(self.scrim_id, internal_user_id):
             return await interaction.followup.send("Erreur lors de la désinscription.", ephemeral=True)
 
         new_info = await service.update_scrim_embed_info(self.scrim_id)

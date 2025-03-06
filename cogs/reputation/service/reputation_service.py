@@ -1,28 +1,26 @@
-# cogs/reputation/service/reputation_service.py
-
 import logging
 from datetime import date
-from typing import Dict
+from typing import Dict, Tuple
 from utils.database import database
 
 logger = logging.getLogger("reputation")
 
 async def get_internal_id(discord_id: int) -> int:
-    # 1) Tente de récupérer
     query_select = "SELECT id FROM user_id WHERE discord_id = $1;"
     found_id = await database.fetchval(query_select, discord_id)
     if found_id is not None:
         return found_id
     
-    # 2) Sinon on l'insère
     query_insert = "INSERT INTO user_id (discord_id) VALUES ($1) RETURNING id;"
     new_id = await database.fetchval(query_insert, discord_id)
     return new_id
 
-async def add_event(reporter_discord_id: int, target_discord_id: int, event_type: str) -> bool:
+async def add_event(reporter_discord_id: int, target_discord_id: int, event_type: str) -> Tuple[bool, str]:
     """
-    Ajoute ou incrémente un événement de réputation (report ou recommendation) dans la base.
-    - Limite de 5 actions par reporter/target/event_type (global) + 1 par jour.
+    Ajoute un événement de réputation (report ou recommendation) dans la base.
+    - Limite : 1 action par jour pour une paire reporter/target/event_type.
+    - Limite globale : 5 actions maximum.
+    Retourne un tuple (succès, message) détaillant l'issue.
     """
     today = date.today()
 
@@ -30,9 +28,22 @@ async def add_event(reporter_discord_id: int, target_discord_id: int, event_type
     reporter_id = await get_internal_id(reporter_discord_id)
     target_id = await get_internal_id(target_discord_id)
     if reporter_id is None or target_id is None:
-        return False
+        return (False, "Erreur interne lors de la récupération des identifiants.")
 
-    # Vérifier le total d'actions (max 5)
+    # Vérifier si l'action a déjà été effectuée aujourd'hui
+    query_check_today = """
+        SELECT count
+        FROM reputation_events
+        WHERE reporter_id = $1 AND target_id = $2 AND event_type = $3 AND event_date = $4;
+    """
+    today_count = await database.fetchval(query_check_today, reporter_id, target_id, event_type, today)
+    if today_count and int(today_count) >= 1:
+        if event_type == 'report':
+            return (False, "Vous avez déjà signalé cet utilisateur aujourd'hui.")
+        else:
+            return (False, "Vous avez déjà recommandé cet utilisateur aujourd'hui.")
+
+    # Vérifier le total global d'actions
     query_check_total = """
         SELECT COALESCE(SUM(count), 0)
         FROM reputation_events
@@ -40,35 +51,27 @@ async def add_event(reporter_discord_id: int, target_discord_id: int, event_type
     """
     total_count = await database.fetchval(query_check_total, reporter_id, target_id, event_type)
     if total_count and int(total_count) >= 5:
-        return False
+        if event_type == 'report':
+            return (False, "La limite globale de signalements pour cet utilisateur est atteinte.")
+        else:
+            return (False, "La limite globale de recommandations pour cet utilisateur est atteinte.")
 
-    # UPSERT (on incrémente de 1 l'événement du jour)
-    query_upsert = """
+    # Insérer l'événement pour aujourd'hui
+    query_insert = """
         INSERT INTO reputation_events (reporter_id, target_id, event_type, event_date, count)
         VALUES ($1, $2, $3, $4, 1)
-        ON CONFLICT (reporter_id, target_id, event_type, event_date)
-        DO UPDATE SET count = reputation_events.count + 1
         RETURNING count;
     """
-    new_count = await database.fetchval(query_upsert, reporter_id, target_id, event_type, today)
+    new_count = await database.fetchval(query_insert, reporter_id, target_id, event_type, today)
+    if new_count is not None and int(new_count) == 1:
+        if event_type == 'report':
+            return (True, "Signalement enregistré avec succès.")
+        else:
+            return (True, "Recommandation enregistrée avec succès.")
 
-    # Si ça dépasse 5, on annule
-    if new_count and int(new_count) > 5:
-        query_decrement = """
-            UPDATE reputation_events
-            SET count = count - 1
-            WHERE reporter_id = $1 AND target_id = $2 AND event_type = $3 AND event_date = $4;
-        """
-        await database.execute(query_decrement, reporter_id, target_id, event_type, today)
-        return False
-
-    return True
+    return (False, "Une erreur est survenue lors de l'enregistrement de votre action.")
 
 async def get_profile_data(target_discord_id: int) -> Dict[str, int]:
-    """
-    Retourne un dictionnaire avec le nombre total de signalements ("reports")
-    et recommandations ("recommendations") reçus par un utilisateur.
-    """
     target_id = await get_internal_id(target_discord_id)
     if target_id is None:
         return {"reports": 0, "recommendations": 0}

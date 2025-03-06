@@ -76,8 +76,9 @@ cog_paths = [
     'cogs.other.vocal_creator',
     'cogs.scrims.scrims',
     'cogs.other.rank_up',
-    'cogs.other.invite_tracker',
-    'cogs.other.event',
+    #'cogs.other.invite_tracker',  ACTIVER SI EVENT EN COURS
+    #'cogs.other.event',           ACTIVER SI EVENT EN COURS
+    #'cogs.tournaments.tournament',
 ]
 
 @bot.event

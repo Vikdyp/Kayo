@@ -56,16 +56,18 @@ class ScrimService:
         channel_id: int,
         guild_id: int
     ) -> Optional[int]:
+        # ATTENTION : il faut que la table scrims possède les colonnes team1 et team2
         query = """
-            INSERT INTO scrims (datetime, map, rang, autre, participants, message_id, channel_id, guild_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            INSERT INTO scrims (datetime, map, rang, autre, team1, team2, message_id, channel_id, guild_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING id;
         """
-        participants_array = initial_participants if initial_participants else []
+        team1 = initial_participants if initial_participants else []
+        team2 = []
         try:
             scrim_id = await database.fetchval(
                 query,
-                scrim_datetime, map_name, rang, autre, participants_array, message_id, channel_id, guild_id
+                scrim_datetime, map_name, rang, autre, team1, team2, message_id, channel_id, guild_id
             )
             logger.info("Scrim créé avec id %s", scrim_id)
             return scrim_id
@@ -81,44 +83,9 @@ class ScrimService:
         query = "SELECT id FROM user_id WHERE discord_id = $1;"
         return await database.fetchval(query, discord_id)
 
-    async def get_scrim_participants(self, scrim_id: int) -> List[int]:
-        query = "SELECT participants FROM scrims WHERE id = $1;"
-        participants = await database.fetchval(query, scrim_id)
-        return participants if participants else []
-
-    async def is_user_registered(self, scrim_id: int, internal_user_id: int) -> bool:
-        participants = await self.get_scrim_participants(scrim_id)
-        return internal_user_id in participants
-
-    async def add_participant(self, scrim_id: int, internal_user_id: int) -> bool:
-        participants = await self.get_scrim_participants(scrim_id)
-        if internal_user_id in participants:
-            return False
-        participants.append(internal_user_id)
-        query = "UPDATE scrims SET participants = $1 WHERE id = $2;"
-        try:
-            await database.execute(query, participants, scrim_id)
-            return True
-        except Exception as e:
-            logger.error("Erreur lors de l'ajout d'un participant: %s", e)
-            return False
-
-    async def remove_participant(self, scrim_id: int, internal_user_id: int) -> bool:
-        participants = await self.get_scrim_participants(scrim_id)
-        if internal_user_id not in participants:
-            return False
-        participants.remove(internal_user_id)
-        query = "UPDATE scrims SET participants = $1 WHERE id = $2;"
-        try:
-            await database.execute(query, participants, scrim_id)
-            return True
-        except Exception as e:
-            logger.error("Erreur lors de la suppression d'un participant: %s", e)
-            return False
-
     async def get_scrim_info(self, scrim_id: int) -> Optional[Dict[str, Any]]:
         query = """
-            SELECT datetime, map, rang, autre, participants, message_id, channel_id, guild_id 
+            SELECT datetime, map, rang, autre, team1, team2, message_id, channel_id, guild_id 
             FROM scrims WHERE id = $1;
         """
         record = await database.fetchrow(query, scrim_id)
@@ -128,10 +95,11 @@ class ScrimService:
         info = await self.get_scrim_info(scrim_id)
         if not info:
             return None
-        participants = info.get("participants") or []
-        info["nb_participants"] = len(participants)
-        info["team1"] = participants[:5]
-        info["team2"] = participants[5:10]
+        team1 = info.get("team1") or []
+        team2 = info.get("team2") or []
+        info["nb_participants"] = len(team1) + len(team2)
+        info["team1"] = team1
+        info["team2"] = team2
         return info
 
     async def delete_scrim(self, scrim_id: int) -> bool:
@@ -219,3 +187,55 @@ class ScrimService:
         except Exception as e:
             logger.exception("Erreur lors de la récupération des scrims actifs: %s", e)
             return []
+
+    # --- Nouvelles méthodes pour la gestion des équipes ---
+    async def is_user_registered_in_any_team(self, scrim_id: int, internal_user_id: int) -> bool:
+        info = await self.get_scrim_info(scrim_id)
+        if not info:
+            return False
+        team1 = info.get("team1") or []
+        team2 = info.get("team2") or []
+        return internal_user_id in team1 or internal_user_id in team2
+
+    async def add_team_participant(self, scrim_id: int, team: str, internal_user_id: int) -> bool:
+        info = await self.get_scrim_info(scrim_id)
+        if not info or team not in ["team1", "team2"]:
+            return False
+        current_team = info.get(team) or []
+        if internal_user_id in current_team:
+            return False
+        current_team.append(internal_user_id)
+        query = f"UPDATE scrims SET {team} = $1 WHERE id = $2;"
+        try:
+            await database.execute(query, current_team, scrim_id)
+            return True
+        except Exception as e:
+            logger.error("Erreur lors de l'ajout d'un participant à %s: %s", team, e)
+            return False
+
+    async def remove_team_participant(self, scrim_id: int, internal_user_id: int) -> bool:
+        info = await self.get_scrim_info(scrim_id)
+        if not info:
+            return False
+        updated = False
+        if internal_user_id in (info.get("team1") or []):
+            team1 = info.get("team1")
+            team1.remove(internal_user_id)
+            query = "UPDATE scrims SET team1 = $1 WHERE id = $2;"
+            try:
+                await database.execute(query, team1, scrim_id)
+                updated = True
+            except Exception as e:
+                logger.error("Erreur lors de la suppression d'un participant de team1: %s", e)
+                return False
+        if internal_user_id in (info.get("team2") or []):
+            team2 = info.get("team2")
+            team2.remove(internal_user_id)
+            query = "UPDATE scrims SET team2 = $1 WHERE id = $2;"
+            try:
+                await database.execute(query, team2, scrim_id)
+                updated = True
+            except Exception as e:
+                logger.error("Erreur lors de la suppression d'un participant de team2: %s", e)
+                return False
+        return updated
