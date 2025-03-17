@@ -18,6 +18,8 @@ backup.dump
 restore_database.py
 restore_database2.py
 
+SQL_test.py
+
 # IDEs
 .vscode/
 *.swp

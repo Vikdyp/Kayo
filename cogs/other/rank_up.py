@@ -38,12 +38,12 @@ class RoleChangeCog(commands.Cog):
     async def on_member_update(self, before: discord.Member, after: discord.Member):
         # On identifie les rôles avant/après qui font partie des rangs Valorant
         old_ranks = {r.name.lower() for r in before.roles if r.name != "@everyone" and r.name.lower() in ROLE_RANK}
-        new_ranks = {r.name.lower() for r in after.roles  if r.name != "@everyone" and r.name.lower() in ROLE_RANK}
+        new_ranks = {r.name.lower() for r in after.roles if r.name != "@everyone" and r.name.lower() in ROLE_RANK}
 
         # Les rôles supprimés (ex: {"or"})
         removed = old_ranks - new_ranks
         # Les rôles ajoutés (ex: {"platine"})
-        added   = new_ranks - old_ranks
+        added = new_ranks - old_ranks
 
         # Cas 1 : il y a un retrait d'un ou plusieurs rôles
         if removed:
@@ -114,19 +114,53 @@ class RoleChangeCog(commands.Cog):
                        # )
 
     async def _send_rank_change_message(self, member: discord.Member, old_rank: str, new_rank: str):
-        """Envoie un message de promotion/rétrogradation unique."""
+        """Envoie un message de promotion/rétrogradation unique avec une stat indiquant la position relative."""
         log_channel = self.get_log_channel()
         if not log_channel:
             return
 
         old_val = ROLE_RANK[old_rank]
         new_val = ROLE_RANK[new_rank]
+
+        # Calcul de la stat relative : compter le nombre de membres ayant un rang et ceux qui ont un rang inférieur au nouveau
+        total_ranked = 0
+        worse_count = 0  # Membres ayant un rang moins bon (supérieur en valeur) que le nouveau rang
+
+        for m in member.guild.members:
+            member_ranks = [ROLE_RANK[r.name.lower()] for r in m.roles if r.name.lower() in ROLE_RANK]
+            if not member_ranks:
+                continue
+            total_ranked += 1
+            best_member_rank = min(member_ranks)
+            if best_member_rank > new_val:
+                worse_count += 1
+
+        if total_ranked > 0:
+            percentage_worse = (worse_count / total_ranked) * 100
+        else:
+            percentage_worse = 0
+
+        # Calcul du top percentile (par exemple, si 20% ont un rang inférieur, alors tu fais partie du top 80%)
+        top_percentile = 100 - percentage_worse
+        
+        # Formatage du pourcentage : si le top percentile est inférieur à 1%, on affiche deux décimales avec une virgule
+        if top_percentile < 1:
+            top_percentile_str = f"{top_percentile:.2f}".replace('.', ',')
+        else:
+            top_percentile_str = f"{top_percentile:.0f}"
+
+        stat_msg = f" Tu fais partie du top {top_percentile_str}% des membres !"
+
+        # Recherche de l'emoji personnalisé dans le serveur via son nom
+        emoji_obj = discord.utils.get(member.guild.emojis, name=new_rank)
+        emoji = str(emoji_obj) if emoji_obj is not None else ""
+
         if new_val < old_val:
             # Promotion
-            msg = f"{member.mention} vient de passer **{new_rank.capitalize()}**. Bien joué !"
+            msg = f"{member.mention} vient de passer **{new_rank.capitalize()}** {emoji}.{stat_msg}"
         else:
             # Rétrogradation
-            msg = f"{member.mention} a derank **{new_rank.capitalize()}**. Force à toi !"
+            msg = f"{member.mention} a derank **{new_rank.capitalize()}** {emoji}. Force à toi !"
 
         await log_channel.send(msg)
 
