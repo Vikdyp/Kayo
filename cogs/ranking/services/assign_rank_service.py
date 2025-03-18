@@ -1,6 +1,5 @@
-# cogs/ranking/services/assign_rank_service.py
-
 import asyncio
+from datetime import datetime, timedelta
 from typing import Optional, Dict, List
 from utils.database import database
 import logging
@@ -60,7 +59,6 @@ async def get_or_create_server_record(guild_id: int, guild_name: str) -> Optiona
     except Exception as e:
         logger.error(f"[get_or_create_server_record] Erreur : {e}")
         return None
-
 
 # ------------------------------------------------
 # PERSISTENT MESSAGES
@@ -147,7 +145,6 @@ async def delete_persistent_message(discord_guild_id: int, message_type: str, gu
         logger.error(f"Erreur lors de la suppression du message persistant: {e}")
         return False
 
-
 # ------------------------------------------------
 # CHANNEL CONFIG
 # ------------------------------------------------
@@ -199,7 +196,6 @@ async def set_channel_id(guild_id: int, action: str, channel_id: int) -> bool:
         logger.error(f"Erreur lors de la définition du salon : {e}")
         return False
 
-
 # ------------------------------------------------
 # USER VALORANT INFO (NOUVELLE TABLE : valorant_info)
 # ------------------------------------------------
@@ -228,7 +224,6 @@ async def update_user_valorant_info(discord_id: int, pseudo: str, tag: str) -> b
         logger.error(f"Erreur lors de la mise à jour des informations Valorant pour Discord ID {discord_id}: {e}")
         return False
 
-
 async def set_valorant_details(discord_id: int, puuid: str, region: str, rank: str, elo: int) -> bool:
     """
     Met à jour le puuid, la region, le rank et l'elo dans valorant_info.
@@ -253,7 +248,6 @@ async def set_valorant_details(discord_id: int, puuid: str, region: str, rank: s
     except Exception as e:
         logger.error(f"Erreur lors de la mise à jour des détails Valorant pour Discord ID {discord_id}: {e}")
         return False
-
 
 async def get_all_users_with_valo_info() -> List[Dict]:
     """
@@ -281,7 +275,6 @@ async def get_all_users_with_valo_info() -> List[Dict]:
         logger.error(f"Erreur lors de la récupération des utilisateurs pour la mise à jour Valorant: {e}")
         return []
 
-
 async def get_user_by_pseudo_tag(pseudo: str, tag: str) -> Optional[int]:
     """
     Vérifie si un pseudo + tag est déjà enregistré dans valorant_info.
@@ -307,9 +300,8 @@ async def get_user_by_pseudo_tag(pseudo: str, tag: str) -> Optional[int]:
         logger.error(f"[get_user_by_pseudo_tag] Erreur : {e}")
         return None
 
-
 # ------------------------------------------------
-# Supprimer données Valorant
+# SUPPRIMER DONNÉES VALORANT
 # ------------------------------------------------
 async def delete_valo_data(discord_id: int) -> bool:
     """
@@ -333,7 +325,6 @@ async def delete_valo_data(discord_id: int) -> bool:
         logger.error(f"Erreur lors de la suppression des données Valorant pour {discord_id}: {e}")
         return False
 
-
 async def user_exists_in_db(discord_id: int) -> bool:
     """
     Vérifie l'existence d'un enregistrement dans la table user_id pour ce discord_id.
@@ -346,7 +337,6 @@ async def user_exists_in_db(discord_id: int) -> bool:
     """
     record = await database.fetchrow(query, discord_id)
     return record is not None
-
 
 # ------------------------------------------------
 # RÔLES : gestion + cache local
@@ -379,7 +369,6 @@ async def get_role_id_for_config(guild_id: int, guild_name: str, role_config_pk:
         logger.error(f"[get_role_id_for_config] Erreur : {e}")
         return None
 
-
 async def get_role_mappings(guild_id: int, guild_name: str) -> Optional[Dict[str, int]]:
     """
     Récupère (depuis la table roles_configurations) les mappings pour les noms de rang Valorant
@@ -408,7 +397,6 @@ async def get_role_mappings(guild_id: int, guild_name: str) -> Optional[Dict[str
             logger.warning(f"Aucun rôle de rang Valorant trouvé pour server_id={server_db_id}.")
             return None
 
-        # Construit le dict { "fer": 123456789, "bronze": 987654321, ... }
         role_mappings = {r['role_name'].lower(): r['role_id'] for r in records}
 
         async with _role_cache_lock:
@@ -425,9 +413,11 @@ async def refresh_role_mappings(guild_id: int, guild_name: str):
         if guild_id in _role_cache:
             del _role_cache[guild_id]
             logger.info(f"Cache des mappings de rôles vidé pour guild_id={guild_id}.")
-    # Pour forcer la recréation du cache :
     await get_role_mappings(guild_id, guild_name)
 
+# ------------------------------------------------
+# FLAGS DE MISE À JOUR
+# ------------------------------------------------
 async def get_users_with_update_flag_false() -> list:
     """
     Récupère tous les utilisateurs (jointure valorant_info + user_id)
@@ -453,7 +443,6 @@ async def get_users_with_update_flag_false() -> list:
         logger.error(f"[get_users_with_update_flag_false] Erreur: {e}")
         return []
 
-
 async def mark_user_update_flag_true(discord_id: int) -> None:
     """
     Met needs_update = TRUE pour l'utilisateur donné (via discord_id).
@@ -471,7 +460,6 @@ async def mark_user_update_flag_true(discord_id: int) -> None:
     except Exception as e:
         logger.error(f"[mark_user_update_flag_true] Erreur: {e}")
 
-
 async def reset_all_update_flag_false() -> None:
     """
     Remet tous les utilisateurs à needs_update = FALSE.
@@ -479,6 +467,46 @@ async def reset_all_update_flag_false() -> None:
     query = "UPDATE valorant_info SET needs_update = FALSE"
     try:
         await database.execute(query)
-        logger.info("[reset_all_update_flag_false] Tout le monde repasse à needs_update=TRUE.")
+        logger.info("[reset_all_update_flag_false] Tout le monde repasse à needs_update=FALSE.")
     except Exception as e:
         logger.error(f"[reset_all_update_flag_false] Erreur: {e}")
+
+# ------------------------------------------------
+# PERSISTENCE DE LA NOTIFICATION
+# ------------------------------------------------
+async def get_last_notification(discord_id: int) -> Optional[datetime]:
+    """
+    Récupère le timestamp de la dernière notification envoyée à l'utilisateur.
+    """
+    user_pk = await get_user_pk_by_discord_id(discord_id)
+    if not user_pk:
+        return None
+    query = """
+        SELECT last_notification
+          FROM valorant_info
+         WHERE user_id = $1
+         LIMIT 1
+    """
+    record = await database.fetchrow(query, user_pk)
+    if record:
+        return record.get("last_notification")
+    return None
+
+async def update_last_notification(discord_id: int, timestamp: datetime) -> bool:
+    """
+    Met à jour le timestamp de la dernière notification envoyée pour l'utilisateur.
+    """
+    user_pk = await get_user_pk_by_discord_id(discord_id)
+    if not user_pk:
+        return False
+    query = """
+        UPDATE valorant_info
+           SET last_notification = $1
+         WHERE user_id = $2
+    """
+    try:
+        await database.execute(query, timestamp, user_pk)
+        return True
+    except Exception as e:
+        logger.error(f"Erreur lors de la mise à jour de last_notification pour discord_id {discord_id}: {e}")
+        return False

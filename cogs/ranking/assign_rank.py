@@ -19,7 +19,9 @@ from cogs.ranking.services.assign_rank_service import (
     user_exists_in_db,
     get_role_id_for_config,
     get_or_create_server_record,
-    get_user_by_pseudo_tag
+    get_user_by_pseudo_tag,
+    get_last_notification,         # nouvel import
+    update_last_notification         # nouvel import
 )
 from cogs.ranking.services.valorant_service import (
     get_puuid, get_player_rank, RateLimitException
@@ -349,44 +351,32 @@ class EmbedCog(commands.Cog):
 
     async def update_roles_loop(self):
         """
-        Boucle infinie qui tourne toutes les minutes:
-          - Tente de mettre à jour les rôles
-          - Si on reçoit un code 429 (RateLimitException), on arrête la mise à jour
-            et on attend 60s avant de recommencer
-          - Si tout va bien ou s'il n'y a aucun utilisateur, on attend 60s avant de recommencer
+        Boucle infinie qui met à jour les rôles Valorant.
         """
         while True:
             try:
                 await self.update_roles_task()
             except RateLimitException as e:
                 logger.warning(f"RateLimitException rencontrée: {e}. Pause de 60s.")
-                # On stoppe immédiatement le cycle et on attend 60 secondes
                 await asyncio.sleep(60)
             else:
-                # Tout s'est bien passé (ou aucun user à mettre à jour)
-                # On attend 60 secondes avant le prochain cycle
-
                 await asyncio.sleep(60)
 
     async def update_roles_task(self):
         """
-        Effectue le cycle de mise à jour des rôles Valorant :
-          - Récupère les utilisateurs dont needs_update=FALSE
-          - Pour chacun, récupère/assigne puuid, rank, etc.
-          - Ajoute/Supprime le rôle correspondant
-          - Marque needs_update=TRUE
-          - S'arrête immédiatement si on reçoit un 429 (RateLimitException).
+        Cycle de mise à jour des rôles Valorant.
+        Pour chaque utilisateur avec needs_update = FALSE :
+          - Vérifie et met à jour les informations (puuid, région, rank, elo).
+          - Si la récupération du puuid échoue, notifie le membre (une fois par heure) via DM.
         """
         logger.info("Début de la tâche de mise à jour des rôles Valorant (phase ping-pong).")
         users = await get_users_with_update_flag_false()
         logger.info(f"{len(users)} utilisateurs trouvés avec needs_update=FALSE.")
 
         if not users:
-            # S'il n'y a aucun utilisateur, on réinitialise tout (passe tout le monde en needs_update=FALSE)
-            logger.info("Aucun utilisateur à mettre à jour. On réinitialise needs_update=FALSE pour tout le monde.")
+            logger.info("Aucun utilisateur à mettre à jour. Réinitialisation de needs_update pour tous.")
             await reset_all_update_flag_false()
             logger.info("Fin de la tâche (aucun user).")
-            # On ne fait pas de return pour que la boucle continue (dans update_roles_loop).
             return
 
         for record in users:
@@ -398,20 +388,17 @@ class EmbedCog(commands.Cog):
             current_rank = record.get("valorant_rank")
             current_elo = record.get("valorant_elo")
 
-            # Cherche le Member dans tous les serveurs
             member = None
             for guild in self.bot.guilds:
                 m = guild.get_member(discord_id)
                 if m:
                     member = m
                     break
-
             if not member:
                 logger.warning(f"[update_roles_task] Member introuvable pour Discord ID {discord_id}.")
                 await mark_user_update_flag_true(discord_id)
                 continue
 
-            # Vérification du rôle "ban"
             try:
                 ban_role_id = await ModerationService.get_ban_role_id(member.guild.id)
                 if ban_role_id:
@@ -425,36 +412,50 @@ class EmbedCog(commands.Cog):
                 await mark_user_update_flag_true(discord_id)
                 continue
 
-            # Vérifier si puuid / region manquants
             if not puuid or not region:
-                # Peut lever RateLimitException
-                valo_info = await get_puuid(pseudo, tag)
-                if valo_info:
-                    nom_tag, region, puuid = valo_info
-                    success = await set_valorant_details(discord_id, puuid, region, current_rank, current_elo)
-                    if success:
-                        logger.info(f"[update_roles_task] PUUID/région mis à jour pour Discord ID {discord_id}.")
-                else:
+                try:
+                    valo_info = await get_puuid(pseudo, tag)
+                except RateLimitException as e:
+                    logger.warning(f"RateLimitException pour {pseudo}#{tag}: {e}")
+                    await mark_user_update_flag_true(discord_id)
+                    continue
+                if not valo_info:
                     logger.warning(f"[update_roles_task] Impossible de récupérer le PUUID pour {pseudo}#{tag}.")
+                    now = datetime.utcnow()
+                    last_notif = await get_last_notification(discord_id)
+                    # Vérifier si le membre a déjà été notifié dans la dernière heure
+                    if (last_notif is None) or ((now - last_notif) > timedelta(hours=1)):
+                        try:
+                            # Le salon est mentionné sous la forme <#ID> pour qu'il apparaisse comme un lien cliquable dans Discord
+                            await member.send(
+                                f"La récupération de vos informations Valorant a échoué pour le pseudo et tag **{pseudo}#{tag}**.\n"
+                                f"Veuillez vérifier vos identifiants ou modifier vos informations dans le salon <#1323673115922010143>."
+                            )
+                            await update_last_notification(discord_id, now)
+                        except Exception as dm_error:
+                            logger.error(f"Erreur lors de l'envoi du DM à {discord_id}: {dm_error}")
                     await mark_user_update_flag_true(discord_id)
                     continue
 
-            # Récupérer le rang (peut lever RateLimitException)
-            stats = await get_player_rank(region, puuid)
+            # Récupération du rang
+            try:
+                stats = await get_player_rank(region, puuid)
+            except RateLimitException as e:
+                logger.warning(f"RateLimitException lors de la récupération du rang pour {discord_id}: {e}")
+                await mark_user_update_flag_true(discord_id)
+                continue
             if stats:
                 new_rank, new_elo = stats
             else:
                 new_rank, new_elo = None, None
-                logger.info(f"[update_roles_task] Joueur {pseudo}#{tag} n'a pas de rang compétitif ou échec API.")
+                logger.info(f"[update_roles_task] {pseudo}#{tag} n'a pas de rang compétitif ou API échec.")
 
-            # Mise à jour DB si changement de rank/Elo
             if (new_rank != current_rank) or (new_elo != current_elo):
                 if new_rank and new_elo:
                     updated = await set_valorant_details(discord_id, puuid, region, new_rank, new_elo)
                     if updated:
                         logger.info(f"[update_roles_task] Rang/Elo mis à jour pour {discord_id}: {new_rank} / {new_elo}")
 
-            # Si pas de nouveau rang, marquer en TRUE et passer au suivant
             if not new_rank:
                 await mark_user_update_flag_true(discord_id)
                 continue
@@ -465,7 +466,6 @@ class EmbedCog(commands.Cog):
                 await mark_user_update_flag_true(discord_id)
                 continue
 
-            # Récupérer l'ID Discord du rôle
             try:
                 discord_role_id = await get_role_id_for_config(member.guild.id, member.guild.name, role_config_id)
             except Exception as e:
@@ -473,7 +473,7 @@ class EmbedCog(commands.Cog):
                 discord_role_id = None
 
             if not discord_role_id:
-                logger.warning(f"[update_roles_task] Aucun 'role_id' pour guild={member.guild.id}, pk={role_config_id}.")
+                logger.warning(f"[update_roles_task] Aucun role_id pour guild={member.guild.id}, pk={role_config_id}.")
                 await mark_user_update_flag_true(discord_id)
                 continue
 
@@ -483,14 +483,12 @@ class EmbedCog(commands.Cog):
                 await mark_user_update_flag_true(discord_id)
                 continue
 
-            # Récupérer la config de tous les rôles rang
             role_mappings = await get_role_mappings(member.guild.id, member.guild.name)
             if not role_mappings:
                 logger.warning(f"[update_roles_task] Aucune config de rôles pour guild={member.guild.id}.")
                 await mark_user_update_flag_true(discord_id)
                 continue
 
-            # Retirer les anciens rôles Valorant
             rank_role_ids = set(role_mappings.values())
             roles_to_remove = [r for r in member.roles if (r.id in rank_role_ids and r.id != desired_role.id)]
             if roles_to_remove:
@@ -502,7 +500,6 @@ class EmbedCog(commands.Cog):
                     await mark_user_update_flag_true(discord_id)
                     continue
 
-            # Ajouter le nouveau rôle
             if desired_role not in member.roles:
                 try:
                     await member.add_roles(desired_role, reason="Mise à jour rang Valorant")
