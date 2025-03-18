@@ -6,10 +6,18 @@ class StatusManager(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
+    @commands.Cog.listener()
+    async def on_ready(self):
+        # S'exécute une seule fois pour définir la présence par défaut au démarrage
+        if not hasattr(self.bot, "presence_set"):
+            default_activity = "Perfect Team"
+            await self.bot.change_presence(status=discord.Status.online, activity=discord.Game(name=default_activity))
+            self.bot.presence_set = True
+
     @app_commands.command(name="setstatus", description="Modifie le status et l'activité du bot.")
     @app_commands.describe(
         status="Le nouveau status (online, idle, dnd, invisible)",
-        activity="Nouveau message d'activité. Laisser vide pour conserver l'activité actuelle."
+        activity="Nouveau message d'activité. Laisser vide pour utiliser 'Perfect Team'."
     )
     @app_commands.choices(status=[
         app_commands.Choice(name="online", value="online"),
@@ -30,19 +38,19 @@ class StatusManager(commands.Cog):
             "invisible": discord.Status.invisible
         }
         new_status = valid_statuses.get(status.value)
-        # Conserver l'activité actuelle si aucun nouveau message n'est fourni
+        
+        # Si aucune activité n'est fournie, on utilise "Perfect Team"
         if activity is None:
-            # Utiliser l'activité actuelle (peut être None si aucune n'a été définie)
-            activity_obj = self.bot.activity
+            default_activity = "Perfect Team"
+            activity_obj = discord.Game(name=default_activity)
         else:
             activity_obj = discord.Game(name=activity)
 
         await self.bot.change_presence(status=new_status, activity=activity_obj)
 
-        # Répondre à l'interaction en indiquant ce qui a été modifié
         if activity is None:
             await interaction.response.send_message(
-                f"Status modifié à **{status.value}** et l'activité reste inchangée.",
+                f"Status modifié à **{status.value}** et l'activité est maintenant **Perfect Team**.",
                 ephemeral=True
             )
         else:
