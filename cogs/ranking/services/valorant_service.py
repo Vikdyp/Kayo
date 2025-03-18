@@ -16,7 +16,7 @@ HEADERS = {"Authorization": API_KEY} if API_KEY else {}
 BASE_URL = "https://api.henrikdev.xyz/valorant/v2"
 
 # Limiteur de taux : 30 requêtes par minute
-rate_limiter = AsyncLimiter(max_rate=30, time_period=60)
+rate_limiter = AsyncLimiter(max_rate=90, time_period=60)
 
 # Exception personnalisée pour indiquer un dépassement de quota (429)
 class RateLimitException(Exception):
