@@ -1,8 +1,5 @@
-#cogs\voice_management\queue_views.py
 import logging
-import random
-import string
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import discord
 from discord import ButtonStyle, Interaction
@@ -10,7 +7,10 @@ from discord.ui import Button, Select, View
 
 from cogs.voice_management.services.five_stack_service import MatchmakingService
 
-# On définit le logger local du module :
+# Constante pour l'ID du salon où l'utilisateur doit lier ses informations Valorant
+VALORANT_INFO_CHANNEL_ID: int = 1323673115922010143
+
+# Logger local
 logger = logging.getLogger(__name__)
 
 
@@ -20,8 +20,9 @@ logger = logging.getLogger(__name__)
 
 class MMRConfirmationView(View):
     """
-    Vue de confirmation pour le MMR étendu.
-    Pour un 'solo' ou 'team' qui veut s'inscrire avec mmr_extended=True/False.
+    Vue de confirmation pour l'utilisation du MMR étendu.
+    Permet de choisir si l'on souhaite appliquer le malus de 25% (mmr_extended=True)
+    ou non pour un 'solo' ou une 'team'.
     """
     def __init__(
         self,
@@ -49,13 +50,12 @@ class MMRConfirmationView(View):
         self.entry_type = entry_type
 
     @discord.ui.button(label="Oui", style=ButtonStyle.success, custom_id="mmr_confirm_yes")
-    async def confirm_yes(self, interaction: Interaction, button: Button):
+    async def confirm_yes(self, interaction: Interaction, button: Button) -> None:
         """
-        L'utilisateur accepte le mmr_extended=True.
+        L'utilisateur accepte d'utiliser le MMR étendu (avec malus de 25%).
         """
         try:
             if self.entry_type == "solo":
-                # On appelle la méthode du cog pour un solo
                 await self.cog.add_solo_to_queue(
                     user=self.user,
                     langue=self.langue,
@@ -67,8 +67,6 @@ class MMRConfirmationView(View):
                     roles=self.roles
                 )
             else:
-                # Cas 'team' : on suppose qu'on a déjà récupéré l'info qu'ils sont tous ensemble
-                # Mais ici, on n'a qu'un "leader" => On va faire un appel dédié
                 await self.cog.add_preformed_team_to_queue(
                     leader=self.user,
                     desired_size=self.team_size,
@@ -80,25 +78,26 @@ class MMRConfirmationView(View):
                 )
 
             await interaction.response.send_message(
-                f"Vous avez rejoint la queue.",
+                "Vous avez rejoint la queue.",
                 ephemeral=True
             )
             logger.info(
-                f"[MMRView] {self.user.display_name} => mmr_extended=True, "
+                f"[MMRConfirmationView] {self.user.display_name} a choisi mmr_extended=True, "
                 f"team_size={self.team_size}, entry_type={self.entry_type}"
             )
         except Exception as e:
-            logger.error(f"Erreur MMRConfirmYes: {e}")
+            logger.error(f"Erreur dans confirm_yes: {e}")
             await interaction.response.send_message(
-                "Erreur lors de l'inscription MMR extended.", ephemeral=True
+                "Erreur lors de l'inscription avec MMR étendu.",
+                ephemeral=True
             )
         finally:
             self.stop()
 
     @discord.ui.button(label="Non", style=ButtonStyle.danger, custom_id="mmr_confirm_no")
-    async def confirm_no(self, interaction: Interaction, button: Button):
+    async def confirm_no(self, interaction: Interaction, button: Button) -> None:
         """
-        L'utilisateur refuse le mmr_extended => False.
+        L'utilisateur refuse d'utiliser le MMR étendu (mmr_extended=False).
         """
         try:
             if self.entry_type == "solo":
@@ -128,13 +127,13 @@ class MMRConfirmationView(View):
                 ephemeral=True
             )
             logger.info(
-                f"[MMRView] {self.user.display_name} => mmr_extended=False, "
+                f"[MMRConfirmationView] {self.user.display_name} a choisi mmr_extended=False, "
                 f"team_size={self.team_size}, entry_type={self.entry_type}"
             )
         except Exception as e:
-            logger.error(f"Erreur MMRConfirmNo: {e}")
+            logger.error(f"Erreur dans confirm_no: {e}")
             await interaction.response.send_message(
-                "Erreur lors de l'inscription en queue (mmr_extended=False).", 
+                "Erreur lors de l'inscription sans MMR étendu.",
                 ephemeral=True
             )
         finally:
@@ -147,8 +146,8 @@ class MMRConfirmationView(View):
 
 class TeamSizeSelect(Select):
     """
-    Menu déroulant pour choisir 2,3,5 ou 0 ('N'importe').
-    entry_type = 'solo' ou 'team'.
+    Menu déroulant pour choisir la taille d'équipe (Duo, Trio, 5 Stack ou 'N'importe').
+    Le paramètre entry_type détermine s'il s'agit d'une inscription en solo ou en équipe.
     """
     def __init__(self, cog, guild_id: int, entry_type: str):
         options = [
@@ -167,9 +166,9 @@ class TeamSizeSelect(Select):
         self.guild_id = guild_id
         self.entry_type = entry_type
 
-    async def callback(self, interaction: Interaction):
+    async def callback(self, interaction: Interaction) -> None:
         try:
-            # Immediately acknowledge to extend the response window.
+            # Extension de la fenêtre de réponse
             if not interaction.response.is_done():
                 await interaction.response.defer(ephemeral=True)
 
@@ -177,20 +176,20 @@ class TeamSizeSelect(Select):
             selected_value = self.values[0]
             team_size = int(selected_value)
 
-            # Vérifier si déjà dans la queue
-            in_queue = await MatchmakingService.is_player_in_queue(user.id)
-            if in_queue:
+            # Vérifier si l'utilisateur est déjà en queue
+            if await MatchmakingService.is_player_in_queue(user.id):
                 await interaction.followup.send(
-                    "Vous êtes déjà dans la queue.", ephemeral=True
+                    "Vous êtes déjà dans la queue.",
+                    ephemeral=True
                 )
                 return
 
-            # --- NOUVEAU : vérification des infos Valorant avant d'inscrire ---
+            # Récupération des informations Valorant de l'utilisateur
             user_info = await MatchmakingService.get_user_info(user.id)
             if not user_info:
                 await interaction.followup.send(
-                    "Vous n'avez pas encore configuré vos informations Valorant. "
-                    "Veuillez lier votre compte dans le salon <#1323673115922010143> avant de rejoindre la queue.",
+                    f"Vous n'avez pas encore configuré vos informations Valorant. "
+                    f"Veuillez lier votre compte dans le salon <#{VALORANT_INFO_CHANNEL_ID}> avant de rejoindre la queue.",
                     ephemeral=True
                 )
                 return
@@ -199,42 +198,43 @@ class TeamSizeSelect(Select):
             region = user_info.get("region")
             if elo is None or region is None:
                 await interaction.followup.send(
-                    "Vos informations Valorant sont incomplètes. "
-                    "Veuillez lier votre compte dans le salon <#1323673115922010143> avant de rejoindre la queue.",
+                    f"Vos informations Valorant sont incomplètes. "
+                    f"Veuillez lier votre compte dans le salon <#{VALORANT_INFO_CHANNEL_ID}> avant de rejoindre la queue.",
                     ephemeral=True
                 )
                 return
 
-
-            # Récupérer server_id
+            # Récupération du server_id et des rôles de l'utilisateur
             server_id = await MatchmakingService.get_server_id_by_guild_id(self.guild_id)
             if not server_id:
                 await interaction.followup.send(
-                    "Impossible de récupérer server_id. Réessayez plus tard.",
+                    "Impossible de récupérer les informations du serveur. Réessayez plus tard.",
                     ephemeral=True
                 )
                 return
 
             user_roles = await MatchmakingService.get_user_roles_from_member(user, server_id)
+            # Extraction de la langue, de la plateforme et des rôles de jeu depuis les rôles Discord
             langue = next((r for r in ["francais", "anglais", "espagnol"] if r in user_roles), "francais")
             platform = next((r for r in ["pc", "console"] if r in user_roles), "pc")
-            roles = [r for r in ["duelist","controller","initiator","sentinel","fill"] if r in user_roles]
+            roles = [r for r in ["duelist", "controller", "initiator", "sentinel", "fill"] if r in user_roles]
             if not roles:
                 roles = ["duelist"]
 
+            # Vérification pour les équipes : seul le leader peut inscrire l'équipe
             if self.entry_type == "team":
                 code = await MatchmakingService.is_user_leader_of_team(user.id)
                 if not code:
                     await interaction.followup.send(
-                        "Vous n'êtes pas leader d'une équipe. Seul le leader peut inscrire l'équipe en queue. "
+                        "Vous n'êtes pas leader d'une équipe. Seul le leader peut inscrire l'équipe dans la queue. "
                         "Utilisez /create_team pour créer votre équipe.",
                         ephemeral=True
                     )
                     return
 
-            # Si tout est OK, on gère la confirmation MMR
+            # Gestion de la confirmation MMR pour certaines tailles (5 ou 'N'importe')
             if team_size in [5, 0]:
-                from .queue_views import MMRConfirmationView  # or import at the top
+                from .queue_views import MMRConfirmationView
                 mmr_view = MMRConfirmationView(
                     cog=self.cog,
                     guild_id=self.guild_id,
@@ -247,12 +247,14 @@ class TeamSizeSelect(Select):
                     roles=roles,
                     entry_type=self.entry_type
                 )
+                # Message clarifié pour indiquer le malus appliqué
                 await interaction.followup.send(
-                    "Acceptez-vous le -25% ?",
+                    "Confirmez-vous l'utilisation du MMR étendu (-25%) ?",
                     view=mmr_view,
                     ephemeral=True
                 )
             else:
+                # Inscription directe sans confirmation MMR étendu
                 if self.entry_type == "solo":
                     await self.cog.add_solo_to_queue(
                         user=user,
@@ -289,13 +291,15 @@ class TeamSizeSelect(Select):
                     f"Erreur lors de la sélection de la taille d'équipe: {e}",
                     ephemeral=True
                 )
+
+
 # -------------------------
 # Vue Principale de la Queue
 # -------------------------
 
 class QueueView(View):
     """
-    Vue avec 3 boutons:
+    Vue principale comportant trois boutons :
      - Rejoindre en solo
      - Rejoindre en équipe
      - Quitter la queue
@@ -305,25 +309,37 @@ class QueueView(View):
         self.cog = cog
         self.guild_id = guild_id
 
+    def _create_team_size_view(self, entry_type: str) -> View:
+        """
+        Fonction helper pour créer et retourner un View contenant le sélecteur
+        de taille d'équipe.
+        """
+        select = TeamSizeSelect(self.cog, self.guild_id, entry_type=entry_type)
+        v = View(timeout=60)
+        v.add_item(select)
+        return v
+
     @discord.ui.button(
         label="Rejoindre en solo",
         style=ButtonStyle.primary,
         custom_id="join_solo_button",
     )
-    async def join_solo_button(self, interaction: Interaction, button: Button):
+    async def join_solo_button(self, interaction: Interaction, button: Button) -> None:
+        """
+        Affiche le sélecteur pour rejoindre la queue en solo.
+        """
         try:
-            select = TeamSizeSelect(self.cog, self.guild_id, entry_type="solo")
-            v = View(timeout=60)
-            v.add_item(select)
+            view = self._create_team_size_view(entry_type="solo")
             await interaction.response.send_message(
-                "Sélectionnez si vous souhaitez jouer en duo, trio, etc", 
-                view=v, 
+                "Sélectionnez la taille d'équipe (Duo, Trio, etc.) :",
+                view=view,
                 ephemeral=True
             )
         except Exception as e:
             logger.error(f"Erreur join_solo_button: {e}")
             await interaction.response.send_message(
-                "Une erreur est survenue lors de l'affichage du menu.", ephemeral=True
+                "Une erreur est survenue lors de l'affichage du menu.",
+                ephemeral=True
             )
 
     @discord.ui.button(
@@ -331,24 +347,22 @@ class QueueView(View):
         style=ButtonStyle.success,
         custom_id="join_team_button",
     )
-    async def join_team_button(self, interaction: Interaction, button: Button):
+    async def join_team_button(self, interaction: Interaction, button: Button) -> None:
         """
-        Bouton pour insérer "une équipe préformée" dans la queue, 
-        à condition que l'utilisateur soit le leader.
+        Affiche le sélecteur pour inscrire une équipe préformée dans la queue.
+        Seul le leader peut inscrire l'équipe.
         """
         try:
-            select = TeamSizeSelect(self.cog, self.guild_id, entry_type="team")
-            v = View(timeout=60)
-            v.add_item(select)
+            view = self._create_team_size_view(entry_type="team")
             await interaction.response.send_message(
-                "Sélectionnez si vous souhaitez jouer en duo, trio, etc", 
-                view=v, 
+                "Sélectionnez la taille d'équipe (Duo, Trio, etc.) :",
+                view=view,
                 ephemeral=True
             )
         except Exception as e:
             logger.error(f"Erreur join_team_button: {e}")
             await interaction.response.send_message(
-                "Une erreur est survenue lors de l'affichage du menu d'équipe.", 
+                "Une erreur est survenue lors de l'affichage du menu d'équipe.",
                 ephemeral=True
             )
 
@@ -357,23 +371,24 @@ class QueueView(View):
         style=ButtonStyle.danger,
         custom_id="leave_queue_button",
     )
-    async def leave_queue_button(self, interaction: Interaction, button: Button):
+    async def leave_queue_button(self, interaction: Interaction, button: Button) -> None:
         """
-        Permet au joueur/leader de sortir de la queue s'il y est.
+        Permet au joueur ou leader de quitter la queue.
         """
         user = interaction.user
         try:
             await interaction.response.defer(ephemeral=True)
             await self.cog.remove_from_queue(user)
             await interaction.followup.send(
-                "Vous avez quitté la queue.", ephemeral=True
+                "Vous avez quitté la queue.",
+                ephemeral=True
             )
             logger.info(f"{user.display_name} a quitté la queue.")
         except ValueError as ve:
             logger.error(f"Erreur leave_queue_button: {ve}")
             await interaction.followup.send(str(ve), ephemeral=True)
         except Exception as e:
-            logger.error(f"Erreur retrait queue: {e}")
+            logger.error(f"Erreur lors du retrait de la queue: {e}")
             await interaction.followup.send(
                 "Une erreur est survenue lors de votre demande de quitter la queue.",
                 ephemeral=True,

@@ -1,6 +1,6 @@
-#cogs\voice_management\team_views.py
 import discord
 import logging
+from typing import Any
 
 from cogs.voice_management.services.five_stack_service import MatchmakingService
 
@@ -9,11 +9,13 @@ logger = logging.getLogger(__name__)
 
 class TeamForumJoinButtonView(discord.ui.View):
     """
-    Vue placée dans le post forum pour les équipes publiques :
-    - Bouton "Rejoindre l'équipe"
-    - Bouton "Quitter l'équipe"
+    Vue placée dans le post forum pour les équipes publiques.
+    
+    Contient deux boutons :
+      - "Rejoindre l'équipe" : permet à l'utilisateur de rejoindre l'équipe.
+      - "Quitter l'équipe" : permet de quitter l'équipe.
     """
-    def __init__(self, cog, code: str):
+    def __init__(self, cog: Any, code: str) -> None:
         super().__init__(timeout=None)
         self.cog = cog       # Référence au Cog (TeamManager)
         self.code = code     # Code unique de l'équipe
@@ -36,7 +38,16 @@ class TeamForumJoinButtonView(discord.ui.View):
         leave_button.callback = self.leave_team_button_callback
         self.add_item(leave_button)
 
-    async def join_team_button_callback(self, interaction: discord.Interaction):
+    async def join_team_button_callback(self, interaction: discord.Interaction) -> None:
+        """
+        Callback pour rejoindre une équipe publique.
+        
+        Vérifie que l'équipe existe, que sa visibilité est publique,
+        que l'utilisateur n'est pas déjà dans une autre équipe, que l'équipe n'est pas pleine,
+        et que la région de l'utilisateur correspond à celle du leader.
+        En cas de succès, ajoute le joueur et met à jour le thread.
+        Si l'équipe atteint 5 membres, le salon vocal est créé.
+        """
         await interaction.response.defer(ephemeral=True)
 
         team = await MatchmakingService.get_team(self.code)
@@ -47,23 +58,22 @@ class TeamForumJoinButtonView(discord.ui.View):
             )
             return
 
-        if team["visibility"] != "public":
+        if team.get("visibility") != "public":
             await interaction.followup.send(
                 content="Cette équipe est privée et ne peut pas être rejointe via ce bouton.",
                 ephemeral=True
             )
             return
 
-        # Vérifier si l'utilisateur est déjà dans une autre équipe
-        existing_code = await MatchmakingService.is_user_in_any_team(interaction.user.id)
-        if existing_code:
+        # Vérifier si l'utilisateur est déjà membre d'une autre équipe
+        if await MatchmakingService.is_user_in_any_team(interaction.user.id):
             await interaction.followup.send(
                 content="Vous êtes déjà membre d'une autre équipe.",
                 ephemeral=True
             )
             return
 
-        # Vérifier si l'équipe est pleine
+        # Vérifier si l'équipe est complète
         members = await MatchmakingService.get_team_members(self.code)
         if len(members) >= 5:
             await interaction.followup.send(
@@ -72,7 +82,7 @@ class TeamForumJoinButtonView(discord.ui.View):
             )
             return
 
-        # Vérification Valorant (région)
+        # Vérification des informations Valorant (région)
         leader_info = await MatchmakingService.get_user_info(team["leader_id"])
         user_info = await MatchmakingService.get_user_info(interaction.user.id)
         if not leader_info or not user_info:
@@ -81,44 +91,43 @@ class TeamForumJoinButtonView(discord.ui.View):
                 ephemeral=True
             )
             return
-        if user_info["region"] != leader_info["region"]:
+        if user_info.get("region") != leader_info.get("region"):
             await interaction.followup.send(
                 content="Votre région est différente de celle du leader.",
                 ephemeral=True
             )
             return
 
-        # Ajouter ce joueur à l'équipe
-        ok = await MatchmakingService.add_member_to_team(self.code, interaction.user.id)
-        if not ok:
+        # Ajouter le joueur à l'équipe
+        if not await MatchmakingService.add_member_to_team(self.code, interaction.user.id):
             await interaction.followup.send(
                 content="Erreur lors de l'ajout à l'équipe.",
                 ephemeral=True
             )
             return
 
-        # Mettre à jour le thread (titre, liste, etc.)
+        # Mettre à jour le thread pour refléter le changement
         await self.cog.update_team_thread(self.code)
         await interaction.followup.send(
             content="Vous avez rejoint l'équipe !",
             ephemeral=True
         )
 
-        # Vérifier si on atteint 5
+        # Si l'équipe atteint 5 membres, créer le salon vocal
         if len(members) + 1 == 5:
-            # Créer le salon vocal
             await self.cog.create_voice_channel_and_invite(team)
 
-    async def leave_team_button_callback(self, interaction: discord.Interaction):
+    async def leave_team_button_callback(self, interaction: discord.Interaction) -> None:
         """
-        Callback pour "Quitter l'équipe".
-        On supprime le membre de l'équipe, on met à jour,
-        on supprime l'équipe si elle devient vide (et on supprime de la BDD).
-        Si c'était le leader, on transfère le lead à un autre membre.
+        Callback pour quitter l'équipe depuis une vue publique.
+        
+        Retire le membre de l'équipe, met à jour le thread, et si l'équipe devient vide,
+        supprime les ressources associées et la base de données.
+        Si le membre qui quitte est le leader, transfère le leadership au premier membre restant.
         """
         await interaction.response.defer(ephemeral=True)
 
-        # 1) Récupérer l'équipe avant de retirer le membre
+        # Récupérer l'équipe avant de procéder
         team = await MatchmakingService.get_team(self.code)
         if not team:
             await interaction.followup.send(
@@ -127,41 +136,35 @@ class TeamForumJoinButtonView(discord.ui.View):
             )
             return
 
-        # 2) Retirer le membre
+        # Retirer le membre
         success = await MatchmakingService.remove_member_from_team(self.code, interaction.user.id)
         if success:
-            # 3) Récupérer les membres restants
+            # Récupérer la liste actualisée des membres
             members = await MatchmakingService.get_team_members(self.code)
 
-            # 4) Si le joueur qui quitte est le leader, transférer le leadership
-            if team["leader_id"] == interaction.user.id:
-                if len(members) > 0:
-                    new_leader_id = members[0]  # Choix arbitraire : le premier de la liste
+            # Si le membre quittant est le leader, transférer le leadership
+            if team.get("leader_id") == interaction.user.id:
+                if members:
+                    new_leader_id = members[0]  # Choix arbitraire : le premier membre restant
                     await MatchmakingService.update_team_leader(self.code, new_leader_id)
-                    logger.info(f"Transfert du lead de {interaction.user.id} vers {new_leader_id} pour l'équipe {self.code}.")
+                    logger.info(
+                        f"Transfert du lead de {interaction.user.id} vers {new_leader_id} pour l'équipe {self.code}."
+                    )
                 else:
                     logger.info(f"Le leader quitte et l'équipe est vide => suppression imminente.")
 
-            if len(members) == 0:
-                # Équipe vide => suppression
-                logger.info(f"L'équipe '{self.code}' est vide. Suppression des ressources + DB.")
-
-                # 1) Répondre à l'utilisateur
+            if not members:
+                # Si l'équipe devient vide, supprimer les ressources et la BDD
+                logger.info(f"L'équipe '{self.code}' est vide. Suppression des ressources et de la BDD.")
                 await interaction.followup.send(
                     content="Vous avez quitté l'équipe. L'équipe est désormais vide et va être supprimée.",
                     ephemeral=True
                 )
-
-                # 2) Supprimer les ressources Discord
                 team_data = await MatchmakingService.get_team(self.code)
                 if team_data:
                     await self.cog.delete_team_resources(team_data)
-
-                    # 3) Supprimer dans la BDD
                     await MatchmakingService.delete_team(self.code)
-
             else:
-                # Mettre à jour le thread
                 await self.cog.update_team_thread(self.code)
                 await interaction.followup.send(
                     content="Vous avez quitté l'équipe.",
@@ -176,10 +179,11 @@ class TeamForumJoinButtonView(discord.ui.View):
 
 class TeamForumPrivateView(discord.ui.View):
     """
-    Vue pour un post forum d'équipe privée :
-    - Un seul bouton "Quitter l'équipe"
+    Vue pour un post forum d'équipe privée.
+    
+    Ne contient qu'un seul bouton permettant de quitter l'équipe.
     """
-    def __init__(self, cog, code: str):
+    def __init__(self, cog: Any, code: str) -> None:
         super().__init__(timeout=None)
         self.cog = cog
         self.code = code
@@ -192,10 +196,17 @@ class TeamForumPrivateView(discord.ui.View):
         leave_button.callback = self.leave_team_button_callback
         self.add_item(leave_button)
 
-    async def leave_team_button_callback(self, interaction: discord.Interaction):
+    async def leave_team_button_callback(self, interaction: discord.Interaction) -> None:
+        """
+        Callback pour quitter l'équipe depuis une vue privée.
+        
+        Retire le membre, met à jour le thread, et si l'équipe devient vide,
+        supprime les ressources et l'enregistrement en base.
+        Transfère le leadership si le membre quittant est le leader.
+        """
         await interaction.response.defer(ephemeral=True)
 
-        # 1) Récupérer l'équipe
+        # Récupérer l'équipe
         team = await MatchmakingService.get_team(self.code)
         if not team:
             await interaction.followup.send(
@@ -204,38 +215,32 @@ class TeamForumPrivateView(discord.ui.View):
             )
             return
 
-        # 2) Retirer le membre
+        # Retirer le membre
         success = await MatchmakingService.remove_member_from_team(self.code, interaction.user.id)
         if success:
-            # 3) Récupérer les membres restants
             members = await MatchmakingService.get_team_members(self.code)
 
-            # 4) Transfert de lead si besoin
-            if team["leader_id"] == interaction.user.id:
-                if len(members) > 0:
+            # Si le membre quittant est le leader, transférer le leadership
+            if team.get("leader_id") == interaction.user.id:
+                if members:
                     new_leader_id = members[0]
                     await MatchmakingService.update_team_leader(self.code, new_leader_id)
-                    logger.info(f"Transfert du lead de {interaction.user.id} vers {new_leader_id} pour l'équipe {self.code}.")
+                    logger.info(
+                        f"Transfert du lead de {interaction.user.id} vers {new_leader_id} pour l'équipe {self.code}."
+                    )
                 else:
                     logger.info(f"Le leader quitte et l'équipe est vide => suppression imminente.")
 
-            if len(members) == 0:
+            if not members:
                 logger.info(f"L'équipe '{self.code}' est vide => suppression.")
-
-                # 1) Répondre à l'utilisateur
                 await interaction.followup.send(
                     content="Vous avez quitté l'équipe. Elle est vide et va être supprimée.",
                     ephemeral=True
                 )
-
-                # 2) Supprimer les ressources Discord
                 team_data = await MatchmakingService.get_team(self.code)
                 if team_data:
                     await self.cog.delete_team_resources(team_data)
-
-                    # 3) Supprimer dans la BDD
                     await MatchmakingService.delete_team(self.code)
-
             else:
                 await self.cog.update_team_thread(self.code)
                 await interaction.followup.send(
