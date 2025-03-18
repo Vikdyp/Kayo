@@ -424,7 +424,7 @@ class EmbedCog(commands.Cog):
                     now = datetime.utcnow()
                     last_notif = await get_last_notification(discord_id)
                     # Vérifier si le membre a déjà été notifié dans la dernière heure
-                    if (last_notif is None) or ((now - last_notif) > timedelta(hours=1)):
+                    if (last_notif is None) or ((now - last_notif) > timedelta(hours=24)):
                         try:
                             # Le salon est mentionné sous la forme <#ID> pour qu'il apparaisse comme un lien cliquable dans Discord
                             await member.send(
