@@ -79,6 +79,7 @@ cog_paths = [
     #'cogs.other.invite_tracker',  ACTIVER SI EVENT EN COURS
     #'cogs.other.event',           ACTIVER SI EVENT EN COURS
     #'cogs.tournaments.tournament',
+    'cogs.admin.status',
 ]
 
 @bot.event

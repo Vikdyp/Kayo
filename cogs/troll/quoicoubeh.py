@@ -1,13 +1,18 @@
 import discord
 from discord.ext import commands
-import re  # Utilisé pour détecter les messages se terminant par "quoi"
-import random  # Utilisé pour choisir une réponse aléatoire
+from discord import app_commands
+import re  # Pour détecter les messages se terminant par "quoi"
+import random  # Pour choisir une réponse aléatoire
 import asyncio
-import time  # Utilisé pour obtenir l'horodatage actuel
+import time  # Pour obtenir l'horodatage actuel
+from utils.database import database  # On suppose que ce module fournit execute() et fetch() pour interagir avec la BDD
+
+TOP3_ROLE_ID = 1236427596128976906  # ID du rôle top 3
 
 class QuoiResponder(commands.Cog):
-    """Cog pour répondre automatiquement aux messages se terminant par 'quoi'."""
-
+    """Cog pour répondre automatiquement aux messages se terminant par 'quoi'
+       et enregistrer le nombre de déclenchements par utilisateur."""
+       
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         # Liste de jeux de mots comme réponses
@@ -44,7 +49,6 @@ class QuoiResponder(commands.Cog):
 
             async with self.lock:
                 timestamps = self.user_quoi_timestamps.get(user_id, [])
-
                 # Filtrer les horodatages obsolètes
                 timestamps = [timestamp for timestamp in timestamps if current_time - timestamp < self.time_window]
 
@@ -62,7 +66,87 @@ class QuoiResponder(commands.Cog):
             else:
                 response = random.choice(self.responses)  # Choisit une réponse aléatoire
 
+            # Recherche de l'emoji personnalisé "pepe_clown" dans le serveur
+            emoji_obj = discord.utils.get(message.guild.emojis, name="pepe_clown")
+            if emoji_obj:
+                response += " " + str(emoji_obj)
+            else:
+                response += " :pepe_clown:"  # Fallback en cas d'absence de l'emoji personnalisé
+
             await message.channel.send(response)
+
+            # Incrémenter le compteur dans la base de données pour cet utilisateur
+            try:
+                query = """
+                INSERT INTO quoi_responses (user_id, trigger_count, last_triggered)
+                VALUES ($1, 1, NOW())
+                ON CONFLICT (user_id)
+                DO UPDATE SET trigger_count = quoi_responses.trigger_count + 1, last_triggered = NOW();
+                """
+                await database.execute(query, message.author.id)
+            except Exception as e:
+                print(f"Erreur lors de la mise à jour du compteur: {e}")
+
+    @app_commands.command(name="quoiclassement", description="Affiche le classement des membres ayant déclenché le 'quoi' le plus souvent.")
+    async def quoiclassement(self, interaction: discord.Interaction):
+        """
+        Commande slash qui affiche les 10 membres ayant déclenché le QuoiResponder le plus souvent.
+        Chaque utilisateur est mentionné et les 1er, 2ème et 3ème places affichent un emoji (🥇, 🥈, 🥉).
+        Le texte "- déclenchements" est remplacé par "- quoicoubeh".
+        De plus, le rôle top 3 (ID 1236427596128976906) est attribué aux trois premiers et retiré aux autres.
+        """
+        try:
+            query = """
+            SELECT user_id, trigger_count
+            FROM quoi_responses
+            ORDER BY trigger_count DESC
+            LIMIT 10;
+            """
+            rows = await database.fetch(query)
+            if not rows:
+                await interaction.response.send_message("Aucune donnée disponible.", ephemeral=True)
+                return
+
+            description = ""
+            medal_emojis = ["🥇", "🥈", "🥉"]
+            # Extraire les user_id des top 3
+            top3_ids = set(row["user_id"] for row in rows[:3])
+            for idx, row in enumerate(rows, start=1):
+                user_mention = f"<@{row['user_id']}>"
+                medal = medal_emojis[idx - 1] if idx <= 3 else ""
+                description += f"{medal} **{idx}. {user_mention}** - {row['trigger_count']} quoicoubeh\n"
+            embed = discord.Embed(
+                title="Classement Quoi",
+                description=description,
+                color=discord.Color.blurple()
+            )
+
+            # Mise à jour du rôle top 3 dans la guilde
+            guild = interaction.guild
+            top3_role = guild.get_role(TOP3_ROLE_ID)
+            if top3_role is not None:
+                # Pour chaque membre possédant le rôle mais qui n'est plus dans le top 3, le retirer
+                for member in top3_role.members:
+                    if member.id not in top3_ids:
+                        try:
+                            await member.remove_roles(top3_role, reason="Falling out of top 3 quoicoubeh")
+                        except Exception as e:
+                            print(f"Erreur lors de la suppression du rôle top3 pour {member}: {e}")
+                # Pour chaque membre du top 3, s'il ne possède pas encore le rôle, l'ajouter
+                for user_id in top3_ids:
+                    member = guild.get_member(user_id)
+                    if member and top3_role not in member.roles:
+                        try:
+                            await member.add_roles(top3_role, reason="Entering top 3 quoicoubeh")
+                        except Exception as e:
+                            print(f"Erreur lors de l'ajout du rôle top3 pour {member}: {e}")
+            else:
+                print("Rôle top 3 non trouvé dans la guilde.")
+
+            await interaction.response.send_message(embed=embed)
+        except Exception as e:
+            await interaction.response.send_message("Erreur lors de la récupération du classement.", ephemeral=True)
+            print(f"Erreur dans /quoiclassement: {e}")
 
     async def cog_unload(self):
         """Nettoie les tâches lors du déchargement du cog."""
