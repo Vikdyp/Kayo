@@ -366,8 +366,8 @@ class EmbedCog(commands.Cog):
         """
         Cycle de mise à jour des rôles Valorant.
         Pour chaque utilisateur avec needs_update = FALSE :
-          - Vérifie et met à jour les informations (puuid, région, rank, elo).
-          - Si la récupération du puuid échoue, notifie le membre (une fois par heure) via DM.
+        - Vérifie et met à jour les informations (puuid, région, rank, elo).
+        - Si la récupération du puuid échoue, notifie le membre (une fois par heure) via DM.
         """
         logger.info("Début de la tâche de mise à jour des rôles Valorant (phase ping-pong).")
         users = await get_users_with_update_flag_false()
@@ -412,32 +412,36 @@ class EmbedCog(commands.Cog):
                 await mark_user_update_flag_true(discord_id)
                 continue
 
+            # Si le puuid ou la région ne sont pas enregistrés, on tente de les récupérer via l'API
             if not puuid or not region:
                 try:
                     valo_info = await get_puuid(pseudo, tag)
+                    if not valo_info:
+                        logger.warning(f"[update_roles_task] Impossible de récupérer le PUUID pour {pseudo}#{tag}.")
+                        now = datetime.utcnow()
+                        last_notif = await get_last_notification(discord_id)
+                        if (last_notif is None) or ((now - last_notif) > timedelta(hours=24)):
+                            try:
+                                await member.send(
+                                    f"La récupération de vos informations Valorant a échoué pour le pseudo et tag **{pseudo}#{tag}**.\n"
+                                    f"Veuillez vérifier vos identifiants ou modifier vos informations dans le salon <#1323673115922010143>."
+                                )
+                                await update_last_notification(discord_id, now)
+                            except Exception as dm_error:
+                                logger.error(f"Erreur lors de l'envoi du DM à {discord_id}: {dm_error}")
+                        await mark_user_update_flag_true(discord_id)
+                        continue
+                    # Affectation des nouvelles valeurs récupérées
+                    _, new_region, new_puuid = valo_info
+                    region, puuid = new_region, new_puuid
+                    # Mise à jour de la BDD avec les nouvelles valeurs
+                    await set_valorant_details(discord_id, puuid, region, current_rank or "", current_elo or 0)
                 except RateLimitException as e:
                     logger.warning(f"RateLimitException pour {pseudo}#{tag}: {e}")
                     await mark_user_update_flag_true(discord_id)
                     continue
-                if not valo_info:
-                    logger.warning(f"[update_roles_task] Impossible de récupérer le PUUID pour {pseudo}#{tag}.")
-                    now = datetime.utcnow()
-                    last_notif = await get_last_notification(discord_id)
-                    # Vérifier si le membre a déjà été notifié dans la dernière heure
-                    if (last_notif is None) or ((now - last_notif) > timedelta(hours=24)):
-                        try:
-                            # Le salon est mentionné sous la forme <#ID> pour qu'il apparaisse comme un lien cliquable dans Discord
-                            await member.send(
-                                f"La récupération de vos informations Valorant a échoué pour le pseudo et tag **{pseudo}#{tag}**.\n"
-                                f"Veuillez vérifier vos identifiants ou modifier vos informations dans le salon <#1323673115922010143>."
-                            )
-                            await update_last_notification(discord_id, now)
-                        except Exception as dm_error:
-                            logger.error(f"Erreur lors de l'envoi du DM à {discord_id}: {dm_error}")
-                    await mark_user_update_flag_true(discord_id)
-                    continue
 
-            # Récupération du rang
+            # Récupération du rang avec les valeurs correctement mises à jour
             try:
                 stats = await get_player_rank(region, puuid)
             except RateLimitException as e:
@@ -512,6 +516,7 @@ class EmbedCog(commands.Cog):
             await mark_user_update_flag_true(discord_id)
 
         logger.info("Fin de la tâche de mise à jour des rôles Valorant (phase ping-pong).")
+
 
     @commands.command(name="reset_valo_updates")
     @commands.has_permissions(administrator=True)
