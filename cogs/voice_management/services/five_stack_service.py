@@ -698,5 +698,54 @@ class MatchmakingService:
             logger.error(f"Erreur update_team_leader: {e}")
             return False
 
+    @staticmethod
+    async def count_total_players_in_queue() -> int:
+        """
+        Compte le nombre total de joueurs en file :
+        - Si entry_type=1, on compte 1
+        - Sinon, on compte cardinality(team_member_ids)
+        """
+        query = """
+        SELECT COALESCE(SUM(
+            CASE WHEN entry_type = 1 THEN 1
+                 ELSE cardinality(team_member_ids)
+            END
+        ), 0)
+        FROM matchmaking_queue;
+        """
+        try:
+            return await database.fetchval(query) or 0
+        except Exception as e:
+            logger.error(f"Erreur count_total_players_in_queue: {e}")
+            return 0
 
+    @staticmethod
+    async def update_entry_team_size_any(entry_id: int) -> bool:
+        """
+        Passe team_size à 0 (any) pour une entrée donnée.
+        """
+        query = """
+        UPDATE matchmaking_queue
+        SET team_size = 0
+        WHERE id = $1;
+        """
+        try:
+            result = await database.execute(query, entry_id)
+            return result == "UPDATE 1"
+        except Exception as e:
+            logger.error(f"Erreur update_entry_team_size_any {entry_id}: {e}")
+            return False
+
+    @staticmethod
+    async def remove_entry(entry_id: int) -> bool:
+        """
+        Supprime l'entrée de matchmaking_queue par son ID.
+        """
+        query = "DELETE FROM matchmaking_queue WHERE id = $1;"
+        try:
+            result = await database.execute(query, entry_id)
+            return result.startswith("DELETE")
+        except Exception as e:
+            logger.error(f"Erreur remove_entry {entry_id}: {e}")
+            return False
     # Fin

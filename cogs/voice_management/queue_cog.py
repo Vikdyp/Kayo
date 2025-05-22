@@ -1,4 +1,7 @@
+# cogs/voice_management/queue_cog.py
+
 import asyncio
+from datetime import datetime, timezone
 import logging
 import random
 import string
@@ -22,7 +25,8 @@ class MatchmakingQueue(commands.Cog):
         # Dictionnaire pour stocker les messages persistants de la queue par guild : {guild_id: (channel_id, message_id)}
         self.queue_status_embed_message: Dict[int, Tuple[int, int]] = {}
         self.lock = asyncio.Lock()
-        self.process_queue_task_loop.start()
+        self.process_queue_task_loop.start()   # démarrage unique de la boucle principale
+        self.stale_task.start()               # démarrage de la tâche de stale
 
         # Compteurs pour suivre le nombre de joueurs par rôle
         self.role_counters = {
@@ -32,12 +36,76 @@ class MatchmakingQueue(commands.Cog):
             "initiator": 0,
             "fill": 0
         }
-        # La variable suivante est initialisée mais n'est pas utilisée.
-        # Si nécessaire, implémentez sa logique ou supprimez-la.
-        # self.total_teams_created = 0
+        # self.total_teams_created = 0  # si besoin, sinon supprimer
 
     def cog_unload(self) -> None:
         self.process_queue_task_loop.cancel()
+        self.stale_task.cancel()
+
+
+    @tasks.loop(minutes=1)
+    async def stale_task(self) -> None:
+        """
+        Gère automatiquement :
+         - Conversion en 'any' après 5 minutes
+         - Suppression après 10 minutes
+        """
+        mins_any = 5
+        mins_remove = 10
+
+        # Récupère toutes les entrées et filtre en Python
+        entries = await MatchmakingService.get_queue_entries()
+        if not entries:
+            return
+
+        now = datetime.now(timezone.utc)
+        to_update = []
+
+        for entry in entries:
+            eid = entry["id"]
+            user_id = entry["discord_member_id"]
+
+            # Si timestamp est naïf (sans tz), on le marque en UTC
+            ts = entry["timestamp"]
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+
+            age = (now - ts).total_seconds() / 60
+
+            if age >= mins_remove:
+                # Suppression définitive
+                if await MatchmakingService.remove_entry(eid):
+                    to_update.append(entry)
+                    try:
+                        user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
+                        await user.send(
+                            "⏰ Votre inscription à la queue a été supprimée"
+                            "car vous étiez en attente depuis plus de 5 minutes."
+                        )
+                    except:
+                        logger.warning(f"Impossible de DM pour suppression stale: {user_id}")
+
+            elif age >= mins_any and entry["team_size"] != 0:
+                # Passage en "any"
+                if await MatchmakingService.update_entry_team_size_any(eid):
+                    to_update.append(entry)
+                    try:
+                        user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
+                        await user.send(
+                            "🔄 Votre préférence de taille a été passée à **N'importe** "
+                            "car vous étiez en attente depuis plus de 5 minutes."
+                        )
+                    except:
+                        logger.warning(f"Impossible de DM pour conversion any: {user_id}")
+
+        # Rafraîchir l'embed uniquement si on a modifié au moins une entrée
+        if to_update:
+            for guild_id in self.queue_status_embed_message:
+                await self.update_queue_status_embed(guild_id)
+
+    @stale_task.before_loop
+    async def before_stale(self):
+        await self.bot.wait_until_ready()
 
     # ------------------------------------------------
     # Listeners
@@ -209,9 +277,11 @@ class MatchmakingQueue(commands.Cog):
         Finalise la formation du groupe :
         - Récupère les membres
         - Crée un salon vocal
+        - Décrémente les compteurs de rôles
         - Supprime les blocs de la queue
         - Met à jour l'embed de la queue
         """
+        # 1. Récupération de tous les IDs
         all_ids = []
         for b in blocks:
             tmids = b.get("team_member_ids")
@@ -221,6 +291,7 @@ class MatchmakingQueue(commands.Cog):
                 all_ids.append(b["discord_member_id"])
         all_ids = list(set(all_ids))
 
+        # 2. Vérification cohérence et création du salon
         group_members = await MatchmakingService.get_members_from_ids(all_ids)
         if len(group_members) != sum(b["entry_type"] for b in blocks):
             logger.warning("Incohérence dans le nombre de membres récupérés.")
@@ -228,18 +299,47 @@ class MatchmakingQueue(commands.Cog):
 
         await self.create_voice_channel(group_members)
 
-        # Retire ces blocs de la queue
+        # 3. Pour chaque bloc : décrémenter les compteurs de rôles puis retirer du queue
         for b in blocks:
+            # a) Décrémentation des compteurs pour les rôles de ce bloc
+            for r in b.get("roles", []):
+                if r in self.role_counters:
+                    self.role_counters[r] = max(0, self.role_counters[r] - 1)
+
+            # b) Suppression du bloc dans la DB
             tmids = b.get("team_member_ids")
             if tmids:
                 await MatchmakingService.remove_players_from_queue(tmids)
             else:
                 await MatchmakingService.remove_players_from_queue([b["discord_member_id"]])
 
+        # 4. Mise à jour de l'embed de statut
         guild_id = group_members[0].guild.id
         await self.update_queue_status_embed(guild_id)
 
         logger.info(f"[MATCH] Groupe de {desired_size} formé avec les IDs : {all_ids}")
+
+    @commands.command(name="role_counters", help="Affiche les compteurs de rôles actuels dans la queue.")
+    @commands.has_permissions(administrator=True)
+    async def role_counters(self, ctx: commands.Context) -> None:
+        """
+        Affiche le nombre actuel de joueurs en attente par rôle.
+        Réservé aux administrateurs.
+        """
+        if not self.role_counters:
+            await ctx.send("Aucun compteur de rôles n'est configuré.")
+            return
+
+        # Prépare un embed pour un affichage plus lisible
+        embed = discord.Embed(
+            title="🔢 Compteurs de Rôles Actuels",
+            color=discord.Color.blue()
+        )
+        for role, count in self.role_counters.items():
+            embed.add_field(name=role.capitalize(), value=str(count), inline=True)
+
+        await ctx.send(embed=embed)
+
 
     # ------------------------------------------------
     # Création du salon vocal
@@ -247,41 +347,83 @@ class MatchmakingQueue(commands.Cog):
 
     async def create_voice_channel(self, group: List[discord.Member]) -> Optional[discord.VoiceChannel]:
         """
-        Crée un salon vocal pour le groupe et envoie l'invitation par DM.
+        Crée un salon vocal pour le groupe et envoie à chaque membre un embed
+        avec un gros bouton vert “Rejoindre le canal vocal” et un listing clair des rôles.
         """
         if not group:
             return None
+
         guild = group[0].guild
+        # --- Création / récupération de la catégorie ---
         category = discord.utils.get(guild.categories, name="Matchmaking")
         if not category:
-            try:
-                category = await guild.create_category("Matchmaking")
-                logger.info("Catégorie 'Matchmaking' créée.")
-            except Exception as e:
-                logger.error(f"Erreur lors de la création de la catégorie 'Matchmaking' : {e}")
-                return None
+            category = await guild.create_category("Matchmaking")
 
+        # --- Permissions du canal ---
         overwrites = {guild.default_role: discord.PermissionOverwrite(view_channel=False)}
         for m in group:
             overwrites[m] = discord.PermissionOverwrite(view_channel=True, connect=True, speak=True)
 
         try:
+            # 1) Création du salon vocal et de l'invitation
             vc_name = "Team-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=4))
             vc = await guild.create_voice_channel(vc_name, category=category, overwrites=overwrites)
             invite = await vc.create_invite(max_uses=len(group), unique=True, reason="Matchmaking formed")
 
+            # 2) Construction de l'embed
+            embed = discord.Embed(
+                title="🚀 Votre Équipe Valorant est Prête !",
+                description="Cliquez sur le bouton ci-dessous pour rejoindre directement le canal vocal.",
+                color=discord.Color.green()
+            )
+
+            # Pour plus d'aération, on aligne deux champs côte à côte si on veut,
+            # mais ici on utilise un champ unique listant tous les membres.
+            # 3) Récupération des rôles et construction de la valeur du champ
+            lines = []
+            for m in group:
+                roles_list = await MatchmakingService.get_roles_for_discord_member(m.id) or []
+                # Capitalize chaque rôle et joindre, ou indiquer "Aucun rôle"
+                roles_display = ", ".join(r.capitalize() for r in roles_list) or "Aucun rôle"
+                lines.append(f"**{m.display_name}** — {roles_display}")
+
+            embed.add_field(name="🎭 Membres & Rôles", value="\n".join(lines), inline=False)
+            embed.set_footer(text="Bon match à tous !")
+            embed.timestamp = discord.utils.utcnow()
+
+            # 4) Création d’une View avec un bouton vert (success)
+            class JoinVCView(discord.ui.View):
+                def __init__(self, invite_url: str, vc_name: str):
+                    super().__init__(timeout=None)
+                    self.invite_url = invite_url
+                    self.vc_name = vc_name
+
+                @discord.ui.button(
+                    label="Rejoindre le canal vocal",
+                    style=discord.ButtonStyle.success,
+                    custom_id=f"join_vc_{vc.id}"
+                )
+                async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
+                    await interaction.response.send_message(
+                        f"📣 Vous pouvez rejoindre **{self.vc_name}** ici : {self.invite_url}",
+                        ephemeral=True
+                    )
+
+            view = JoinVCView(invite.url, vc.name)
+
+            # 5) Envoi du même embed + bouton à chaque membre
             for m in group:
                 try:
-                    await m.send(f"Votre salon vocal : {invite.url}")
+                    await m.send(embed=embed, view=view)
                 except Exception as e:
-                    logger.error(f"Erreur lors de l'envoi du DM à {m.display_name} : {e}")
+                    logger.error(f"Impossible d'envoyer le DM embed à {m.display_name} : {e}")
 
-            logger.info(f"Salon vocal créé : {vc.name} avec invitation {invite.url}")
             return vc
-        except Exception as e:
-            logger.error(f"Erreur lors de la création du salon vocal : {e}")
-            return None
 
+        except Exception as e:
+            logger.error(f"Erreur création salon + embed corrigé : {e}")
+            return None
+   
     # ------------------------------------------------
     # Création et mise à jour de l'embed de la queue
     # ------------------------------------------------
@@ -296,7 +438,7 @@ class MatchmakingQueue(commands.Cog):
         """
         total_solo = await MatchmakingService.count_solos_in_queue()
         total_team = await MatchmakingService.count_teams_in_queue()
-        total_entries = await MatchmakingService.count_total_members_in_queue()
+        total_entries = await MatchmakingService.count_total_players_in_queue()
 
         embed = discord.Embed(
             title="Rejoignez la Queue Valorant",
@@ -305,7 +447,7 @@ class MatchmakingQueue(commands.Cog):
         )
         embed.add_field(name="Solos en attente", value=str(total_solo), inline=True)
         embed.add_field(name="Équipes en attente", value=str(total_team), inline=True)
-        embed.add_field(name="Entrées totales", value=str(total_entries), inline=True)
+        embed.add_field(name="Joueurs totaux", value=str(total_entries), inline=True)
 
         if self.role_counters:
             priority_role = min(self.role_counters, key=self.role_counters.get)
@@ -340,13 +482,19 @@ class MatchmakingQueue(commands.Cog):
     # ------------------------------------------------
 
     async def remove_from_queue(self, user: discord.Member) -> None:
-        """
-        Retire un joueur (ou leader) de la queue.
-        """
         async with self.queue_lock():
+            # Récupérer les rôles avant suppression
+            roles = await MatchmakingService.get_roles_for_discord_member(user.id) or []
+
             removed = await MatchmakingService.remove_player_from_queue(user.id)
             if not removed:
                 raise ValueError("Vous n'êtes pas dans la queue.")
+
+            # Décrémentation des compteurs de rôles
+            for r in roles:
+                if r in self.role_counters:
+                    self.role_counters[r] = max(0, self.role_counters[r] - 1)
+
             await self.update_queue_status_embed(user.guild.id)
             logger.info(f"{user.display_name} a été retiré de la queue.")
 
