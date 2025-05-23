@@ -24,6 +24,7 @@ TEST_MODE = False
 
 # Configuration des logs
 LOGGING = {
+    
     'bot': True,
 
     # CONFIGURATION
@@ -50,15 +51,36 @@ LOGGING = {
     'assign_rank' : False,
     'rank_service' : False,
 
+    # REPUTATION
+    'reputation' : True,
+    'profil' : True,
+
     # RULES
     'rules' : False,
     'rules_service' : False,
 
     # VOICE MANAGEMENT
-    'five_stack' : True,
+    'five_stack' : False,
     'voice_cleaner' : False,
 
     # ???
     'rank_roles' : False,
+
+    # OTHER
+    'vocal.services' : False,
+    'vocal.creator' : False,
+    'invite_tracker' : False,
+    'event_cog' : False,
+
+    # ACCUEIL
+    'accueil.services' : False,
+
+    # SCRIMS
+    'scrims.services' : False,
+    'scrims' : False,
+
+    # TWITCH
+    'twitch' : True,
+    'twitch.service' : True,
 
 }

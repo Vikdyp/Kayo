@@ -1,15 +1,15 @@
+#cogs/rules/rules.py
 import discord
 from discord.ext import commands, tasks
-from utils.request_manager import enqueue_button_request
-from utils.database import database
 import logging
 
 from cogs.rules.service.rules_services import (
     get_rules_channel_id,
+    has_accepted_rules,
     store_rules_message,
     get_persistent_message,
     delete_persistent_message,
-    accept_rules_user  # Import de la fonction de service
+    accept_rules_user  
 )
 
 logger = logging.getLogger("rules")
@@ -24,20 +24,28 @@ class AcceptRulesView(discord.ui.View):
         style=discord.ButtonStyle.success,
         custom_id="button:accept_rules"
     )
-    @enqueue_button_request("FAST")
     async def accept_rules_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         discord_id = interaction.user.id
-        success = await accept_rules_user(discord_id)  # Utilisation de la fonction de service
-        if success:
+
+        # Vérification si l'utilisateur a déjà accepté le règlement
+        already_accepted = await has_accepted_rules(discord_id)
+        if already_accepted:
             await interaction.response.send_message(
-                "Vous avez accepté le règlement. Bienvenue !",
+                "Vous avez déjà accepté le règlement !",
                 ephemeral=True
             )
         else:
-            await interaction.response.send_message(
-                "Une erreur est survenue lors de l'enregistrement. Veuillez réessayer plus tard.",
-                ephemeral=True
-            )
+            success = await accept_rules_user(discord_id)
+            if success:
+                await interaction.response.send_message(
+                    "Vous avez accepté le règlement. Bienvenue !",
+                    ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(
+                    "Une erreur est survenue lors de l'enregistrement. Veuillez réessayer plus tard.",
+                    ephemeral=True
+                )
 
 class RulesCog(commands.Cog):
     """Cog pour gérer les règles avec des boutons persistants."""
@@ -51,7 +59,7 @@ class RulesCog(commands.Cog):
     @commands.has_permissions(administrator=True)
     async def setup_rules(self, ctx: commands.Context):
         """
-        Envoie l'embed du règlement et enregistre le message pour qu'il soit persistant.
+        Envoie l'embed du règlement et met à jour le message persistant s'il existe déjà.
         """
         logger.debug("Commande setup_rules exécutée.")
         guild_id = ctx.guild.id
@@ -72,42 +80,85 @@ class RulesCog(commands.Cog):
             logger.error("Salon 'rules' introuvable.")
             return
 
-        # Vérifier s'il existe déjà un message persistant
-        existing_message = await get_persistent_message(guild_id, 'rules_embed', guild_name)
-        logger.debug(f"Message persistant existant: {existing_message}")
-        if existing_message:
-            try:
-                await channel.fetch_message(existing_message["message_id"])
-                await ctx.send("Le règlement est déjà configuré dans ce salon.", delete_after=10)
-                logger.info("Règlement déjà configuré.")
-                return
-            except discord.NotFound:
-                logger.warning("Message persistant introuvable, en recréation...")
-
-        # Créer l'embed des règles
+        # Création d'un embed avec des fields pour un affichage optimisé
         embed = discord.Embed(
             title="Règlement du Serveur",
-            description=(
-                "1. **Respect et courtoisie**\n"
-                "   - Traitez tous les membres avec respect.\n"
-                "2. **Pas de contenu interdit**\n"
-                "   - Aucun contenu NSFW, harcèlement ou spamming n'est autorisé.\n"
-                "3. **Le staff a toujours raison**\n"
-                "   - Respectez les décisions du staff.\n\n"
-                "**En cliquant sur 'Accepter le règlement', vous acceptez les conditions générales d'utilisation.**"
-            ),
             color=discord.Color.green()
+        )
+        embed.add_field(
+            name="1. Respect et courtoisie",
+            value=(
+                "> - Traitez **tous les membres** avec respect, quelle que soit leur ancienneté ou statut.\n"
+                "> - Faites preuve de politesse, utilisez un langage adapté et évitez les provocations.\n"
+                "> - Les propos discriminatoires, haineux, racistes, homophobes, sexistes, etc. sont strictement interdits.\n"
+                "> - Gardez un comportement positif et constructif, évitez les conflits inutiles ou provocations.\n"
+                "> - **Aucune insulte**, moquerie ou propos agressif ne sera toléré.\n"
+                "> - En cas de conflit, contactez un membre du staff plutôt que d'alimenter la tension."
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="2. Contenu interdit",
+            value=(
+                "> - 🚫 **Interdiction stricte de publier du contenu NSFW**, explicite, violent ou choquant.\n"
+                "> - Toute forme de **harcèlement**, intimidation ou acharnement sera sévèrement sanctionnée.\n"
+                "> - Évitez tout **spam**, flood ou message répétitif pouvant perturber les conversations.\n"
+                "> - Signalez tout contenu problématique à un modérateur."
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="3. Equipe de modération",
+            value=(
+                "> - Respectez toujours les décisions prises par l'équipe de modération.\n"
+                "> - N'entamez pas de débats publics concernant les décisions du staff.\n"
+                "> - En cas de désaccord ou question, contactez poliment un membre du staff en privé.\n"
+                "> - Votre coopération avec l'équipe est essentielle pour une bonne ambiance."
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="4. Utilisation des salons",
+            value=(
+                "> - 📌 Chaque salon possède une vocation spécifique ; respectez-les selon leur description respective.\n"
+                "> - Évitez les hors-sujets ou l'utilisation abusive des salons dédiés.\n"
+                "> - Ne spammez ni en salon vocal ni en salon textuel.\n"
+                "> - Suivez les demandes des modérateurs en cas de déplacement de conversation vers un autre salon."
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="5. Publicité et promotion",
+            value=(
+                "> - 📢 Toute publicité non autorisée est strictement interdite.\n"
+                "> - Les promotions doivent obligatoirement être validées préalablement par l'administration.\n"
+                "> - Envoyez vos demandes de publicité ou partenariat directement à l'administration.\n"
+                "> - Les messages promotionnels non autorisés seront supprimés et sanctionnés."
+            ),
+            inline=False
         )
         avatar_url = self.bot.user.avatar.url if self.bot.user.avatar else None
         embed.set_footer(
-            text="N'hésite pas à demander de l'aide si tu as des questions !",
+            text="En cliquant sur 'Accepter le règlement', vous acceptez les conditions générales d'utilisation.\n\nN'hésite pas à demander de l'aide si tu as des questions !",
             icon_url=avatar_url
         )
         logger.debug("Embed des règles créé.")
 
         view = AcceptRulesView(self)
 
-        # Envoyer l'embed avec le bouton
+        # Vérifier si un message persistant existe déjà et le mettre à jour
+        existing_message = await get_persistent_message(guild_id, 'rules_embed', guild_name)
+        if existing_message:
+            try:
+                message = await channel.fetch_message(existing_message["message_id"])
+                await message.edit(embed=embed, view=view)
+                await ctx.send("Le règlement a été mis à jour.", delete_after=10)
+                logger.info(f"Message des règles mis à jour avec ID: {message.id}")
+                return
+            except discord.NotFound:
+                logger.warning("Message persistant introuvable, en recréation...")
+
+        # Envoi du message s'il n'existe pas déjà
         try:
             message = await channel.send(embed=embed, view=view)
             logger.info(f"Message des règles envoyé avec ID: {message.id}")

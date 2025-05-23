@@ -41,6 +41,7 @@ class ChannelsConfiguration(commands.Cog):
         ("introductions", "salon pour la presentation du serveur"),
         ("modération", "salon de modération"),
         ("rang", "salon pour definir les rang"),
+        ("twitch", "salon des notif twitch"),
     ]
 
     ACTION_CHOICES = [

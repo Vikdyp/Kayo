@@ -1,85 +1,37 @@
-import discord
-from discord.ext import commands
-import logging
-from cogs.voice_management.services.five_stack_service import MatchmakingService
-from utils.database import database
-from typing import Optional, Dict
+import asyncio
+import asyncpg
+import ssl
+from config import DATABASE
 
-logger = logging.getLogger(__name__)
+async def test_connection():
+    try:
+        # Création d'un contexte SSL par défaut
+        ssl_context = ssl.create_default_context()
 
-class TestUserInfoCog(commands.Cog):
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
+        print("Tentative de connexion avec les paramètres suivants :")
+        print(f"User: {DATABASE['user']}")
+        print(f"Host: {DATABASE['host']}")
+        print(f"Database: {DATABASE['database']}")
+        print(f"Port: {DATABASE['port']}")
+        print("SSL: Activé (SSL/TLS requis par le serveur)")
 
-    @commands.command(name="get_user_info", help="Récupère les informations Valorant d'un utilisateur Discord.")
-    async def get_user_info_command(self, ctx: commands.Context, member: discord.Member):
-        """
-        Commande pour récupérer et afficher les informations Valorant d'un utilisateur.
+        conn = await asyncpg.connect(
+            user=DATABASE['user'],
+            password=DATABASE['password'],
+            database=DATABASE['database'],
+            host=DATABASE['host'],
+            port=DATABASE['port'],
+            ssl=ssl_context
+        )
+        print("Connexion réussie !")
 
-        Args:
-            ctx (commands.Context): Le contexte de la commande.
-            member (discord.Member): L'utilisateur Discord à tester.
-        """
-        discord_id = member.id
-        logger.info(f"Commande reçue pour récupérer les informations de {member.display_name} (ID: {discord_id}).")
+        # Exécution d'une requête simple pour tester la connexion
+        result = await conn.fetch("SELECT 1 AS test")
+        print("Résultat de la requête :", result)
 
-        # Étape 1 : Connexion à la base de données
-        await database.connect()
+        await conn.close()
+    except Exception as e:
+        print("Erreur lors de la connexion :", e)
 
-        try:
-            # Étape 2 : Récupérer les informations utilisateur
-            user_info = await MatchmakingService.get_user_info(discord_id)
-            
-            if user_info:
-                elo = user_info.get("elo", "Non défini")
-                region = user_info.get("region", "Non défini")
-                response = (
-                    f"**Informations Valorant de {member.mention} :**\n"
-                    f"**Région** : {region}\n"
-                    f"**MMR (Elo)** : {elo}"
-                )
-                await ctx.send(response)
-                logger.info(f"Informations récupérées pour {member.display_name}: Région={region}, Elo={elo}.")
-            else:
-                await ctx.send(f"Aucune information Valorant trouvée pour {member.mention}.")
-                logger.warning(f"Aucune information Valorant trouvée pour Discord ID {discord_id}.")
-
-        except Exception as e:
-            logger.error(f"Erreur lors de la récupération des informations utilisateur : {e}")
-            await ctx.send("Une erreur s'est produite lors de la récupération des informations utilisateur.")
-        finally:
-            # Étape 3 : Déconnexion de la base de données
-            await database.disconnect()
-
-    @staticmethod
-    async def get_user_info(discord_id: int) -> Optional[Dict]:
-        """
-        Récupère les informations Valorant d'un utilisateur à partir de la base de données.
-
-        Args:
-            discord_id (int): L'ID Discord de l'utilisateur.
-
-        Returns:
-            Optional[Dict]: Un dictionnaire contenant 'elo' et 'region' si trouvé, sinon None.
-        """
-        query = """
-        SELECT valorant_elo, valorant_region
-        FROM user_id
-        WHERE discord_id = $1;
-        """
-        try:
-            row = await database.fetchrow(query, discord_id)
-            if row:
-                logger.debug(f"Informations récupérées pour Discord ID {discord_id}: {row}")
-                return {
-                    "elo": row["valorant_elo"],
-                    "region": row["valorant_region"]
-                }
-            logger.warning(f"Informations Valorant non trouvées pour Discord ID {discord_id}.")
-        except Exception as e:
-            logger.error(f"Erreur lors de la récupération des informations utilisateur : {e}")
-        return None
-
-async def setup(bot: commands.Bot):
-    await bot.add_cog(TestUserInfoCog(bot))
-    logger.info("TestUserInfoCog chargé.")
+if __name__ == "__main__":
+    asyncio.run(test_connection())

@@ -1,3 +1,4 @@
+#cogs\rules\service\rules_services.py
 import logging
 from typing import Optional, Dict
 from utils.database import database
@@ -147,6 +148,25 @@ async def accept_rules_user(discord_id: int) -> bool:
     except Exception as e:
         logger.error(f"[accept_rules_user] Erreur pour {discord_id}: {e}")
         return False
+    
+async def has_accepted_rules(discord_id: int) -> bool:
+    """
+    Vérifie si un utilisateur a déjà accepté le règlement.
+    """
+    query = """
+        SELECT COUNT(*)
+        FROM user_id
+        WHERE discord_id = $1;
+    """
+    try:
+        logger.debug(f"[has_accepted_rules] Vérification pour discord_id={discord_id}")
+        result = await database.fetchval(query, discord_id)
+        logger.debug(f"[has_accepted_rules] Résultat COUNT={result} pour discord_id={discord_id}")
+        return result > 0
+    except Exception as e:
+        logger.error(f"[has_accepted_rules] Erreur pour {discord_id}: {e}")
+        return False
+
 
 async def delete_persistent_message(discord_guild_id: int,
                                    message_type: str,

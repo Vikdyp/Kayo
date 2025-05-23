@@ -1,28 +1,29 @@
-# cogs\voice_management\voice_cleaner.py
-
 import discord
 from discord.ext import commands, tasks
 import logging
 import asyncio
-import time
 
 logger = logging.getLogger("voice_cleaner")
 
 class VoiceManagement(commands.Cog):
-    def __init__(self, bot: commands.Bot):
+    def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-        self.category_id = 1323077627413794847  # ID de la catégorie à surveiller
-        self.afk_channel_id = 123456789012345678  # Remplacez par l'ID de votre salon AFK
-        self.inactivity_threshold = 300  # 10 minutes en secondes
-        self.last_active = {}  # Dictionnaire pour stocker les timestamps d'activité des membres
-
+        # ID de la catégorie à surveiller pour la suppression des salons vocaux vides
+        self.category_id: int = 1323077627413794847
+        # ID du salon AFK à exclure de la suppression
+        self.afk_channel_id: int = 123456789012345678
+        # Démarrage de la tâche de vérification des salons vocaux vides
         self.check_empty_voice_channels.start()
 
-    def cog_unload(self):
+    def cog_unload(self) -> None:
         self.check_empty_voice_channels.cancel()
 
-    @tasks.loop(minutes=5)  # Intervalle de vérification toutes les 5 minutes
-    async def check_empty_voice_channels(self):
+    @tasks.loop(minutes=5)
+    async def check_empty_voice_channels(self) -> None:
+        """
+        Vérifie toutes les 5 minutes les salons vocaux de la catégorie spécifiée
+        et supprime ceux qui sont vides (sauf le salon AFK).
+        """
         try:
             for guild in self.bot.guilds:
                 category = guild.get_channel(self.category_id)
@@ -30,19 +31,25 @@ class VoiceManagement(commands.Cog):
                     logger.warning(f"Catégorie avec l'ID {self.category_id} non trouvée dans la guilde {guild.name}.")
                     continue
 
-                voice_channels = category.voice_channels
-                for channel in voice_channels:
-                    if len(channel.members) == 0:
+                for channel in category.voice_channels:
+                    # Ne pas supprimer le salon AFK
+                    if channel.id == self.afk_channel_id:
+                        continue
+                    if not channel.members:
                         logger.info(f"Suppression du salon vocal vide : {channel.name} dans la guilde {guild.name}.")
-                        await channel.delete(reason="Salon vocal vide supprimé automatiquement.")
+                        try:
+                            await channel.delete(reason="Salon vocal vide supprimé automatiquement.")
+                        except Exception as e:
+                            logger.error(f"Erreur lors de la suppression du salon {channel.name}: {e}")
         except Exception as e:
             logger.error(f"Erreur lors de la vérification des salons vocaux vides : {e}")
 
     @check_empty_voice_channels.before_loop
-    async def before_check_empty_voice_channels(self):
+    async def before_check_empty_voice_channels(self) -> None:
+        """Attend que le bot soit prêt avant de démarrer la tâche."""
         await self.bot.wait_until_ready()
         logger.info("Tâche de vérification des salons vocaux vides démarrée.")
 
-async def setup(bot):
+async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(VoiceManagement(bot))
     logger.info("VoiceManagement Cog chargé.")

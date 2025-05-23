@@ -8,6 +8,37 @@ from cogs.other.service.rank_service import RankService
 
 logger = logging.getLogger("rank_updater")
 
+# Dictionnaires de correspondance pour la police spéciale
+ALPHABET_STYLE = {
+    "a": "𝙖", "b": "𝙗", "c": "𝙘", "d": "𝙙", "e": "𝙚", "f": "𝙛", "g": "𝙜",
+    "h": "𝙝", "i": "𝙞", "j": "𝙟", "k": "𝙠", "l": "𝙡", "m": "𝙢", "n": "𝙣",
+    "o": "𝙤", "p": "𝙥", "q": "𝙦", "r": "𝙧", "s": "𝙨", "t": "𝙩", "u": "𝙪",
+    "v": "𝙫", "w": "𝙬", "x": "𝙭", "y": "𝙮", "z": "𝙯",
+}
+
+DIGITS_STYLE = {
+    "0": "𝟬", "1": "𝟭", "2": "𝟮", "3": "𝟯", "4": "𝟰",
+    "5": "𝟱", "6": "𝟲", "7": "𝟷", "8": "𝟴", "9": "𝟵"
+}
+
+def stylize(text: str) -> str:
+    """
+    Transforme le texte en appliquant la police spéciale aux lettres et chiffres.
+    Pour chaque caractère, si une correspondance est trouvée, la transformation est appliquée
+    en respectant la casse pour les lettres.
+    """
+    result = ""
+    for char in text:
+        lower_char = char.lower()
+        if lower_char in ALPHABET_STYLE:
+            styled_char = ALPHABET_STYLE[lower_char]
+            result += styled_char.upper() if char.isupper() else styled_char
+        elif char in DIGITS_STYLE:
+            result += DIGITS_STYLE[char]
+        else:
+            result += char
+    return result
+
 class RankUpdater:
     def __init__(self, bot: discord.Client):
         self.bot = bot
@@ -26,7 +57,7 @@ class RankUpdater:
             self.task.cancel()
             logger.info("Tâche périodique de mise à jour des salons arrêtée.")
 
-    @tasks.loop(minutes=5)
+    @tasks.loop(minutes=10)
     async def _task_loop(self):
         """Tâche principale pour mettre à jour les salons des rangs."""
         logger.info("Exécution de la tâche de mise à jour des salons.")
@@ -59,15 +90,16 @@ class RankUpdater:
                     logger.warning(f"Salon {rank.capitalize()} introuvable dans le serveur {guild_id}.")
                     continue
 
-                # Filtrer les membres en ligne avec le rôle spécifique
+                # Filtrer les membres en ligne pour ce rôle
                 online_members = [member for member in role.members if member.status != discord.Status.offline]
                 online_count = len(online_members)
 
-                new_channel_name = f"{rank.capitalize()} - {online_count} en ligne"
+                # Construit le nouveau nom du salon en stylisant à la fois le rang et "en ligne"
+                new_channel_name = f"{stylize(rank.capitalize())} - {stylize(str(online_count))} {stylize('en ligne')}"
                 if channel.name != new_channel_name:
                     try:
                         await channel.edit(name=new_channel_name)
-                        logger.info(f"Nom du salon mis à jour pour le serveur {guild_id}: {new_channel_name}.")
+                        logger.info(f"Nom du salon mis à jour pour le serveur {guild_id} : {new_channel_name}.")
                     except Exception as e:
                         logger.error(f"Erreur lors de la mise à jour du salon {channel.name} pour le serveur {guild_id} : {e}")
                 else:

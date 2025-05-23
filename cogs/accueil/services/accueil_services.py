@@ -1,26 +1,32 @@
 #cogs\accueil\services\accueil_services.py
 from datetime import date, datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 from utils.database import database
+import logging
+
+logger = logging.getLogger("accueil.services")
+
+def get_local_datetime():
+    paris_tz = ZoneInfo("Europe/Paris")
+    return datetime.now(paris_tz)
 
 async def get_welcome_channel_id(guild_id: int) -> Optional[int]:
     server_id = await get_server_id(guild_id)
     if server_id is None:
         return None
-    
+
     query = """
         SELECT channel_id 
         FROM channel_configurations 
         WHERE server_id = $1 AND action = 'welcome';
     """
-    channel_id = await database.fetchval(query, server_id)
-    return channel_id
+    return await database.fetchval(query, server_id)
 
 async def get_channel_ids(guild_id: int, actions: list) -> Dict[str, int]:
     server_id = await get_server_id(guild_id)
     if server_id is None:
         return {}
-    
     query = """
         SELECT action, channel_id 
         FROM channel_configurations 
@@ -30,114 +36,126 @@ async def get_channel_ids(guild_id: int, actions: list) -> Dict[str, int]:
     return {record['action']: record['channel_id'] for record in records}
 
 async def get_server_id(guild_id: int) -> Optional[int]:
-    """
-    Récupère l'ID interne du serveur à partir de l'ID de la guilde Discord.
-    """
     query = """
         SELECT id 
         FROM serveur_id 
         WHERE guild_id = $1;
     """
-    server_id = await database.fetchval(query, guild_id)
-    return server_id
+    return await database.fetchval(query, guild_id)
 
 # =========================
-# Fonctions pour le suivi des membres en BDD
+# Suivi des membres en BDD
 # =========================
+
+async def ensure_today_member_stats(guild_id: int) -> None:
+    server_id = await get_server_id(guild_id)
+    if server_id is None:
+        return
+    
+    # Utilisation explicite de la date locale
+    paris_tz = ZoneInfo("Europe/Paris")
+    today = datetime.now(paris_tz).date()
+
+    logger.debug(f"ensure_today_member_stats - Vérification pour la date : {today}")
+    query_select = """
+        SELECT 1 FROM member_daily_stats
+        WHERE guild_id = $1 AND date = $2;
+    """
+    record = await database.fetchrow(query_select, server_id, today)
+    if record:
+        logger.debug(f"Entrée trouvée pour la date {today} et guild_id {guild_id}.")
+    else:
+        logger.debug(f"Aucune entrée trouvée pour la date {today} et guild_id {guild_id}, création en cours.")
+        query_insert = """
+            INSERT INTO member_daily_stats (guild_id, date, join_count, leave_count)
+            VALUES ($1, $2, 0, 0);
+        """
+        await database.execute(query_insert, server_id, today)
 
 async def log_member_event_aggregated(guild_id: int, event_type: str) -> None:
-    """
-    Incrémente le compteur join/leave dans la table member_daily_stats.
-    """
-    # On prend la date du jour
-    today = date.today()
+    server_id = await get_server_id(guild_id)
+    if server_id is None:
+        return
+    
+    paris_tz = ZoneInfo("Europe/Paris")
+    today = datetime.now(paris_tz).date()
 
-    # Vérifie si la ligne (guild_id, today) existe déjà
+    await ensure_today_member_stats(guild_id)
     query_select = """
         SELECT join_count, leave_count
         FROM member_daily_stats
-        WHERE guild_id = $1 AND date = $2
+        WHERE guild_id = $1 AND date = $2;
     """
-    record = await database.fetchrow(query_select, guild_id, today)
-
+    record = await database.fetchrow(query_select, server_id, today)
     if record is None:
-        # Insérer une nouvelle ligne
         if event_type == "join":
             query_insert = """
                 INSERT INTO member_daily_stats (guild_id, date, join_count, leave_count)
                 VALUES ($1, $2, 1, 0);
             """
-        else:  # leave
+        else:
             query_insert = """
                 INSERT INTO member_daily_stats (guild_id, date, join_count, leave_count)
                 VALUES ($1, $2, 0, 1);
             """
-        await database.execute(query_insert, guild_id, today)
+        await database.execute(query_insert, server_id, today)
     else:
-        # Mettre à jour la ligne existante
         if event_type == "join":
             new_join_count = record['join_count'] + 1
             query_update = """
                 UPDATE member_daily_stats
                 SET join_count = $3
-                WHERE guild_id = $1 AND date = $2
+                WHERE guild_id = $1 AND date = $2;
             """
-            await database.execute(query_update, guild_id, today, new_join_count)
-        else:  # leave
+            await database.execute(query_update, server_id, today, new_join_count)
+        else:
             new_leave_count = record['leave_count'] + 1
             query_update = """
                 UPDATE member_daily_stats
                 SET leave_count = $3
-                WHERE guild_id = $1 AND date = $2
+                WHERE guild_id = $1 AND date = $2;
             """
-            await database.execute(query_update, guild_id, today, new_leave_count)
-
+            await database.execute(query_update, server_id, today, new_leave_count)
 
 async def get_aggregated_stats(guild_id: int) -> dict:
-    """
-    Retourne un dictionnaire avec les stats sur 24h, 7j, 30j, et totaux :
-      - join_24h, leave_24h
-      - join_7d, leave_7d
-      - join_30d, leave_30d
-      - total_join, total_left
-      - join_leave_ratio
-    """
-    # Requête pour 24h : date >= CURRENT_DATE - 1
+    server_id = await get_server_id(guild_id)
+    if server_id is None:
+        return {
+            "join_24h": 0, "leave_24h": 0,
+            "join_7d": 0, "leave_7d": 0,
+            "join_30d": 0, "leave_30d": 0,
+            "total_join": 0, "total_left": 0,
+            "join_leave_ratio": 0
+        }
+    await ensure_today_member_stats(guild_id)
     query_24h = """
         SELECT COALESCE(SUM(join_count), 0) AS join_24h,
                COALESCE(SUM(leave_count), 0) AS leave_24h
         FROM member_daily_stats
-        WHERE guild_id = $1
-          AND date >= (CURRENT_DATE - 1);
+        WHERE guild_id = $1 AND date >= (CURRENT_DATE - 1);
     """
-    # Requête pour 7 jours : date >= CURRENT_DATE - 7
     query_7d = """
         SELECT COALESCE(SUM(join_count), 0) AS join_7d,
                COALESCE(SUM(leave_count), 0) AS leave_7d
         FROM member_daily_stats
-        WHERE guild_id = $1
-          AND date >= (CURRENT_DATE - 7);
+        WHERE guild_id = $1 AND date >= (CURRENT_DATE - 7);
     """
-    # Requête pour 30 jours : date >= CURRENT_DATE - 30
     query_30d = """
         SELECT COALESCE(SUM(join_count), 0) AS join_30d,
                COALESCE(SUM(leave_count), 0) AS leave_30d
         FROM member_daily_stats
-        WHERE guild_id = $1
-          AND date >= (CURRENT_DATE - 30);
+        WHERE guild_id = $1 AND date >= (CURRENT_DATE - 30);
     """
-    # Requête pour le total global
     query_total = """
         SELECT COALESCE(SUM(join_count), 0) AS total_join,
                COALESCE(SUM(leave_count), 0) AS total_left
         FROM member_daily_stats
         WHERE guild_id = $1;
     """
-
-    rec_24h = await database.fetchrow(query_24h, guild_id)
-    rec_7d  = await database.fetchrow(query_7d, guild_id)
-    rec_30d = await database.fetchrow(query_30d, guild_id)
-    rec_total = await database.fetchrow(query_total, guild_id)
+    rec_24h = await database.fetchrow(query_24h, server_id)
+    rec_7d  = await database.fetchrow(query_7d, server_id)
+    rec_30d = await database.fetchrow(query_30d, server_id)
+    rec_total = await database.fetchrow(query_total, server_id)
 
     join_24h = rec_24h["join_24h"]
     leave_24h = rec_24h["leave_24h"]
@@ -145,16 +163,9 @@ async def get_aggregated_stats(guild_id: int) -> dict:
     leave_7d = rec_7d["leave_7d"]
     join_30d = rec_30d["join_30d"]
     leave_30d = rec_30d["leave_30d"]
-
     total_join = rec_total["total_join"]
     total_left = rec_total["total_left"]
-
-    # Calcul du ratio
-    if total_left == 0:
-        ratio = float(total_join)  # ou "∞"
-    else:
-        ratio = round(total_join / total_left, 2)
-
+    ratio = float(total_join) if total_left == 0 else round(total_join / total_left, 2)
     return {
         "join_24h": join_24h,
         "leave_24h": leave_24h,
@@ -167,21 +178,129 @@ async def get_aggregated_stats(guild_id: int) -> dict:
         "join_leave_ratio": ratio,
     }
 
-async def get_member_evolution(guild_id: int) -> List[Dict]:
+async def get_member_evolution(guild_id: int, days: Optional[int] = 30) -> List[Dict]:
     """
-    Récupère les données d'évolution des membres sur les 30 derniers jours.
-    Chaque élément est un dictionnaire contenant :
-      - 'date': la date de la donnée
-      - 'join_count': le nombre d'adhésions ce jour-là
-      - 'leave_count': le nombre de départs ce jour-là
+    Retourne la liste (date, join_count, leave_count) pour 'days' jours ou 'total' si days=None.
+    Ordonnée par date ASC.
     """
-    query = """
+    server_id = await get_server_id(guild_id)
+    if server_id is None:
+        return []
+
+    if days is None:
+        # Pas de limite de date -> on récupère tout
+        query = """
+            SELECT date, join_count, leave_count
+            FROM member_daily_stats
+            WHERE guild_id = $1
+            ORDER BY date ASC;
+        """
+        records = await database.fetch(query, server_id)
+    else:
+        # Sur X jours
+        query = """
         SELECT date, join_count, leave_count
         FROM member_daily_stats
         WHERE guild_id = $1
-          AND date >= (CURRENT_DATE - 30)
+        AND date >= (CURRENT_DATE - ($2::integer - 1))
         ORDER BY date ASC;
     """
-    records = await database.fetch(query, guild_id)
-    # Assure-toi que les dates sont au format datetime.date
+    records = await database.fetch(query, server_id, days)
+
     return [dict(record) for record in records]
+
+# =========================
+# Fonctions de persistance pour les messages
+# =========================
+
+async def get_persistent_message(guild_id: int, message_type: str) -> Optional[Tuple[int, int]]:
+    """
+    Récupère (channel_id, message_id) pour un message persistant dans 'persistent_messages'.
+    """
+    server_id = await get_server_id(guild_id)
+    if not server_id:
+        logger.warning(f"Serveur ID non trouvé pour guild {guild_id}.")
+        return None
+    query = """
+        SELECT channel_id, message_id
+        FROM persistent_messages
+        WHERE guild_id = $1 AND message_type = $2;
+    """
+    try:
+        row = await database.fetchrow(query, server_id, message_type)
+        if row:
+            return (row["channel_id"], row["message_id"])
+        logger.warning(f"Message persistant '{message_type}' non trouvé (guild={guild_id}).")
+    except Exception as e:
+        logger.error(f"Erreur get_persistent_message: {e}")
+    return None
+
+async def save_persistent_message(discord_guild_id: int, message_type: str,
+                                  channel_id: int, message_id: int,
+                                  requester_id: Optional[int] = None) -> None:
+    """
+    Sauvegarde (ou met à jour) un message persistant dans la table 'persistent_messages'.
+    """
+    server_id = await get_server_id(discord_guild_id)
+    if not server_id:
+        logger.error(f"Impossible de save_persistent_message: server_id introuvable pour {discord_guild_id}.")
+        return
+    query = """
+        INSERT INTO persistent_messages (guild_id, message_type, channel_id, message_id, requester_id)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (guild_id, message_type)
+        DO UPDATE SET channel_id = EXCLUDED.channel_id, message_id = EXCLUDED.message_id, requester_id = EXCLUDED.requester_id;
+    """
+    try:
+        await database.execute(query, server_id, message_type, channel_id, message_id, requester_id)
+        logger.info(f"Message persistant '{message_type}' sauvegardé pour guild {discord_guild_id}.")
+    except Exception as e:
+        logger.error(f"Erreur save_persistent_message: {e}")
+
+async def get_period_stats(guild_id: int, days: Optional[int]) -> dict:
+    """
+    Retourne la somme des adhésions et départs sur 'days' derniers jours.
+    Si days vaut None, on récupère TOUT l'historique (total).
+    Renvoie un dict avec 'join_count', 'leave_count' et 'join_leave_ratio'.
+    """
+    server_id = await get_server_id(guild_id)
+    if server_id is None:
+        return {"join_count": 0, "leave_count": 0, "join_leave_ratio": 0}
+
+    # On s'assure que la ligne du jour existe (bonne pratique),
+    # même si pour un total ça changera peu
+    await ensure_today_member_stats(guild_id)
+
+    if days is None:
+        # total
+        query = """
+            SELECT COALESCE(SUM(join_count), 0) AS join_count,
+                   COALESCE(SUM(leave_count), 0) AS leave_count
+            FROM member_daily_stats
+            WHERE guild_id = $1
+        """
+        record = await database.fetchrow(query, server_id)
+    else:
+        # sur X jours
+        query = f"""
+            SELECT COALESCE(SUM(join_count), 0) AS join_count,
+                   COALESCE(SUM(leave_count), 0) AS leave_count
+            FROM member_daily_stats
+            WHERE guild_id = $1
+              AND date >= (CURRENT_DATE - {days})
+        """
+        record = await database.fetchrow(query, server_id)
+
+    if not record:
+        return {"join_count": 0, "leave_count": 0, "join_leave_ratio": 0}
+
+    join_count = record["join_count"]
+    leave_count = record["leave_count"]
+    # Pour éviter la division par zéro
+    join_leave_ratio = float(join_count) if leave_count == 0 else round(join_count / leave_count, 2)
+
+    return {
+        "join_count": join_count,
+        "leave_count": leave_count,
+        "join_leave_ratio": join_leave_ratio
+    }

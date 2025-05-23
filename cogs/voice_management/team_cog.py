@@ -1,21 +1,50 @@
+#cogs\voice_management\team_cog.py
+
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 import logging
 import random
 import string
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 import datetime
 import asyncio
 
-# Import du service
 from .services.five_stack_service import MatchmakingService
+
+# Constantes
+FORUM_CHANNEL_ID: int = 1325629700248178778  # ID réel de votre forum
+VOICE_CATEGORY_NAME: str = "Matchmaking"       # Nom de la catégorie vocale
+TEAM_CODE_LENGTH: int = 6                      # Longueur du code d'équipe
 
 logger = logging.getLogger(__name__)
 
-# Constantes
-FORUM_CHANNEL_ID = 1325629700248178778  # ID réel de votre forum
-VOICE_CATEGORY_NAME = "Matchmaking"     # Nom de la catégorie vocale
+
+def generate_team_code(length: int = TEAM_CODE_LENGTH) -> str:
+    """Génère un code d'équipe aléatoire en majuscules et chiffres."""
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
+
+
+async def get_forum_channel(bot: commands.Bot) -> Optional[discord.ForumChannel]:
+    """Récupère et vérifie le ForumChannel à partir de FORUM_CHANNEL_ID."""
+    channel = bot.get_channel(FORUM_CHANNEL_ID)
+    if channel and isinstance(channel, discord.ForumChannel):
+        return channel
+    logger.error("Forum channel invalide ou introuvable.")
+    return None
+
+
+async def get_voice_category(guild: discord.Guild) -> Optional[discord.CategoryChannel]:
+    """Récupère la catégorie vocale par son nom, ou la crée si elle n'existe pas."""
+    category = discord.utils.get(guild.categories, name=VOICE_CATEGORY_NAME)
+    if not category:
+        try:
+            category = await guild.create_category(VOICE_CATEGORY_NAME)
+            logger.info(f"Catégorie '{VOICE_CATEGORY_NAME}' créée.")
+        except Exception as e:
+            logger.error(f"Erreur création catégorie '{VOICE_CATEGORY_NAME}': {e}")
+            return None
+    return category
 
 
 class TeamManager(commands.Cog):
@@ -23,43 +52,35 @@ class TeamManager(commands.Cog):
     Gère la création d'équipe via /create_team, /join_team,
     l'expulsion via /kick_member, et la suppression avec /delete_team.
 
-    - Chaque équipe a un "code" unique.
-    - On stocke l'équipe dans la table 'teams'.
-    - Les membres dans 'team_members'.
-    - Si l'équipe atteint 5 membres => create_voice_channel_and_invite(team).
+    Chaque équipe dispose d'un code unique et est gérée via la table 'teams'
+    et 'team_members'. Dès que l'équipe atteint 5 membres, un salon vocal est créé.
     """
 
-    def __init__(self, bot: commands.Bot):
+    def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-        # Verrous par code d'équipe => éviter les accès concurrents (join, kick, etc.)
         self.team_locks: Dict[str, asyncio.Lock] = {}
-
-        # Au démarrage, on charge toutes les équipes existantes, puis on les supprime
-        # (cela supprime aussi leurs threads + vocaux, selon ta logique).
         self.bot.loop.create_task(self.initialize())
-
-        # Tâche de nettoyage des équipes obsolètes (toutes les heures)
         self.cleanup_teams_task.start()
 
-    def cog_unload(self):
+    def cog_unload(self) -> None:
         self.cleanup_teams_task.cancel()
 
     # ------------------------------------------------
     # Initialisation du Cog
     # ------------------------------------------------
 
-    async def initialize(self):
+    async def initialize(self) -> None:
         """
-        Au démarrage, on charge toutes les équipes existantes
-        et on supprime TOUTES les entrées (threads/vocaux + base).
+        Au démarrage, charge et supprime toutes les équipes existantes
+        (threads/forums + vocal + BD) afin de repartir sur une base propre.
         """
         await self.load_existing_teams()
         await self.delete_all_teams()
         logger.info("Initialisation du TeamManager terminée.")
 
-    async def load_existing_teams(self):
+    async def load_existing_teams(self) -> None:
         """
-        Charge toutes les équipes pour log/debug.
+        Charge toutes les équipes existantes pour log/debug.
         """
         try:
             teams = await MatchmakingService.get_all_teams()
@@ -69,9 +90,9 @@ class TeamManager(commands.Cog):
         except Exception as e:
             logger.error(f"Erreur lors du chargement des équipes existantes : {e}")
 
-    async def delete_all_teams(self):
+    async def delete_all_teams(self) -> None:
         """
-        Supprime TOUTES les équipes existantes (threads/forums + vocal + BD).
+        Supprime toutes les équipes existantes, leurs ressources Discord et leurs enregistrements en BD.
         """
         logger.info("Début de la suppression de toutes les équipes existantes (init).")
         try:
@@ -79,9 +100,7 @@ class TeamManager(commands.Cog):
             for t in teams:
                 code = t["code"]
                 logger.info(f"Suppression de l'équipe : {code}")
-                # 1) Supprimer les ressources Discord (thread+vocal)
                 await self.delete_team_resources(t)
-                # 2) Supprimer en base de données
                 success = await MatchmakingService.delete_team(code)
                 if success:
                     logger.info(f"Équipe '{code}' supprimée en BD au démarrage.")
@@ -100,42 +119,32 @@ class TeamManager(commands.Cog):
         app_commands.Choice(name="Public", value="public"),
         app_commands.Choice(name="Privé",  value="private")
     ])
-    async def create_team(self, interaction: discord.Interaction, visibility: app_commands.Choice[str]):
+    async def create_team(self, interaction: discord.Interaction, visibility: app_commands.Choice[str]) -> None:
         """
-        Crée un post dans le forum FORUM_CHANNEL_ID avec un code secret (si public).
-        Y place une vue de type TeamForumJoinButtonView si c'est public, ou TeamForumPrivateView si privé.
+        Crée une équipe et un thread dans le forum. Si l'équipe est publique, un code secret est généré.
         """
         await interaction.response.defer(ephemeral=True)
-        leader = interaction.user
+        leader: discord.Member = interaction.user
 
-        # Vérifier si le leader est déjà dans une équipe
-        existing = await MatchmakingService.is_user_in_any_team(leader.id)
-        if existing:
-            await interaction.edit_original_response(
-                content="Vous êtes déjà membre d'une équipe."
-            )
+        if await MatchmakingService.is_user_in_any_team(leader.id):
+            await interaction.edit_original_response(content="Vous êtes déjà membre d'une équipe.")
             return
 
-        # Récup infos Valorant du leader
         leader_info = await MatchmakingService.get_user_info(leader.id)
         if not leader_info:
-            await interaction.edit_original_response(
-                content="Infos Valorant manquantes pour le leader."
-            )
+            await interaction.edit_original_response(content="Infos Valorant manquantes pour le leader.")
             return
 
-        # Générer un code unique pour l'équipe
-        code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-        created_at = datetime.datetime.utcnow()
+        code: str = generate_team_code()
+        created_at: datetime.datetime = datetime.datetime.utcnow()
 
-        forum_channel = self.bot.get_channel(FORUM_CHANNEL_ID)
-        if not forum_channel or not isinstance(forum_channel, discord.ForumChannel):
+        forum_channel: Optional[discord.ForumChannel] = await get_forum_channel(self.bot)
+        if not forum_channel:
             await interaction.edit_original_response(content="Forum channel invalide.")
             return
 
-        # Construire le contenu du thread
         if visibility.value == "public":
-            content = (
+            content: str = (
                 f"Équipe créée par {leader.mention}\n"
                 f"Code secret : ||{code}||\n"
                 f"Région Leader : {leader_info['region']}\n"
@@ -149,10 +158,7 @@ class TeamManager(commands.Cog):
             )
 
         from .team_views import TeamForumJoinButtonView, TeamForumPrivateView
-        if visibility.value == "public":
-            view = TeamForumJoinButtonView(self, code)
-        else:
-            view = TeamForumPrivateView(self, code)
+        view = TeamForumJoinButtonView(self, code) if visibility.value == "public" else TeamForumPrivateView(self, code)
 
         try:
             post = await forum_channel.create_thread(
@@ -164,71 +170,53 @@ class TeamManager(commands.Cog):
             await interaction.edit_original_response(content=f"Erreur création thread : {e}")
             return
 
-        real_thread = post.thread
-        thread_id = real_thread.id
+        real_thread: discord.Thread = post.thread
+        thread_id: int = real_thread.id
 
-        # Créer l'équipe en base
-        success = await MatchmakingService.create_team(
+        success: bool = await MatchmakingService.create_team(
             code, leader.id, forum_channel.id, thread_id, visibility.value, created_at
         )
         if not success:
-            await interaction.edit_original_response(
-                content="Erreur lors de la création de l'équipe en base."
-            )
+            await interaction.edit_original_response(content="Erreur lors de la création de l'équipe en base.")
             return
 
-        # Ajouter le leader comme membre
-        ok = await MatchmakingService.add_member_to_team(code, leader.id)
+        ok: bool = await MatchmakingService.add_member_to_team(code, leader.id)
         if not ok:
-            await interaction.edit_original_response(
-                content="Erreur lors de l'ajout du leader à l'équipe."
-            )
+            await interaction.edit_original_response(content="Erreur lors de l'ajout du leader à l'équipe.")
             return
 
         if visibility.value == "public":
-            await real_thread.send(
-                f"Code secret : **{code}**\n"
-                f"Rejoignez l'équipe avec `/join_team {code}`."
-            )
+            await real_thread.send(f"Code secret : **{code}**\nRejoignez l'équipe avec `/join_team {code}`.")
 
         await interaction.edit_original_response(
-            content=(
-                f"Équipe créée !\n"
-                f"Post : {real_thread.jump_url}\n"
-                f"Code : {code}\n"
-                f"Visibilité : {visibility.name.capitalize()}"
-            )
+            content=(f"Équipe créée !\nPost : {real_thread.jump_url}\nCode : {code}\n"
+                     f"Visibilité : {visibility.name.capitalize()}")
         )
 
     @app_commands.command(name="join_team", description="Rejoindre une équipe via son code.")
-    async def join_team(self, interaction: discord.Interaction, code: str):
+    async def join_team(self, interaction: discord.Interaction, code: str) -> None:
         """
-        Permet de rejoindre une équipe existante si elle n'a pas déjà 5 membres.
+        Permet à un utilisateur de rejoindre une équipe existante si celle-ci n'est pas complète.
         """
         await interaction.response.defer(ephemeral=True)
         code = code.strip().upper()
 
-        team = await MatchmakingService.get_team(code)
+        team: Optional[Dict[str, Any]] = await MatchmakingService.get_team(code)
         if not team:
             await interaction.edit_original_response(content="Équipe introuvable ou expirée.")
             return
 
-        # Vérifier si l'utilisateur est déjà membre d'une équipe
-        existing = await MatchmakingService.is_user_in_any_team(interaction.user.id)
-        if existing:
-            await interaction.edit_original_response(
-                content="Vous êtes déjà membre d'une équipe. Impossible d'en rejoindre une autre."
-            )
+        if await MatchmakingService.is_user_in_any_team(interaction.user.id):
+            await interaction.edit_original_response(content="Vous êtes déjà membre d'une équipe. Impossible d'en rejoindre une autre.")
             return
 
         lock = self.get_team_lock(code)
         async with lock:
-            members = await MatchmakingService.get_team_members(code)
+            members: List[int] = await MatchmakingService.get_team_members(code)
             if len(members) >= 5:
                 await interaction.edit_original_response(content="Cette équipe est déjà complète (5).")
                 return
 
-            # Vérif region
             leader_info = await MatchmakingService.get_user_info(team["leader_id"])
             user_info = await MatchmakingService.get_user_info(interaction.user.id)
             if not leader_info or not user_info:
@@ -238,24 +226,22 @@ class TeamManager(commands.Cog):
                 await interaction.edit_original_response(content="Région différente du leader.")
                 return
 
-            # Ajouter
-            ok = await MatchmakingService.add_member_to_team(code, interaction.user.id)
-            if not ok:
+            if not await MatchmakingService.add_member_to_team(code, interaction.user.id):
                 await interaction.edit_original_response(content="Erreur lors de l'ajout à l'équipe.")
                 return
 
-            # Mettre à jour le thread
             await self.update_team_thread(code)
-
             await interaction.edit_original_response(content="Vous avez rejoint l'équipe !")
 
-            # Vérifier si c'est 5 => create vocal
             members = await MatchmakingService.get_team_members(code)
             if len(members) == 5:
                 await self.create_voice_channel_and_invite(team)
 
     @app_commands.command(name="kick_member", description="Expulser un membre (leader seulement).")
-    async def kick_member(self, interaction: discord.Interaction, code: str, member: discord.Member):
+    async def kick_member(self, interaction: discord.Interaction, code: str, member: discord.Member) -> None:
+        """
+        Permet au leader d'expulser un membre de l'équipe.
+        """
         await interaction.response.defer(ephemeral=True)
         code = code.strip().upper()
 
@@ -275,29 +261,23 @@ class TeamManager(commands.Cog):
                 await interaction.edit_original_response(content="Ce membre n'est pas dans l'équipe.")
                 return
 
-            ok = await MatchmakingService.remove_member_from_team(code, member.id)
-            if not ok:
+            if not await MatchmakingService.remove_member_from_team(code, member.id):
                 await interaction.edit_original_response(content="Erreur lors du retrait du membre.")
                 return
 
             await self.update_team_thread(code)
-
             await interaction.edit_original_response(content=f"{member.display_name} expulsé.")
 
-            # Vérifier si l'équipe est vide
             members = await MatchmakingService.get_team_members(code)
             if len(members) == 0:
-                # Supprimer le salon vocal et le thread
                 await self.delete_team_resources(team)
-                # Supprimer le lock
                 self.remove_team_lock(code)
 
     @app_commands.command(name="delete_team", description="Supprimer une équipe (admin ou leader).")
     @app_commands.describe(code="Le code de l'équipe à supprimer.")
-    async def delete_team(self, interaction: discord.Interaction, code: str):
+    async def delete_team(self, interaction: discord.Interaction, code: str) -> None:
         """
-        Supprime l'équipe, le thread, le salon vocal. 
-        Leader ou admin.
+        Supprime une équipe ainsi que ses ressources (thread et salon vocal). Seul le leader ou un admin peut le faire.
         """
         await interaction.response.defer(ephemeral=True)
         code = code.strip().upper()
@@ -307,34 +287,26 @@ class TeamManager(commands.Cog):
             await interaction.edit_original_response(content="Équipe introuvable ou déjà supprimée.")
             return
 
-        user = interaction.user
+        user: discord.Member = interaction.user
         is_admin = any(r.permissions.administrator for r in user.roles)
-
         if not is_admin and user.id != team["leader_id"]:
-            await interaction.edit_original_response(
-                content="Vous n'avez pas la permission de supprimer cette équipe."
-            )
+            await interaction.edit_original_response(content="Vous n'avez pas la permission de supprimer cette équipe.")
             return
 
         lock = self.get_team_lock(code)
         async with lock:
             await self.delete_team_resources(team)
-            success = await MatchmakingService.delete_team(code)
-            if success:
-                await interaction.edit_original_response(
-                    content=f"L'équipe {code} a été supprimée."
-                )
+            if await MatchmakingService.delete_team(code):
+                await interaction.edit_original_response(content=f"L'équipe {code} a été supprimée.")
                 logger.info(f"Équipe {code} supprimée par {user.id}.")
             else:
-                await interaction.edit_original_response(
-                    content="Erreur lors de la suppression de l'équipe."
-                )
+                await interaction.edit_original_response(content="Erreur lors de la suppression de l'équipe.")
             self.remove_team_lock(code)
 
     @app_commands.command(name="list_teams", description="Liste toutes les équipes publiques.")
-    async def list_teams(self, interaction: discord.Interaction):
+    async def list_teams(self, interaction: discord.Interaction) -> None:
         """
-        Liste les équipes visibility='public'.
+        Affiche la liste des équipes publiques disponibles.
         """
         await interaction.response.defer(ephemeral=True)
         try:
@@ -343,30 +315,24 @@ class TeamManager(commands.Cog):
                 await interaction.edit_original_response(content="Aucune équipe publique disponible.")
                 return
 
-            msg = "### Équipes Publiques Disponibles:\n"
+            msg: str = "### Équipes Publiques Disponibles:\n"
             for t in teams:
                 leader = interaction.guild.get_member(t["leader_id"])
                 leader_mention = leader.mention if leader else f"<@{t['leader_id']}>"
-                msg += (
-                    f"- **Code**: {t['code']} | **Leader**: {leader_mention} | "
-                    f"**Visibilité**: {t['visibility']}\n"
-                )
-
+                msg += f"- **Code**: {t['code']} | **Leader**: {leader_mention} | **Visibilité**: {t['visibility']}\n"
             await interaction.edit_original_response(content=msg)
         except Exception as e:
             logger.error(f"Erreur list_teams: {e}")
-            await interaction.edit_original_response(
-                content="Erreur lors de la récupération des équipes publiques."
-            )
+            await interaction.edit_original_response(content="Erreur lors de la récupération des équipes publiques.")
 
     # ------------------------------------------------
     # Tâche de cleanup (équipes >24h)
     # ------------------------------------------------
 
     @tasks.loop(hours=1)
-    async def cleanup_teams_task(self):
+    async def cleanup_teams_task(self) -> None:
         """
-        Supprime les équipes créées il y a plus de 24h (logique existante).
+        Supprime les équipes créées il y a plus de 24h.
         """
         logger.info("Nettoyage des équipes obsolètes...")
         try:
@@ -377,8 +343,7 @@ class TeamManager(commands.Cog):
                 lock = self.get_team_lock(code)
                 async with lock:
                     await self.delete_team_resources(t)
-                    ok = await MatchmakingService.delete_team(code)
-                    if ok:
+                    if await MatchmakingService.delete_team(code):
                         logger.info(f"Équipe obsolète {code} supprimée en BD.")
                     else:
                         logger.error(f"Échec de la suppression de l'équipe {code} en BD.")
@@ -387,43 +352,42 @@ class TeamManager(commands.Cog):
             logger.error(f"Erreur dans la tâche de nettoyage des équipes : {e}")
 
     @cleanup_teams_task.before_loop
-    async def before_cleanup_teams_task(self):
+    async def before_cleanup_teams_task(self) -> None:
         await self.bot.wait_until_ready()
         logger.info("Tâche de nettoyage des équipes (obsolètes) prête à démarrer.")
 
     # ------------------------------------------------
-    # Gestion des Ressources (threads+vocaux)
+    # Gestion des ressources (threads et salons vocaux)
     # ------------------------------------------------
 
-    async def update_team_thread(self, code: str):
+    async def update_team_thread(self, code: str) -> None:
         """
-        Met à jour l'embed du thread ForumChannel pour l'équipe.
+        Met à jour l'embed du thread dans le ForumChannel pour une équipe donnée.
         """
         team = await MatchmakingService.get_team(code)
         if not team:
             logger.warning(f"update_team_thread: Équipe {code} introuvable.")
             return
 
-        members = await MatchmakingService.get_team_members(code)
-
+        members: List[int] = await MatchmakingService.get_team_members(code)
         forum_channel = self.bot.get_channel(team["forum_channel_id"])
         if not forum_channel or not isinstance(forum_channel, discord.ForumChannel):
             logger.error(f"forum_channel invalide pour {code}.")
             return
 
-        guild = forum_channel.guild
+        guild: discord.Guild = forum_channel.guild
         thread = forum_channel.get_thread(team["thread_id"])
         if not thread:
             logger.error(f"Thread introuvable pour {code}.")
             return
 
-        desc = "Équipe Privée"
-        if team["visibility"] == "public":
-            desc = f"Code secret : ||{team['code']}||"
+        desc: str = f"Code secret : ||{team['code']}||" if team["visibility"] == "public" else "Équipe Privée"
+        leader = guild.get_member(team["leader_id"])
+        leader_mention = leader.mention if leader else f"<@{team['leader_id']}>"
 
         embed = discord.Embed(
-            title=f"Équipe de <@{team['leader_id']}>",
-            description=desc,
+            title="Équipe",
+            description=f"**Leader :** {leader_mention}\n{desc}",
             color=discord.Color.blue()
         )
         embed.add_field(name="Visibilité", value=team["visibility"].capitalize(), inline=False)
@@ -449,9 +413,9 @@ class TeamManager(commands.Cog):
         except Exception as e:
             logger.error(f"Erreur update_team_thread {code}: {e}")
 
-    async def create_voice_channel_and_invite(self, team: Dict):
+    async def create_voice_channel_and_invite(self, team: Dict[str, Any]) -> None:
         """
-        Si l'équipe atteint 5 membres, on crée un salon vocal et on envoie l'invitation dans le thread.
+        Crée un salon vocal pour l'équipe lorsque celle-ci atteint 5 membres, puis envoie l'invitation dans le thread.
         """
         forum_channel = self.bot.get_channel(team["forum_channel_id"])
         if not forum_channel or not isinstance(forum_channel, discord.ForumChannel):
@@ -464,19 +428,11 @@ class TeamManager(commands.Cog):
             logger.error(f"Thread introuvable pour l'équipe '{team['code']}'.")
             return
 
-        category = discord.utils.get(guild.categories, name=VOICE_CATEGORY_NAME)
+        category = await get_voice_category(guild)
         if not category:
-            try:
-                category = await guild.create_category(VOICE_CATEGORY_NAME)
-                logger.info(f"Catégorie '{VOICE_CATEGORY_NAME}' créée.")
-            except Exception as e:
-                logger.error(f"Erreur création catégorie '{VOICE_CATEGORY_NAME}': {e}")
-                return
+            return
 
-        # Permissions
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(view_channel=False)
-        }
+        overwrites = {guild.default_role: discord.PermissionOverwrite(view_channel=False)}
         mem_ids = await MatchmakingService.get_team_members(team["code"])
         for mid in mem_ids:
             member = guild.get_member(mid)
@@ -489,7 +445,6 @@ class TeamManager(commands.Cog):
                 category=category,
                 overwrites=overwrites
             )
-            # update en BD
             await MatchmakingService.update_voice_channel_id(team["code"], vc.id)
             logger.info(f"Salon vocal '{vc.name}' créé pour l'équipe {team['code']}.")
 
@@ -499,11 +454,9 @@ class TeamManager(commands.Cog):
         except Exception as e:
             logger.error(f"Erreur création vocal pour l'équipe {team['code']}: {e}")
 
-    async def delete_team_resources(self, team: Dict):
+    async def delete_team_resources(self, team: Dict[str, Any]) -> None:
         """
-        Supprime le thread + le salon vocal associés à l'équipe.
-        (Ne supprime pas directement l'équipe en BD, 
-         c'est fait par delete_team(...) ci-dessus ou dans delete_all_teams().)
+        Supprime les ressources associées à une équipe (thread et salon vocal).
         """
         forum_channel = self.bot.get_channel(team["forum_channel_id"])
         if not forum_channel or not isinstance(forum_channel, discord.ForumChannel):
@@ -511,17 +464,14 @@ class TeamManager(commands.Cog):
             return
 
         guild = forum_channel.guild
-
-        # Thread
         thread = forum_channel.get_thread(team["thread_id"])
         if thread and not thread.archived:
             try:
                 await thread.delete(reason="Équipe dissoute (thread).")
                 logger.info(f"Thread équipe '{team['code']}' supprimé.")
             except Exception as e:
-                logger.error(f"Erreur supp thread team={team['code']}: {e}")
+                logger.error(f"Erreur suppression thread team={team['code']}: {e}")
 
-        # Salon vocal
         vc_id = team.get("voice_channel_id")
         if vc_id:
             vc = guild.get_channel(vc_id)
@@ -530,7 +480,7 @@ class TeamManager(commands.Cog):
                     await vc.delete(reason="Équipe dissoute (vocal).")
                     logger.info(f"Salon vocal '{vc.name}' supprimé.")
                 except Exception as e:
-                    logger.error(f"Erreur supp vocal team={team['code']}: {e}")
+                    logger.error(f"Erreur suppression vocal team={team['code']}: {e}")
 
     # ------------------------------------------------
     # Gestion des verrous (locks) par équipe
@@ -538,24 +488,20 @@ class TeamManager(commands.Cog):
 
     def get_team_lock(self, code: str) -> asyncio.Lock:
         """
-        Retourne le lock dédié à l'équipe <code>.
+        Retourne le lock dédié à l'équipe identifiée par le code.
         """
         if code not in self.team_locks:
             self.team_locks[code] = asyncio.Lock()
         return self.team_locks[code]
 
-    def remove_team_lock(self, code: str):
+    def remove_team_lock(self, code: str) -> None:
         """
-        Supprime le lock de l'équipe <code> si existant.
+        Supprime le lock associé à l'équipe identifiée par le code, s'il existe.
         """
         if code in self.team_locks:
             del self.team_locks[code]
 
 
-# ------------------------------------------------
-# Setup du cog
-# ------------------------------------------------
-
-async def setup(bot: commands.Bot):
+async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(TeamManager(bot))
     logger.info("TeamManager chargé.")

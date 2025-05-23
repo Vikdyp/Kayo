@@ -57,7 +57,7 @@ cog_paths = [
     'cogs.moderation.clean',
     'cogs.admin.admin',
     'cogs.moderation.moderation',
-    'cogs.file_counter.file_counter',
+    #'cogs.file_counter.file_counter',
     'cogs.accueil.accueil',
     'cogs.role_management.game_role',
     'cogs.ranking.assign_rank',
@@ -72,6 +72,15 @@ cog_paths = [
     'cogs.accueil.stalker',
     #'SQL_test', #TEST
     'cogs.reputation.reputation',
+    #'cogs.other.test',
+    'cogs.other.vocal_creator',
+    'cogs.scrims.scrims',
+    'cogs.other.rank_up',
+    #'cogs.other.invite_tracker',  ACTIVER SI EVENT EN COURS
+    #'cogs.other.event',           ACTIVER SI EVENT EN COURS
+    #'cogs.tournaments.tournament',
+    'cogs.admin.status',
+    'cogs.twitch.twitch_notifier',
 ]
 
 @bot.event

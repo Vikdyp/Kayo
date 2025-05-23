@@ -1,3 +1,4 @@
+#cogs\voice_management\services\five_stack_service.py
 import datetime
 import logging
 from typing import Optional, List, Tuple, Dict
@@ -672,5 +673,79 @@ class MatchmakingService:
         except Exception as e:
             logger.error(f"Erreur get_roles_for_discord_member {discord_id}: {e}")
             return None
+        
+    @classmethod
+    async def update_team_leader(cls, code: str, new_leader_id: int) -> bool:
+        """
+        Met à jour le leader de l'équipe (table 'teams').
+        Retourne True si une ligne a été mise à jour, False sinon.
+        """
+        query = """
+            UPDATE teams
+            SET leader_id=$1
+            WHERE code=$2
+        """
+        try:
+            result = await database.execute(query, new_leader_id, code)
+            # Souvent, asyncpg renvoie un string style "UPDATE 1" si 1 ligne mise à jour.
+            if result == "UPDATE 1":
+                logger.info(f"Leader mis à jour: {new_leader_id} pour équipe '{code}'.")
+                return True
+            else:
+                logger.warning(f"UPDATE leader échouée ou 0 lignes impactées (code='{code}').")
+                return False
+        except Exception as e:
+            logger.error(f"Erreur update_team_leader: {e}")
+            return False
 
+    @staticmethod
+    async def count_total_players_in_queue() -> int:
+        """
+        Compte le nombre total de joueurs en file :
+        - Si entry_type=1, on compte 1
+        - Sinon, on compte cardinality(team_member_ids)
+        """
+        query = """
+        SELECT COALESCE(SUM(
+            CASE WHEN entry_type = 1 THEN 1
+                 ELSE cardinality(team_member_ids)
+            END
+        ), 0)
+        FROM matchmaking_queue;
+        """
+        try:
+            return await database.fetchval(query) or 0
+        except Exception as e:
+            logger.error(f"Erreur count_total_players_in_queue: {e}")
+            return 0
+
+    @staticmethod
+    async def update_entry_team_size_any(entry_id: int) -> bool:
+        """
+        Passe team_size à 0 (any) pour une entrée donnée.
+        """
+        query = """
+        UPDATE matchmaking_queue
+        SET team_size = 0
+        WHERE id = $1;
+        """
+        try:
+            result = await database.execute(query, entry_id)
+            return result == "UPDATE 1"
+        except Exception as e:
+            logger.error(f"Erreur update_entry_team_size_any {entry_id}: {e}")
+            return False
+
+    @staticmethod
+    async def remove_entry(entry_id: int) -> bool:
+        """
+        Supprime l'entrée de matchmaking_queue par son ID.
+        """
+        query = "DELETE FROM matchmaking_queue WHERE id = $1;"
+        try:
+            result = await database.execute(query, entry_id)
+            return result.startswith("DELETE")
+        except Exception as e:
+            logger.error(f"Erreur remove_entry {entry_id}: {e}")
+            return False
     # Fin
