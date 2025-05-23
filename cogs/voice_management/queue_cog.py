@@ -80,7 +80,7 @@ class MatchmakingQueue(commands.Cog):
                         user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
                         await user.send(
                             "⏰ Votre inscription à la queue a été supprimée"
-                            "car vous étiez en attente depuis plus de 5 minutes."
+                            "car vous étiez en attente depuis plus de 10 minutes."
                         )
                     except:
                         logger.warning(f"Impossible de DM pour suppression stale: {user_id}")

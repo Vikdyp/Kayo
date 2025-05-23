@@ -79,4 +79,8 @@ LOGGING = {
     'scrims.services' : False,
     'scrims' : False,
 
+    # TWITCH
+    'twitch' : True,
+    'twitch.service' : True,
+
 }

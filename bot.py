@@ -80,6 +80,7 @@ cog_paths = [
     #'cogs.other.event',           ACTIVER SI EVENT EN COURS
     #'cogs.tournaments.tournament',
     'cogs.admin.status',
+    'cogs.twitch.twitch_notifier',
 ]
 
 @bot.event
