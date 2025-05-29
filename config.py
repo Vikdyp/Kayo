@@ -50,6 +50,9 @@ LOGGING = {
     'valorant_service' : False,
     'assign_rank' : False,
     'rank_service' : False,
+    'valorant_mmr' : True,
+    'tracker_service' : True,
+
 
     # REPUTATION
     'reputation' : True,

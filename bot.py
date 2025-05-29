@@ -81,6 +81,7 @@ cog_paths = [
     #'cogs.tournaments.tournament',
     'cogs.admin.status',
     'cogs.twitch.twitch_notifier',
+    'cogs.ranking.mmr_tracker',
 ]
 
 @bot.event
