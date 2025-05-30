@@ -24,7 +24,7 @@ from cogs.ranking.services.assign_rank_service import (
     update_last_notification         # nouvel import
 )
 from cogs.ranking.services.valorant_service import (
-    get_puuid, get_player_rank, RateLimitException
+    close_session, get_puuid, get_player_rank, RateLimitException
 )
 from cogs.moderation.services.moderation_service import ModerationService
 from utils.database import database
@@ -220,6 +220,7 @@ class EmbedCog(commands.Cog):
 
     def cog_unload(self):
         self.refresh_roles_cache_task.cancel()
+        self.bot.loop.create_task(close_session())
 
     async def reload_persistent_embed(self):
         await self.bot.wait_until_ready()
