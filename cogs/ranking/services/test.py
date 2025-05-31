@@ -3,6 +3,7 @@
 import sys
 import asyncio
 
+# Sur Windows, on force le SelectorEventLoop pour éviter l'erreur
 if sys.platform.startswith("win"):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
@@ -10,76 +11,66 @@ from valorant_service import (
     get_puuid,
     get_player_rank,
     get_stored_mmr_history,
-    get_mmr_history,
-    get_matchlists_by_puuid,    # ← nouveau
     close_session,
     RateLimitException
 )
 
 async def main(pseudo: str, tag: str):
     try:
-        # --- Récupération du PUUID ---
+        # 1) Récupération du PUUID
         result = await get_puuid(pseudo, tag)
         if not result:
-            print("Compte introuvable.")
+            print("Erreur : aucun compte trouvé ou réponse inattendue.")
             return
+
         nom_tag, region, puuid = result
         print(f"\nNom et tag : {nom_tag}\nRégion     : {region}\nPUUID      : {puuid}")
 
-        # --- Rang & Elo ---
+        # 2) Récupération du rang et de l'Elo
         rank_data = await get_player_rank(region, puuid)
         if rank_data:
             rank, elo = rank_data
             print(f"Rang : {rank}\nElo  : {elo}")
         else:
-            print("Rang introuvable pour ce joueur.")
+            print("Impossible de récupérer le rang pour ce joueur.")
 
-        # --- Historique stocké ou live ---
-        print("\n→ Historique MMR stocké…")
-        stored = await get_stored_mmr_history(region, puuid)
-        if stored:
-            print(f"{len(stored)} entrées stockées :")
-            for e in stored[-5:]:
-                date     = e.get("date","N/A")
-                old, new = e.get("oldmmr","N/A"), e.get("newmmr","N/A")
-                print(f"  • {date} : {old} → {new}")
-        else:
-            print("Aucun historique stocké, fallback sur live…")
-            recent = await get_mmr_history(region, puuid)
-            if recent:
-                print(f"{len(recent)} entrées récentes :")
-                for e in recent[-5:]:
-                    date     = e.get("date","N/A")
-                    old, new = e.get("oldMMR","N/A"), e.get("newMMR","N/A")
-                    print(f"  • {date} : {old} → {new}")
-            else:
-                print("Pas d'historique live non plus.")
+        # 3) Récupération de l'historique complet de MMR
+        print("\n→ Chargement de l'historique complet de MMR...")
+        history = await get_stored_mmr_history(region, puuid)
 
-        # --- Nouvelle fonction : liste de matchs brute ---
-        print("\n→ Liste brute des matchs (raw matchlists)…")
-        matches = await get_matchlists_by_puuid(puuid)
-        if matches is None:
-            print("Erreur lors de la récupération des matchlists.")
-        elif not matches:
-            print("Aucun matchlist trouvé via raw endpoint.")
+        if not history:
+            print("Aucun historique MMR stocké trouvé pour ce joueur.")
         else:
-            print(f"{len(matches)} matchs trouvés :")
-            # Affiche les 5 premiers
-            for m in matches[:5]:
-                game_id = m.get("gameId") or m.get("matchId") or "N/A"
-                ts      = m.get("gameStartTime") or m.get("gameStartTimeMillis") or "N/A"
-                print(f"  • {game_id} démarré à {ts}")
+            print(f"{len(history)} entrées d'historique récupérées :")
+            # Affiche par exemple les 5 dernières entrées
+            for entry in history[-5:]:
+                date = entry.get("date", "N/A")
+                mmr_before = entry.get("oldmmr", "N/A")
+                mmr_after  = entry.get("newmmr", "N/A")
+                print(f"  • {date} → {mmr_before} ➞ {mmr_after}")
 
     except RateLimitException as e:
-        print("Erreur 429, trop de requêtes :", e)
+        print("Erreur de limitation de taux (429) :", e)
     except Exception as e:
-        print("Erreur inattendue :", e)
+        print("Une erreur est survenue :", e)
     finally:
+        # 4) Fermeture propre de la session partagée
         await close_session()
 
 if __name__ == "__main__":
-    full = input("Entrez le pseudo#tag : ").strip()
-    if "#" not in full:
-        print("Format invalide, il faut un '#'."); sys.exit(1)
-    pseudo, tag = (p.strip() for p in full.split("#", 1))
+    # Lecture de "pseudo#tag" en une seule saisie
+    full_tag = input("Entrez le pseudo#tag : ").strip()
+
+    if "#" not in full_tag:
+        print("Format invalide : utilisez le caractère '#' pour séparer le pseudo et le tag.")
+        sys.exit(1)
+
+    pseudo, tag = full_tag.split("#", 1)
+    pseudo = pseudo.strip()
+    tag    = tag.strip()
+
+    if not pseudo or not tag:
+        print("Pseudo ou tag manquant après le '#'.")
+        sys.exit(1)
+
     asyncio.run(main(pseudo, tag))

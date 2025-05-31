@@ -2,6 +2,9 @@ import io
 import logging
 import re
 from datetime import datetime, date, timedelta
+from matplotlib.collections import LineCollection
+from matplotlib.patches import PathPatch
+from matplotlib.path import Path
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import discord
@@ -9,6 +12,8 @@ from discord import File
 from discord.ext import commands, tasks
 from discord import app_commands
 from typing import List, Optional
+
+import numpy as np
 
 from cogs.ranking.services.mmr_tracker_service import ValorantService
 
@@ -140,26 +145,87 @@ class MMRTracker(commands.Cog):
         last_diff = diffs[-1][1]
 
         # 4) Génération du graphique
-        dates = [row["recorded_at"] for row in history if not start_date or row["recorded_at"].date() >= start_date]
-        elos  = [row["elo"]         for row in history if not start_date or row["recorded_at"].date() >= start_date]
+        dates_plot = [row["recorded_at"] for row in history if not start_date or row["recorded_at"].date() >= start_date]
+        elos_plot  = [row["elo"]         for row in history if not start_date or row["recorded_at"].date() >= start_date]
 
+        # Conversion pour Matplotlib
+        mpl_dates = mdates.date2num(dates_plot)
+
+        # Choix du fill dégradé global (vert si dernier > premier, rouge sinon)
+        cmap_fill = 'Greens' if elos_plot[-1] > elos_plot[0] else 'Reds'
+
+        # Préparation des segments colorés (vert/rouge selon progression locale)
+        points   = np.array([mpl_dates, elos_plot]).T.reshape(-1, 1, 2)
+        segments = np.concatenate([points[:-1], points[1:]], axis=1)
+        seg_colors = [
+            'green' if elos_plot[i+1] > elos_plot[i] else 'red'
+            for i in range(len(elos_plot)-1)
+        ]
+
+        # Création du plot
         buf = io.BytesIO()
-        plt.figure()
-        plt.plot(dates, elos)
+        plt.style.use('dark_background')
+        fig, ax = plt.subplots(figsize=(10, 4), dpi=150)
+
+        #  — Dégradé clipé sous la courbe —
+        ymin = min(elos_plot) - 10
+        gradient = np.linspace(1, 0, 256).reshape(256, 1)  # opaque→transparent
+        im = ax.imshow(
+            gradient,
+            extent=[mpl_dates.min(), mpl_dates.max(), ymin, max(elos_plot)],
+            origin='lower',
+            cmap=plt.get_cmap(cmap_fill),
+            alpha=0.5,
+            aspect='auto',
+            zorder=1
+        )
+        poly = np.vstack([
+            [mpl_dates[0], ymin],
+            np.column_stack([mpl_dates, elos_plot]),
+            [mpl_dates[-1], ymin],
+            [mpl_dates[0], ymin]
+        ])
+        im.set_clip_path(PathPatch(Path(poly), transform=ax.transData))
+
+        #  — Segments colorés —
+        lc = LineCollection(segments, colors=seg_colors, linewidths=2.5, zorder=3)
+        ax.add_collection(lc)
+
+        #  — Glow « maison » sous chaque segment —
+        for seg, col in zip(segments, seg_colors):
+            ax.plot(seg[:,0], seg[:,1],
+                    linewidth=8,
+                    solid_capstyle='round',
+                    color=col,
+                    alpha=0.2,
+                    zorder=2)
+
+        #  — Axes et formatage des dates —
         fmt = '%H:%M' if period != 'all' else '%Y-%m-%d'
-        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter(fmt))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter(fmt))
+        ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+
+        #  — Pas de grille verticale —
+        ax.grid(False)
+        ax.xaxis.grid(False)
+
+        #  — Titres et labels —
         title = {
             'today': "Aujourd'hui",
             'all':   "Total"
         }.get(period, f"Episode {season_num} • Act {act_num}")
-        plt.title(f"Évolution MMR ({title})")
-        xlabel = "Heure" if period != 'all' else "Date"
-        plt.xlabel(xlabel)
-        plt.ylabel("ELO")
+        ax.set_title(f"Évolution MMR ({title})", fontsize=14, fontweight='bold')
+        ax.set_xlabel("Heure" if period != 'all' else "Date", fontsize=12)
+        ax.set_ylabel("ELO", fontsize=12)
+
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.set_ylim(ymin, max(elos_plot) + 10)
+
         plt.tight_layout()
         plt.savefig(buf, format="png")
         buf.seek(0)
-        plt.close()
+        plt.close(fig)
 
         # 5) Construction et envoi de l'embed
         embed = discord.Embed(
