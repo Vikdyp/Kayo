@@ -42,42 +42,54 @@ class MMRTracker(commands.Cog):
         rows = await ValorantService.get_tracked_players()
         today = date.today()
 
+        # Si on commence une nouvelle journée, on réinitialise le flag pour recalculer
+        if not hasattr(self, "_partition_date") or self._partition_date != today:
+            self._partition_date = None
+
+        partition_season = None
+        partition_act    = None
+
         for r in rows:
             user_id     = r["user_id"]
             current_elo = r["elo"]
             if current_elo is None:
                 continue
 
-            # 1) On récupère le dernier elo historisé
+            # 1) Récupérer le dernier elo historisé
             last = await ValorantService.get_last_history_row(user_id)
             prev_elo = last["elo"] if last else None
 
-            # 2) Si l'elo n'a pas bougé, on skip
+            # 2) Si l'ELO n'a pas bougé, on passe au joueur suivant
             if prev_elo is not None and current_elo == prev_elo:
                 continue
 
-            # 3) Premier changement de la journée → on fetch l'API et on met en cache
-            if not hasattr(self, "_partition_date") or self._partition_date != today:
-                self.current_season, self.current_act = await ValorantService.fetch_current_partition()
+            # 3) Premier changement d'ELO de la journée → on calcule la partition pour CE user
+            if self._partition_date is None:
+                logger.info(f"[check_loop] Avant fetch_current_partition → user_id={user_id}")
+                season, act = await ValorantService.fetch_current_partition(user_id)
+                logger.info(f"[check_loop] Après fetch_current_partition → user_id={user_id}, season={season}, act={act}, today={today}")
+                partition_season = season
+                partition_act    = act
+                # On marque qu’on a déjà récupéré la partition aujourd’hui
                 self._partition_date = today
 
-            # 4) Calcul du delta et du flag win/loss
+            # 4) Calcul du delta et flag win/loss
             rr     = 0 if prev_elo is None else (current_elo - prev_elo)
             is_win = rr >= 0
 
-            # 5) Construction de l'entry avec la partition en cache
+            # 5) Construction de l'entrée avec la partition en cache
             entry = {
                 "date":    datetime.utcnow().isoformat() + "Z",
                 "elo":     current_elo,
                 "rr":      rr,
-                "season":  {"short": f"e{self.current_season}a{self.current_act}"}
+                "season":  {"short": f"e{partition_season}a{partition_act}"}
             }
 
             # 6) Insertion idempotente dans la bonne partition
             await ValorantService.insert_history_entry(user_id, entry)
 
     @app_commands.command(name="mmr_track", description="Gérer le suivi MMR : activer, désactiver ou afficher les stats.")
-    @app_commands.describe(action="Action à effectuer", periode="Partition ou période à afficher")
+    @app_commands.describe(periode="Période à afficher (today, week, all, ou episode/act)")
     @app_commands.choices(action=ACTION_CHOICES)
     async def mmr_track(
         self,
@@ -109,6 +121,8 @@ class MMRTracker(commands.Cog):
 
         if period == "today":
             start_date = date.today()
+        elif period == "week":
+            start_date = date.today() - timedelta(days=7)
         elif period == "all":
             start_date = None
         else:
@@ -201,9 +215,16 @@ class MMRTracker(commands.Cog):
                     zorder=2)
 
         #  — Axes et formatage des dates —
-        fmt = '%H:%M' if period != 'all' else '%Y-%m-%d'
+        if period == 'today':
+            fmt = '%H:%M'
+            xlabel = "Heure"
+        else:
+            fmt = '%Y-%m-%d'
+            xlabel = "Date"
         ax.xaxis.set_major_formatter(mdates.DateFormatter(fmt))
         ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+        ax.set_xlabel(xlabel, fontsize=12)
+
 
         #  — Pas de grille verticale —
         ax.grid(False)
@@ -212,6 +233,7 @@ class MMRTracker(commands.Cog):
         #  — Titres et labels —
         title = {
             'today': "Aujourd'hui",
+            'week': "7 derniers jours",
             'all':   "Total"
         }.get(period, f"Episode {season_num} • Act {act_num}")
         ax.set_title(f"Évolution MMR ({title})", fontsize=14, fontweight='bold')
@@ -251,6 +273,7 @@ class MMRTracker(commands.Cog):
     ) -> List[app_commands.Choice[str]]:
         choices: List[app_commands.Choice[str]] = [
             app_commands.Choice(name="Aujourd'hui", value="today"),
+            app_commands.Choice(name="7 derniers jours", value="week"),
             app_commands.Choice(name="Total",       value="all"),
         ]
         parts = await ValorantService.get_partitions(interaction.user.id)

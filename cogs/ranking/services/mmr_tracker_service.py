@@ -1,7 +1,6 @@
 import re
 from datetime import datetime
 import logging
-
 from asyncpg import Record
 from utils.database import database
 from datetime import date
@@ -342,47 +341,49 @@ class ValorantService:
         return [(r["season"], r["act"]) for r in rows]
     
     @staticmethod
-    async def fetch_current_partition() -> Tuple[int, int]:
-        import re
-        from cogs.ranking.services.valorant_service import get_mmr_history
-        from utils.database import database
-
-        # a) Choisir un joueur tracké au hasard (ou le premier)
+    async def fetch_current_partition(user_id: int) -> Tuple[int, int]:
+        """
+        Récupère la partition (season, act) du joueur donné (user_id) via l’API,
+        afin de garantir qu’il vient bien de jouer.
+        """
+        # a) On récupère le region + puuid pour CE user_id
         row = await database.fetchrow(
-            "SELECT region, puuid FROM valorant_info WHERE tracking_enabled = TRUE LIMIT 1"
+            "SELECT region, puuid FROM valorant_info WHERE user_id = $1 AND tracking_enabled = TRUE",
+            user_id
         )
         if not row or not row["puuid"]:
-            # fallback sur la dernière partition connue en base
+            # fallback sur la dernière partition en base
             row = await database.fetchrow("""
                 SELECT season, act
-                  FROM valorant_elo_history_parent
-                 GROUP BY season, act
-                 ORDER BY season DESC, act DESC
-                 LIMIT 1
+                FROM valorant_elo_history_parent
+                GROUP BY season, act
+                ORDER BY season DESC, act DESC
+                LIMIT 1
             """)
             return row["season"], row["act"]
 
         region, puuid = row["region"], row["puuid"]
 
-        # b) Appel à l'API pour n'avoir QUE le dernier historique (v2)
+        # b) Appel API pour récupérer l’historique MMR
         history = await get_mmr_history(region, puuid)
         if not history:
-            # même fallback si l’API ne renvoie rien
+            # fallback si l’API ne renvoie rien
             row = await database.fetchrow("""
                 SELECT season, act
-                  FROM valorant_elo_history_parent
-                 GROUP BY season, act
-                 ORDER BY season DESC, act DESC
-                 LIMIT 1
+                FROM valorant_elo_history_parent
+                GROUP BY season, act
+                ORDER BY season DESC, act DESC
+                LIMIT 1
             """)
             return row["season"], row["act"]
 
-        # c) On parse "season.short" (ex. "e10a3")
+        # c) Parser "season.short" (ex. "e10a3")
         short = history[0]["season"]["short"]
         m = re.match(r"e(\d+)a(\d+)", short, re.I)
         if not m:
-            raise ValueError(f"Impossible de parser season.short='{short}'")
-        return map(int, m.groups())
+            raise ValueError(f"Impossible de parser season.short='{short}' pour user_id={user_id}")
+        season_num, act_num = map(int, m.groups())
+        return season_num, act_num
 
     @staticmethod
     async def get_last_history_row(user_id: int) -> Optional[Record]:
