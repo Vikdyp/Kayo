@@ -30,24 +30,27 @@ class MMRTracker(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+
+        # Initialisation des attributs liés à la partition Valorant
+        self._partition_date   = None  # date pour laquelle la partition a déjà été récupérée
+        self._partition_season = None  # saison récupérée pour la date en cours
+        self._partition_act    = None  # act récupéré pour la date en cours
+
         self.check_loop.start()
 
     def cog_unload(self):
         self.check_loop.cancel()
-
-    from datetime import date, datetime
 
     @tasks.loop(minutes=5)
     async def check_loop(self):
         rows = await ValorantService.get_tracked_players()
         today = date.today()
 
-        # Si on commence une nouvelle journée, on réinitialise le flag pour recalculer
-        if not hasattr(self, "_partition_date") or self._partition_date != today:
-            self._partition_date = None
-
-        partition_season = None
-        partition_act    = None
+        # Si on commence une nouvelle journée, on réinitialise le flag ET les valeurs de saison/act
+        if self._partition_date is None or self._partition_date != today:
+            self._partition_date   = None
+            self._partition_season = None
+            self._partition_act    = None
 
         for r in rows:
             user_id     = r["user_id"]
@@ -55,7 +58,7 @@ class MMRTracker(commands.Cog):
             if current_elo is None:
                 continue
 
-            # 1) Récupérer le dernier elo historisé
+            # 1) Récupérer le dernier ELO historisé
             last = await ValorantService.get_last_history_row(user_id)
             prev_elo = last["elo"] if last else None
 
@@ -63,17 +66,17 @@ class MMRTracker(commands.Cog):
             if prev_elo is not None and current_elo == prev_elo:
                 continue
 
-            # 3) Premier changement d'ELO de la journée → on calcule la partition pour CE user
+            # 3) Premier changement d'ELO de la journée → on calcule (et stocke) la partition
             if self._partition_date is None:
-                logger.info(f"[check_loop] Avant fetch_current_partition → user_id={user_id}")
+                logger.info(f"[check_loop] Avant fetch_current_partition → user_id={user_id}  today={today}")
                 season, act = await ValorantService.fetch_current_partition(user_id)
                 logger.info(f"[check_loop] Après fetch_current_partition → user_id={user_id}, season={season}, act={act}, today={today}")
-                partition_season = season
-                partition_act    = act
-                # On marque qu’on a déjà récupéré la partition aujourd’hui
-                self._partition_date = today
 
-            # 4) Calcul du delta et flag win/loss
+                self._partition_date   = today
+                self._partition_season = season
+                self._partition_act    = act
+
+            # 4) Calcul du delta (RR) et détermination win/loss
             rr     = 0 if prev_elo is None else (current_elo - prev_elo)
             is_win = rr >= 0
 
@@ -82,7 +85,7 @@ class MMRTracker(commands.Cog):
                 "date":    datetime.utcnow().isoformat() + "Z",
                 "elo":     current_elo,
                 "rr":      rr,
-                "season":  {"short": f"e{partition_season}a{partition_act}"}
+                "season":  {"short": f"e{self._partition_season}a{self._partition_act}"}
             }
 
             # 6) Insertion idempotente dans la bonne partition
@@ -224,7 +227,6 @@ class MMRTracker(commands.Cog):
         ax.xaxis.set_major_formatter(mdates.DateFormatter(fmt))
         ax.xaxis.set_major_locator(mdates.AutoDateLocator())
         ax.set_xlabel(xlabel, fontsize=12)
-
 
         #  — Pas de grille verticale —
         ax.grid(False)
