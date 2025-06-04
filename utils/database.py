@@ -27,7 +27,7 @@ class Database:
         self.retry_delay = 5
 
         # ID de salon Discord utilisé pour envoyer les logs en cas d'échec de reconnexion.
-        self.log_channel_id = 12458882356040213480  # faux ID pour ne pas recevoir de message
+        self.log_channel_id = 1245888235604021348  # faux ID pour ne pas recevoir de message
 
         # Gestion des vérifications de connexion
         self._last_connection_check = 0       # Timestamp de la dernière vérification
