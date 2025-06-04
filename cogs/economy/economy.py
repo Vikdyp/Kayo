@@ -8,8 +8,8 @@ from datetime import datetime, timedelta, time
 import asyncio
 import random
 
-from cogs.utilities.data_manager import DataManager
-from cogs.utilities.request_manager import enqueue_request
+from cogs.economy.data_manager import DataManager
+from utils.request_manager import enqueue_request
 
 logger = logging.getLogger("discord.economy")
 
