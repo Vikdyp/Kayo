@@ -1,5 +1,5 @@
 #cogs\accueil\services\accueil_services.py
-from datetime import date, datetime
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 from utils.database import database
@@ -282,14 +282,14 @@ async def get_period_stats(guild_id: int, days: Optional[int]) -> dict:
         record = await database.fetchrow(query, server_id)
     else:
         # sur X jours
-        query = f"""
+        query = """
             SELECT COALESCE(SUM(join_count), 0) AS join_count,
                    COALESCE(SUM(leave_count), 0) AS leave_count
             FROM member_daily_stats
             WHERE guild_id = $1
-              AND date >= (CURRENT_DATE - {days})
+              AND date >= (CURRENT_DATE - $2::integer)
         """
-        record = await database.fetchrow(query, server_id)
+        record = await database.fetchrow(query, server_id, days)
 
     if not record:
         return {"join_count": 0, "leave_count": 0, "join_leave_ratio": 0}
