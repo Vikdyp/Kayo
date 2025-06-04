@@ -170,8 +170,9 @@ class Clean(commands.Cog):
 
                 async def confirmation_callback(value: Optional[bool]):
                     if value:
-                        deleted_messages = await channel.purge(limit=count)
-                        deleted_count = len(deleted_messages)  # Obtenir le nombre de messages supprimés
+                        deleted_count = await CleanService.delete_last_messages(
+                            channel, count, interaction.user
+                        )
                         await interaction.followup.send(
                             f"{deleted_count} derniers messages supprimés dans {channel.mention}.",
                             ephemeral=True
