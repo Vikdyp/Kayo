@@ -10,22 +10,28 @@ from utils.database import database
 from cogs.other.online_count_updater import setup_rank_updater, teardown_rank_updater, rank_updater
 
 def configure_logging():
-    """Configure le niveau de logging pour chaque module."""
+    """Configure le niveau et le format des logs pour l'ensemble du projet."""
+
+    logs_dir = "logs"
+    os.makedirs(logs_dir, exist_ok=True)
+    log_file = os.path.join(logs_dir, "bot.log")
+
     # Supprimer les handlers par défaut
     for handler in logging.root.handlers[:]:
         logging.root.removeHandler(handler)
+
     # Configurer chaque logger
     for logger_name, is_enabled in LOGGING.items():
         logger = logging.getLogger(logger_name)
-        if is_enabled:
-            logger.setLevel(logging.DEBUG)
-        else:
-            logger.setLevel(logging.CRITICAL)
+        logger.setLevel(logging.DEBUG if is_enabled else logging.CRITICAL)
+
+    formatter = logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    )
 
     # Ajout d'un FileHandler global
-    file_handler = logging.FileHandler('bot.log', encoding='utf-8')
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
     file_handler.setLevel(logging.DEBUG)
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     file_handler.setFormatter(formatter)
     logging.getLogger().addHandler(file_handler)
 
