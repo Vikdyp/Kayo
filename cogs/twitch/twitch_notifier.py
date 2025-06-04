@@ -216,7 +216,6 @@ class TwitchNotifier(commands.Cog):
 
                         # Champs d’infos
                         embed.add_field(name="📺 Catégorie", value=game_name, inline=True)
-                        embed.add_field(name="👀 Viewers",  value=str(viewers), inline=True)
                         followers = follower_counts.get(name, 0)
                         embed.add_field(name="👥 Followers", value=abbreviate_number(followers), inline=True)
 

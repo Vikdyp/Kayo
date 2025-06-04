@@ -57,6 +57,31 @@ class CleanService:
             raise
 
     @staticmethod
+    async def delete_last_messages(channel: discord.TextChannel, count: int, deleted_by: discord.Member) -> int:
+        """Supprime un nombre spécifique de messages et enregistre l'action."""
+        try:
+            deleted = await channel.purge(limit=count)
+            logger.info(
+                f"{len(deleted)} messages supprimés dans {channel.name} par {deleted_by} (dernier {count})."
+            )
+
+            await database.log_message_deletion(
+                deleted_by=deleted_by.id,
+                channel=channel.name,
+                guild=channel.guild.name,
+                deletion_type="number",
+                target_user=None,
+                message_count=len(deleted),
+            )
+            return len(deleted)
+        except discord.Forbidden:
+            logger.error(f"Permissions insuffisantes pour supprimer les messages dans {channel.name}.")
+            raise
+        except discord.HTTPException as e:
+            logger.error(f"Erreur HTTP lors de la suppression des messages dans {channel.name}: {e}")
+            raise
+
+    @staticmethod
     async def delete_messages_after(channel: discord.TextChannel, message_id: int, deleted_by: discord.Member) -> int:
         """Supprime les messages après un message spécifique et enregistre l'action."""
         try:

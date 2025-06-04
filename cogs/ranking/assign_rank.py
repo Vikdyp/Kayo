@@ -24,7 +24,7 @@ from cogs.ranking.services.assign_rank_service import (
     update_last_notification         # nouvel import
 )
 from cogs.ranking.services.valorant_service import (
-    get_puuid, get_player_rank, RateLimitException
+    close_session, get_puuid, get_player_rank, RateLimitException
 )
 from cogs.moderation.services.moderation_service import ModerationService
 from utils.database import database
@@ -36,8 +36,6 @@ try:
     from zoneinfo import ZoneInfo  # Python 3.9+
 except ImportError:
     import pytz
-
-from utils.request_manager import enqueue_button_request, enqueue_request
 
 logger = logging.getLogger("assign_rank")
 
@@ -176,7 +174,6 @@ class EmbedButtonsView(discord.ui.View):
         style=discord.ButtonStyle.primary,
         custom_id="button:pseudo_tag"
     )
-    @enqueue_button_request("FAST")
     async def pseudo_tag_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         modal = PseudoTagModal(interaction.user, self.cog)
         if not interaction.response.is_done():
@@ -187,7 +184,6 @@ class EmbedButtonsView(discord.ui.View):
         style=discord.ButtonStyle.danger,
         custom_id="button:delete_valo_data"
     )
-    @enqueue_button_request("PASSIVE")
     async def delete_valo_data_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
@@ -224,6 +220,7 @@ class EmbedCog(commands.Cog):
 
     def cog_unload(self):
         self.refresh_roles_cache_task.cancel()
+        self.bot.loop.create_task(close_session())
 
     async def reload_persistent_embed(self):
         await self.bot.wait_until_ready()

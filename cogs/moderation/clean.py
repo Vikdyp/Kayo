@@ -7,7 +7,6 @@ import logging
 from typing import Any, Callable, Optional
 import re
 
-from utils.request_manager import enqueue_request
 from utils.confirmation_view import ConfirmationView
 from cogs.moderation.services.clean_service import CleanService
 from utils.database import database
@@ -87,7 +86,6 @@ class Clean(commands.Cog):
     )
     @app_commands.choices(action=ACTION_CHOICES)
     @is_admin()
-    @enqueue_request("URGENT")
     @app_commands.default_permissions(administrator=True)
     async def clean_execute(
         self,
@@ -117,6 +115,7 @@ class Clean(commands.Cog):
             return await interaction.followup.send("Cette commande doit être utilisée dans un salon texte.", ephemeral=True)
 
         try:
+            await interaction.response.defer(thinking=True)
             # Initialisation de confirmation_callback par défaut
             confirmation_callback = None
 
@@ -171,8 +170,9 @@ class Clean(commands.Cog):
 
                 async def confirmation_callback(value: Optional[bool]):
                     if value:
-                        deleted_messages = await channel.purge(limit=count)
-                        deleted_count = len(deleted_messages)  # Obtenir le nombre de messages supprimés
+                        deleted_count = await CleanService.delete_last_messages(
+                            channel, count, interaction.user
+                        )
                         await interaction.followup.send(
                             f"{deleted_count} derniers messages supprimés dans {channel.mention}.",
                             ephemeral=True
@@ -269,11 +269,38 @@ class Clean(commands.Cog):
 
             elif action.value in ["image", "gif", "links"]:
                 if action.value == "image":
-                    condition = lambda m: any(a.url.lower().endswith(("jpg", "jpeg", "png")) for a in m.attachments)
+                    condition = lambda m: any(
+                        a.filename.lower().endswith((
+                            "jpg",
+                            "jpeg",
+                            "png",
+                            "bmp",
+                            "webp",
+                            "tiff",
+                        ))
+                        for a in m.attachments
+                    )
                 elif action.value == "gif":
                     condition = lambda m: any(a.url.lower().endswith("gif") for a in m.attachments) or "gif" in m.content.lower()
                 elif action.value == "links":
                     condition = lambda m: re.search(r"http[s]?://", m.content)
+
+                deleted_count = await CleanService.delete_messages_with_condition(
+                    channel,
+                    condition,
+                    interaction.user,
+                )
+
+                desc_map = {
+                    "image": "images",
+                    "gif": "GIFs",
+                    "links": "liens",
+                }
+                desc = desc_map.get(action.value, "messages")
+                await interaction.followup.send(
+                    f"{deleted_count} messages contenant des {desc} ont été supprimés dans {channel.mention}.",
+                    ephemeral=True,
+                )
 
         except Exception as e:
             logger.exception(f"Erreur lors de l'exécution de la commande de nettoyage : {e}")

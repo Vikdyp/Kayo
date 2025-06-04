@@ -9,7 +9,72 @@ from cogs.voice_management.services.five_stack_service import MatchmakingService
 logger = logging.getLogger(__name__)
 
 
-class TeamForumJoinButtonView(discord.ui.View):
+class BaseLeaveTeamView(discord.ui.View):
+    """Base view providing the logic to leave a team."""
+
+    EMPTY_TEAM_MESSAGE: str = (
+        "Vous avez quitté l'équipe. Elle est vide et va être supprimée."
+    )
+
+    def __init__(self, cog: Any, code: str) -> None:
+        super().__init__(timeout=None)
+        self.cog = cog
+        self.code = code
+
+    async def handle_leave_team(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+
+        team = await MatchmakingService.get_team(self.code)
+        if not team:
+            await interaction.followup.send(
+                content="Équipe introuvable ou expirée.",
+                ephemeral=True,
+            )
+            return
+
+        success = await MatchmakingService.remove_member_from_team(
+            self.code, interaction.user.id
+        )
+        if not success:
+            await interaction.followup.send(
+                content="Erreur lors de la tentative de quitter l'équipe.",
+                ephemeral=True,
+            )
+            return
+
+        members = await MatchmakingService.get_team_members(self.code)
+
+        if team.get("leader_id") == interaction.user.id:
+            if members:
+                new_leader_id = members[0]
+                await MatchmakingService.update_team_leader(self.code, new_leader_id)
+                logger.info(
+                    f"Transfert du lead de {interaction.user.id} vers {new_leader_id} pour l'équipe {self.code}."
+                )
+            else:
+                logger.info("Le leader quitte et l'équipe est vide => suppression imminente.")
+
+        if not members:
+            logger.info(
+                f"L'équipe '{self.code}' est vide. Suppression des ressources et de la BDD."
+            )
+            await interaction.followup.send(
+                content=self.EMPTY_TEAM_MESSAGE,
+                ephemeral=True,
+            )
+            team_data = await MatchmakingService.get_team(self.code)
+            if team_data:
+                await self.cog.delete_team_resources(team_data)
+                await MatchmakingService.delete_team(self.code)
+        else:
+            await self.cog.update_team_thread(self.code)
+            await interaction.followup.send(
+                content="Vous avez quitté l'équipe.",
+                ephemeral=True,
+            )
+
+
+class TeamForumJoinButtonView(BaseLeaveTeamView):
     """
     Vue placée dans le post forum pour les équipes publiques.
     
@@ -17,10 +82,12 @@ class TeamForumJoinButtonView(discord.ui.View):
       - "Rejoindre l'équipe" : permet à l'utilisateur de rejoindre l'équipe.
       - "Quitter l'équipe" : permet de quitter l'équipe.
     """
+    EMPTY_TEAM_MESSAGE = (
+        "Vous avez quitté l'équipe. L'équipe est désormais vide et va être supprimée."
+    )
+
     def __init__(self, cog: Any, code: str) -> None:
-        super().__init__(timeout=None)
-        self.cog = cog       # Référence au Cog (TeamManager)
-        self.code = code     # Code unique de l'équipe
+        super().__init__(cog, code)
 
         # Bouton "Rejoindre l'équipe"
         join_button = discord.ui.Button(
@@ -120,75 +187,18 @@ class TeamForumJoinButtonView(discord.ui.View):
             await self.cog.create_voice_channel_and_invite(team)
 
     async def leave_team_button_callback(self, interaction: discord.Interaction) -> None:
-        """
-        Callback pour quitter l'équipe depuis une vue publique.
-        
-        Retire le membre de l'équipe, met à jour le thread, et si l'équipe devient vide,
-        supprime les ressources associées et la base de données.
-        Si le membre qui quitte est le leader, transfère le leadership au premier membre restant.
-        """
-        await interaction.response.defer(ephemeral=True)
-
-        # Récupérer l'équipe avant de procéder
-        team = await MatchmakingService.get_team(self.code)
-        if not team:
-            await interaction.followup.send(
-                content="Équipe introuvable ou expirée.",
-                ephemeral=True
-            )
-            return
-
-        # Retirer le membre
-        success = await MatchmakingService.remove_member_from_team(self.code, interaction.user.id)
-        if success:
-            # Récupérer la liste actualisée des membres
-            members = await MatchmakingService.get_team_members(self.code)
-
-            # Si le membre quittant est le leader, transférer le leadership
-            if team.get("leader_id") == interaction.user.id:
-                if members:
-                    new_leader_id = members[0]  # Choix arbitraire : le premier membre restant
-                    await MatchmakingService.update_team_leader(self.code, new_leader_id)
-                    logger.info(
-                        f"Transfert du lead de {interaction.user.id} vers {new_leader_id} pour l'équipe {self.code}."
-                    )
-                else:
-                    logger.info(f"Le leader quitte et l'équipe est vide => suppression imminente.")
-
-            if not members:
-                # Si l'équipe devient vide, supprimer les ressources et la BDD
-                logger.info(f"L'équipe '{self.code}' est vide. Suppression des ressources et de la BDD.")
-                await interaction.followup.send(
-                    content="Vous avez quitté l'équipe. L'équipe est désormais vide et va être supprimée.",
-                    ephemeral=True
-                )
-                team_data = await MatchmakingService.get_team(self.code)
-                if team_data:
-                    await self.cog.delete_team_resources(team_data)
-                    await MatchmakingService.delete_team(self.code)
-            else:
-                await self.cog.update_team_thread(self.code)
-                await interaction.followup.send(
-                    content="Vous avez quitté l'équipe.",
-                    ephemeral=True
-                )
-        else:
-            await interaction.followup.send(
-                content="Erreur lors de la tentative de quitter l'équipe.",
-                ephemeral=True
-            )
+        """Callback pour quitter l'équipe depuis une vue publique."""
+        await self.handle_leave_team(interaction)
 
 
-class TeamForumPrivateView(discord.ui.View):
+class TeamForumPrivateView(BaseLeaveTeamView):
     """
     Vue pour un post forum d'équipe privée.
     
     Ne contient qu'un seul bouton permettant de quitter l'équipe.
     """
     def __init__(self, cog: Any, code: str) -> None:
-        super().__init__(timeout=None)
-        self.cog = cog
-        self.code = code
+        super().__init__(cog, code)
 
         leave_button = discord.ui.Button(
             label="Quitter l'équipe",
@@ -199,58 +209,5 @@ class TeamForumPrivateView(discord.ui.View):
         self.add_item(leave_button)
 
     async def leave_team_button_callback(self, interaction: discord.Interaction) -> None:
-        """
-        Callback pour quitter l'équipe depuis une vue privée.
-        
-        Retire le membre, met à jour le thread, et si l'équipe devient vide,
-        supprime les ressources et l'enregistrement en base.
-        Transfère le leadership si le membre quittant est le leader.
-        """
-        await interaction.response.defer(ephemeral=True)
-
-        # Récupérer l'équipe
-        team = await MatchmakingService.get_team(self.code)
-        if not team:
-            await interaction.followup.send(
-                content="Équipe introuvable ou expirée.",
-                ephemeral=True
-            )
-            return
-
-        # Retirer le membre
-        success = await MatchmakingService.remove_member_from_team(self.code, interaction.user.id)
-        if success:
-            members = await MatchmakingService.get_team_members(self.code)
-
-            # Si le membre quittant est le leader, transférer le leadership
-            if team.get("leader_id") == interaction.user.id:
-                if members:
-                    new_leader_id = members[0]
-                    await MatchmakingService.update_team_leader(self.code, new_leader_id)
-                    logger.info(
-                        f"Transfert du lead de {interaction.user.id} vers {new_leader_id} pour l'équipe {self.code}."
-                    )
-                else:
-                    logger.info(f"Le leader quitte et l'équipe est vide => suppression imminente.")
-
-            if not members:
-                logger.info(f"L'équipe '{self.code}' est vide => suppression.")
-                await interaction.followup.send(
-                    content="Vous avez quitté l'équipe. Elle est vide et va être supprimée.",
-                    ephemeral=True
-                )
-                team_data = await MatchmakingService.get_team(self.code)
-                if team_data:
-                    await self.cog.delete_team_resources(team_data)
-                    await MatchmakingService.delete_team(self.code)
-            else:
-                await self.cog.update_team_thread(self.code)
-                await interaction.followup.send(
-                    content="Vous avez quitté l'équipe.",
-                    ephemeral=True
-                )
-        else:
-            await interaction.followup.send(
-                content="Erreur lors de la tentative de quitter l'équipe.",
-                ephemeral=True
-            )
+        """Callback pour quitter l'équipe depuis une vue privée."""
+        await self.handle_leave_team(interaction)

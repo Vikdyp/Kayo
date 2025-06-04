@@ -27,7 +27,7 @@ class Database:
         self.retry_delay = 5
 
         # ID de salon Discord utilisé pour envoyer les logs en cas d'échec de reconnexion.
-        self.log_channel_id = 12458882356040213480  # faux ID pour ne pas recevoir de message
+        self.log_channel_id = 1245888235604021348  # faux ID pour ne pas recevoir de message
 
         # Gestion des vérifications de connexion
         self._last_connection_check = 0       # Timestamp de la dernière vérification
@@ -131,8 +131,8 @@ class Database:
 
     async def send_logs_to_channel(self):
         """
-        Envoie le fichier de logs (bot.log) dans le channel Discord défini,
-        afin de pouvoir diagnostiquer l'erreur de connexion.
+        Envoie le fichier de logs ``logs/bot.log`` dans le channel Discord
+        défini afin de pouvoir diagnostiquer l'erreur de connexion.
         """
         if not self.bot:
             logger.error("Impossible d'envoyer les logs : bot non défini dans database.")
@@ -143,16 +143,17 @@ class Database:
             logger.error(f"Salon introuvable pour l'ID {self.log_channel_id}.")
             return
 
-        if os.path.exists('bot.log'):
+        log_path = os.path.join('logs', 'bot.log')
+        if os.path.exists(log_path):
             try:
                 await channel.send(
                     content="Échec de la reconnexion à la base de données. Voici les logs complets :",
-                    file=discord.File('bot.log')
+                    file=discord.File(log_path)
                 )
             except Exception as send_err:
                 logger.error(f"Échec de l'envoi du fichier dans le salon : {send_err}")
         else:
-            logger.error("Le fichier de logs 'bot.log' est introuvable, impossible d'envoyer les logs.")
+            logger.error("Le fichier de logs 'logs/bot.log' est introuvable, impossible d'envoyer les logs.")
 
     async def execute(self, query: str, *args):
         """
