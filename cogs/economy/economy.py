@@ -5,32 +5,12 @@ from discord import app_commands
 import logging
 from typing import Dict, Any, List
 from datetime import datetime, timedelta, time
-import asyncio
 import random
 
 from cogs.utilities.data_manager import DataManager
-from cogs.utilities.request_manager import enqueue_request
 
 logger = logging.getLogger("discord.economy")
 
-class RequestManager:
-    def __init__(self):
-        pass
-
-    async def handle_request(self, interaction: Any, priority: str):
-        if priority == "low":
-            await asyncio.sleep(1)
-
-request_manager = RequestManager()
-
-def with_request_priority():
-    def decorator(func):
-        async def wrapper(self, interaction: Any, *args, **kwargs):
-            priority = "high" if interaction.user.guild_permissions.administrator else "low"
-            await request_manager.handle_request(interaction, priority)
-            return await func(self, interaction, *args, **kwargs)
-        return wrapper
-    return decorator
 
 class BuyItemView(discord.ui.View):
     def __init__(self, cog, items: List[Dict[str, Any]]):
@@ -48,8 +28,7 @@ class BuyButton(discord.ui.Button):
 
     async def callback(self, interaction: Any):
         item = self.cog.daily_shop_items[self.item_index]
-        economy_data = await self.cog.data.get_economy_data()
-        user_id = str(interaction.user.id)
+        economy_data = await self.cog.data.get_economy_data        user_id = str(interaction.user.id)
         user_info = economy_data.setdefault(user_id, {"balance":0, "last_claim":None, "items":[]})
         if user_info["balance"] < item["price"]:
             await interaction.response.send_message("Vous n'avez pas assez de pièces pour acheter cet item.", ephemeral=True)
@@ -135,8 +114,8 @@ class Economy(commands.Cog):
 economy_parent = app_commands.Group(name="economy", description="Commandes liées à l'économie")
 
 @economy_parent.command(name="daily", description="Récupérer votre somme journalière")
-@enqueue_request()
 async def daily(interaction: Any):
+    await interaction.response.defer(thinking=True)
     cog: Economy = interaction.client.get_cog("Economy")
     economy_data = await cog.data.get_economy_data()
     user_id = str(interaction.user.id)
@@ -147,7 +126,7 @@ async def daily(interaction: Any):
     if last_claim_str:
         last_claim = datetime.fromisoformat(last_claim_str)
         if last_claim.date() == now.date():
-            await interaction.response.send_message("Vous avez déjà récupéré votre argent quotidien aujourd'hui. Revenez demain !", ephemeral=True)
+            await interaction.followup.send("Vous avez déjà récupéré votre argent quotidien aujourd'hui. Revenez demain !", ephemeral=True)
             return
 
     base_amount = 100
@@ -167,11 +146,11 @@ async def daily(interaction: Any):
     user_info["balance"] += base_amount
     user_info["last_claim"] = now.isoformat()
     await cog.data.save_economy_data(economy_data)
-    await interaction.response.send_message(f"Vous avez reçu {base_amount} pièces aujourd'hui !", ephemeral=True)
+    await interaction.followup.send(f"Vous avez reçu {base_amount} pièces aujourd'hui !", ephemeral=True)
 
 @economy_parent.command(name="shop", description="Affiche la boutique du jour")
-@enqueue_request()
 async def shop(interaction: Any):
+    await interaction.response.defer(thinking=True)
     cog: Economy = interaction.client.get_cog("Economy")
     if not cog.daily_shop_items:
         await cog.refresh_shop()
@@ -181,14 +160,14 @@ async def shop(interaction: Any):
         embed.add_field(name=item["name"], value=f"Prix: {item['price']} pièces", inline=False)
 
     view = BuyItemView(cog, cog.daily_shop_items)
-    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+    await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 @economy_parent.command(name="trade", description="Échange d'items entre joueurs")
-@enqueue_request()
 @app_commands.describe(user="Joueur avec qui échanger", item_name="Nom de l'item à échanger")
 async def trade(interaction: Any, user: discord.Member, item_name: str):
+    await interaction.response.defer(thinking=True)
     if user == interaction.user:
-        await interaction.response.send_message("Vous ne pouvez pas échanger avec vous-même.", ephemeral=True)
+        await interaction.followup.send("Vous ne pouvez pas échanger avec vous-même.", ephemeral=True)
         return
 
     cog: Economy = interaction.client.get_cog("Economy")
@@ -196,19 +175,19 @@ async def trade(interaction: Any, user: discord.Member, item_name: str):
     proposer_id = str(interaction.user.id)
     proposer_info = economy_data.setdefault(proposer_id, {"balance":0, "last_claim":None, "items":[]})
     if item_name not in proposer_info["items"]:
-        await interaction.response.send_message("Vous n'avez pas cet item dans votre inventaire.", ephemeral=True)
+        await interaction.followup.send("Vous n'avez pas cet item dans votre inventaire.", ephemeral=True)
         return
 
     view = TradeView(cog, interaction.user, user, item_name)
-    await interaction.response.send_message(
+    await interaction.followup.send(
         f"{interaction.user.mention} propose d'échanger `{item_name}` à {user.mention}. Confirmez les deux pour finaliser.",
         view=view,
         ephemeral=True
     )
 
 @economy_parent.command(name="inventaire", description="Affiche l'inventaire du joueur")
-@enqueue_request()
 async def inventaire(interaction: Any):
+    await interaction.response.defer(thinking=True)
     cog: Economy = interaction.client.get_cog("Economy")
     economy_data = await cog.data.get_economy_data()
     user_id = str(interaction.user.id)
@@ -223,7 +202,7 @@ async def inventaire(interaction: Any):
     else:
         embed.add_field(name="Items", value="Aucun item", inline=False)
 
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Economy(bot))

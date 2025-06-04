@@ -6,7 +6,6 @@ from discord import app_commands
 import logging
 from typing import Dict, Optional
 
-from utils.request_manager import enqueue_request
 from utils.confirmation_view import ConfirmationView
 # On importe le nouveau service combiné
 from cogs.configuration.services.channel_service import ServerChannelService
@@ -62,17 +61,17 @@ class ChannelsConfiguration(commands.Cog):
         channel="Salon Discord (nécessaire pour 'set')"
     )
     @app_commands.choices(action=ACTION_CHOICES, salon_action=SALON_ACTION_CHOICES)
-    @enqueue_request("URGENT")
     @app_commands.default_permissions(administrator=True)
     async def channels_execute(
-        self, 
-        interaction: discord.Interaction, 
-        action: app_commands.Choice[str], 
+        self,
+        interaction: discord.Interaction,
+        action: app_commands.Choice[str],
         salon_action: Optional[app_commands.Choice[str]] = None,
         channel: Optional[discord.TextChannel] = None
     ):
         """Exécute une action de configuration de salon en fonction de l'option spécifiée."""
         try:
+            await interaction.response.defer(thinking=True)
             logger.debug(f"Execution de channels_execute avec action={action.value}, salon_action={salon_action}, channel={channel}")
 
             if not interaction.guild:

@@ -6,7 +6,6 @@ import logging
 from bot import cog_paths
 
 from utils.database import database
-from utils.request_manager import enqueue_request
 
 logger = logging.getLogger('admin')
 
@@ -17,11 +16,11 @@ class AdminSync(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="dbstatus", description="Affiche l'état actuel du pool de connexions à la base de données.")
-    @enqueue_request("URGENT")
     @app_commands.default_permissions(administrator=True)  # Restreindre aux administrateurs
     async def db_status(self, interaction: discord.Interaction):
         """Affiche l'état actuel du pool de connexions à la base de données."""
         try:
+            await interaction.response.defer(thinking=True)
             if database.pool is None:
                 status = "🔴 **Pool de connexions est fermé.**"
                 await interaction.followup.send(status, ephemeral=True)

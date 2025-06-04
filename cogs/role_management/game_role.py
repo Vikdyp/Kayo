@@ -9,7 +9,6 @@ from cogs.role_management.services.game_role_service import (
 )
 import logging
 
-from utils.request_manager import enqueue_button_request, enqueue_request
 
 logger = logging.getLogger("roles.roles")
 
@@ -19,27 +18,22 @@ class RolesView(discord.ui.View):
         self.cog = cog
 
     @discord.ui.button(label="Initiator", style=discord.ButtonStyle.primary, custom_id="role_button:initiator")
-    @enqueue_button_request("FAST")
     async def initiator_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_role_selection(interaction, "initiator")
 
     @discord.ui.button(label="Controller", style=discord.ButtonStyle.primary, custom_id="role_button:controller")
-    @enqueue_button_request("FAST")
     async def controller_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_role_selection(interaction, "controller")
 
     @discord.ui.button(label="Duelist", style=discord.ButtonStyle.primary, custom_id="role_button:duelist")
-    @enqueue_button_request("FAST")
     async def duelist_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_role_selection(interaction, "duelist")
 
     @discord.ui.button(label="Sentinel", style=discord.ButtonStyle.primary, custom_id="role_button:sentinel")
-    @enqueue_button_request("FAST")
     async def sentinel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_role_selection(interaction, "sentinel")
 
     @discord.ui.button(label="Fill", style=discord.ButtonStyle.primary, custom_id="role_button:fill")
-    @enqueue_button_request("FAST")
     async def fill_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_role_selection(interaction, "fill")
 
