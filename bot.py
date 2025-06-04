@@ -64,7 +64,7 @@ cog_paths = [
     'cogs.rules.rules',
     'cogs.moderation.unban_requests',
     'cogs.troll.quoicoubeh',
-    'cogs.role_management.auto_role',
+    # 'cogs.role_management.auto_role',
     # 'cogs.role_management.language_role',
     'cogs.voice_management.queue_cog',
     'cogs.voice_management.team_cog',

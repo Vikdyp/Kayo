@@ -9,7 +9,6 @@ from typing import Optional
 
 from cogs.moderation.services.moderation_service import ModerationService
 from utils.confirmation_view import ConfirmationView
-from utils.request_manager import enqueue_request
 
 logger = logging.getLogger("moderation")
 
@@ -56,7 +55,7 @@ class Moderation(commands.Cog):
             app_commands.Choice(name="Vérifier le statut", value="check_status")
         ]
     )
-    @enqueue_request("URGENT")
+
     @app_commands.default_permissions(administrator=True)
     async def moderation_execute(
         self,
@@ -68,6 +67,8 @@ class Moderation(commands.Cog):
     ):
         """Exécute une action de modération en fonction de l'option spécifiée."""
         
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
         if not await self.ensure_moderator_permissions(interaction):
             return
 

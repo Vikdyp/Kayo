@@ -10,7 +10,7 @@ class VoiceManagement(commands.Cog):
         self.bot = bot
         # ID de la catégorie à surveiller pour la suppression des salons vocaux vides
         self.category_id: int = 1323077627413794847
-        # ID du salon AFK à exclure de la suppression
+        # ID du salon AFK à exclure de la suppression 
         self.afk_channel_id: int = 123456789012345678
         # Démarrage de la tâche de vérification des salons vocaux vides
         self.check_empty_voice_channels.start()
