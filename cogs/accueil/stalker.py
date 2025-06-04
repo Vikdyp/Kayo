@@ -5,9 +5,8 @@ import logging
 import io
 from matplotlib import ticker
 import matplotlib.pyplot as plt
-from datetime import timedelta, date, datetime, time
+from datetime import datetime, time
 from zoneinfo import ZoneInfo
-import asyncio
 
 from cogs.accueil.services import accueil_services
 
@@ -62,7 +61,6 @@ class StalkerCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.channel_id = 1236437099310219336
-        self.leave_thread_name = "Notifications départs"
         self.persistent_message = None
 
         # Tâche de mise à jour quotidienne
@@ -248,30 +246,15 @@ class StalkerCog(commands.Cog):
         except Exception as e:
             logger.error(f"Erreur lors de la mise à jour de l'embed : {e}")
 
-    @tasks.loop()
+    @tasks.loop(time=time(hour=0, tzinfo=ZoneInfo("Europe/Paris")))
     async def daily_update(self):
-        """
-        Mise à jour quotidienne de l'embed à 00h00 (heure de Paris).
-        """
-        while True:
+        """Met à jour l'embed de statistiques chaque jour à minuit."""
+        for guild in self.bot.guilds:
             try:
-                paris_tz = ZoneInfo("Europe/Paris")
-                now = datetime.now(paris_tz)
-                logger.debug(f"Heure actuelle à Paris: {now}")
-
-                next_midnight = datetime.combine(now.date() + timedelta(days=1), time.min, tzinfo=paris_tz)
-                delta_seconds = (next_midnight - now).total_seconds()
-                logger.debug(f"Délai jusqu'au prochain minuit: {delta_seconds} secondes")
-                await asyncio.sleep(delta_seconds)
-
-                for guild in self.bot.guilds:
-                    # Pour la mise à jour quotidienne, on garde la "période défaut" = 30 jours
-                    await self.update_stats_embed(guild, period="default")
-
-                logger.info("Mise à jour quotidienne de l'embed effectuée.")
+                await self.update_stats_embed(guild, period="default")
             except Exception as e:
-                logger.error(f"Erreur dans la tâche quotidienne: {e}")
-                await asyncio.sleep(60)
+                logger.error(f"Erreur lors de la mise à jour quotidienne pour {guild.id}: {e}")
+        logger.info("Mise à jour quotidienne de l'embed effectuée.")
 
     @daily_update.before_loop
     async def before_daily_update(self):
