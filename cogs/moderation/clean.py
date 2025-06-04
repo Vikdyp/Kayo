@@ -269,11 +269,38 @@ class Clean(commands.Cog):
 
             elif action.value in ["image", "gif", "links"]:
                 if action.value == "image":
-                    condition = lambda m: any(a.url.lower().endswith(("jpg", "jpeg", "png")) for a in m.attachments)
+                    condition = lambda m: any(
+                        a.filename.lower().endswith((
+                            "jpg",
+                            "jpeg",
+                            "png",
+                            "bmp",
+                            "webp",
+                            "tiff",
+                        ))
+                        for a in m.attachments
+                    )
                 elif action.value == "gif":
                     condition = lambda m: any(a.url.lower().endswith("gif") for a in m.attachments) or "gif" in m.content.lower()
                 elif action.value == "links":
                     condition = lambda m: re.search(r"http[s]?://", m.content)
+
+                deleted_count = await CleanService.delete_messages_with_condition(
+                    channel,
+                    condition,
+                    interaction.user,
+                )
+
+                desc_map = {
+                    "image": "images",
+                    "gif": "GIFs",
+                    "links": "liens",
+                }
+                desc = desc_map.get(action.value, "messages")
+                await interaction.followup.send(
+                    f"{deleted_count} messages contenant des {desc} ont été supprimés dans {channel.mention}.",
+                    ephemeral=True,
+                )
 
         except Exception as e:
             logger.exception(f"Erreur lors de l'exécution de la commande de nettoyage : {e}")
