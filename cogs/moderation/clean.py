@@ -275,6 +275,23 @@ class Clean(commands.Cog):
                 elif action.value == "links":
                     condition = lambda m: re.search(r"http[s]?://", m.content)
 
+                deleted_count = await CleanService.delete_messages_with_condition(
+                    channel,
+                    condition,
+                    interaction.user,
+                )
+
+                desc_map = {
+                    "image": "images",
+                    "gif": "GIFs",
+                    "links": "liens",
+                }
+                desc = desc_map.get(action.value, "messages")
+                await interaction.followup.send(
+                    f"{deleted_count} messages contenant des {desc} ont été supprimés dans {channel.mention}.",
+                    ephemeral=True,
+                )
+
         except Exception as e:
             logger.exception(f"Erreur lors de l'exécution de la commande de nettoyage : {e}")
             await interaction.followup.send("Une erreur est survenue.", ephemeral=True)
