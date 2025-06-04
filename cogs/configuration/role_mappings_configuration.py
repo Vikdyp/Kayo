@@ -6,7 +6,6 @@ from discord import app_commands
 import logging
 from typing import Optional, List
 
-from utils.request_manager import enqueue_request
 from cogs.configuration.services.role_service import ServerRoleService
 
 logger = logging.getLogger('roles_configuration')
@@ -41,7 +40,6 @@ class RolesConfiguration(commands.Cog):
             app_commands.Choice(name="Supprimer un rôle", value="remove")
         ]
     )
-    @enqueue_request("URGENT")
     @app_commands.default_permissions(administrator=True)
     async def roles_execute(
         self,
@@ -54,6 +52,7 @@ class RolesConfiguration(commands.Cog):
         /roles action:<get|set|remove> role_name:<str> role:<@role>
         """
         try:
+            await interaction.response.defer(thinking=True)
             # Vérification: commande utilisée dans un serveur ?
             if not interaction.guild:
                 await interaction.followup.send(

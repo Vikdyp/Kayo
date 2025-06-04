@@ -7,7 +7,6 @@ import logging
 from typing import Any, Callable, Optional
 import re
 
-from utils.request_manager import enqueue_request
 from utils.confirmation_view import ConfirmationView
 from cogs.moderation.services.clean_service import CleanService
 from utils.database import database
@@ -87,7 +86,6 @@ class Clean(commands.Cog):
     )
     @app_commands.choices(action=ACTION_CHOICES)
     @is_admin()
-    @enqueue_request("URGENT")
     @app_commands.default_permissions(administrator=True)
     async def clean_execute(
         self,
@@ -117,6 +115,7 @@ class Clean(commands.Cog):
             return await interaction.followup.send("Cette commande doit être utilisée dans un salon texte.", ephemeral=True)
 
         try:
+            await interaction.response.defer(thinking=True)
             # Initialisation de confirmation_callback par défaut
             confirmation_callback = None
 

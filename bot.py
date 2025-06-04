@@ -7,7 +7,6 @@ import asyncio
 import os
 from config import DISCORD_TOKEN, TEST_GUILD_ID, LOGGING, TEST_MODE
 from utils.database import database
-from utils.request_manager import setup_request_manager, teardown_request_manager
 from cogs.other.online_count_updater import setup_rank_updater, teardown_rank_updater, rank_updater
 
 def configure_logging():
@@ -90,8 +89,6 @@ async def on_ready():
 
     await database.connect()
     database.set_bot_reference(bot)
-    setup_request_manager(bot)
-    logger.info("RequestManager démarré.")
 
     if not clean_old_logs.is_running():
         clean_old_logs.start()
@@ -160,7 +157,6 @@ async def main():
         logger.exception(f"Erreur inattendue: {e}")
     finally:
         await database.disconnect()
-        teardown_request_manager()
         logger.info("Bot arrêté proprement.")
 
 if __name__ == '__main__':

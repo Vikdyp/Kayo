@@ -9,7 +9,6 @@ from datetime import datetime
 
 from cogs.moderation.services.moderation_service import ModerationService
 from utils.database import database
-from utils.request_manager import enqueue_button_request
 
 logger = logging.getLogger("deban_manager")
 
@@ -24,7 +23,6 @@ class DebanManagerView(View):
         self.cog = cog
 
     @discord.ui.button(label="Demander un Déban", style=discord.ButtonStyle.primary, custom_id="deban_manager:open_form")
-    @enqueue_button_request("URGENT")
     async def open_form_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.open_deban_request_modal(interaction)
 
@@ -61,12 +59,10 @@ class DebanRequestActionView(View):
         self.channel_id = channel_id
 
     @discord.ui.button(label="Accepter", style=discord.ButtonStyle.success, custom_id="deban_request:accept")
-    @enqueue_button_request("URGENT")
     async def accept_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.process_accept(interaction, self.user_id, self.requester_id)
 
     @discord.ui.button(label="Refuser", style=discord.ButtonStyle.danger, custom_id="deban_request:reject")
-    @enqueue_button_request("URGENT")
     async def reject_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.process_reject(interaction, self.user_id, self.requester_id)
 
@@ -385,6 +381,7 @@ class DebanManager(commands.Cog):
 
     async def process_reject(self, interaction: discord.Interaction, user_id: int, requester_internal_id: int):
         """Processus de refus de la demande de débannissement."""
+        await interaction.response.defer(ephemeral=True, thinking=True)
         # Vérifier si l'utilisateur a les permissions nécessaires
         if not interaction.user.guild_permissions.ban_members:
             await interaction.followup.send("Vous n'avez pas les permissions nécessaires pour effectuer cette action.", ephemeral=True)

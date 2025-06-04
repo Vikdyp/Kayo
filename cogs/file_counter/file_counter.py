@@ -3,8 +3,6 @@ from discord.ext import commands
 import logging
 from typing import Optional
 from cogs.file_counter.services.file_counter_service import FileCounterService
-from utils.request_manager import enqueue_button_request, enqueue_request
-# from utils.request_manager import enqueue_request  # Tu peux le réutiliser si besoin
 
 logger = logging.getLogger("cogs.file_counter")
 
@@ -18,7 +16,6 @@ class CounterView(discord.ui.View):
         self.terminer_count = terminer_count
 
     @discord.ui.button(label="Ajouter", style=discord.ButtonStyle.green, custom_id="file_counter:ajouter")
-    @enqueue_button_request("FAST")
     async def ajouter_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         # Vérifier que l'Interaction vient du bon serveur
         if interaction.guild is None:
@@ -30,6 +27,7 @@ class CounterView(discord.ui.View):
         # Sinon, on pourrait aussi stocker l'ID discord brut et vérifier.
         # Pour simplifier, on omet la vérification.
 
+        await interaction.response.defer(thinking=True)
         updated = await FileCounterService.update_counts(self.server_db_id, self.channel_id, ajouter=True)
         if updated:
             self.ajouter_count = updated['ajouter_count']
@@ -39,12 +37,12 @@ class CounterView(discord.ui.View):
             await interaction.response.send_message("Erreur lors de la mise à jour du compteur.", ephemeral=True)
 
     @discord.ui.button(label="Terminer", style=discord.ButtonStyle.blurple, custom_id="file_counter:terminer")
-    @enqueue_button_request("FAST")
     async def terminer_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.guild is None:
             await interaction.response.send_message("Cette interaction ne peut être utilisée que sur un serveur.", ephemeral=True)
             return
 
+        await interaction.response.defer(thinking=True)
         updated = await FileCounterService.update_counts(self.server_db_id, self.channel_id, terminer=True)
         if updated:
             self.ajouter_count = updated['ajouter_count']
@@ -79,7 +77,6 @@ class CounterView(discord.ui.View):
 
             message = await channel.fetch_message(self.message_id)
             await message.edit(embed=embed, view=self)
-            await interaction.response.defer()
             logger.debug(f"Embed mis à jour pour le message ID {self.message_id}.")
         except discord.NotFound:
             await interaction.response.send_message("Le message n'a pas été trouvé.", ephemeral=True)
