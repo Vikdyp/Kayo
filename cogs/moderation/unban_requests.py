@@ -8,13 +8,13 @@ from typing import Optional, Dict, List
 from datetime import datetime
 
 from cogs.moderation.services.moderation_service import ModerationService
+from cogs.configuration.services.channel_service import ServerChannelService
+from cogs.configuration.services.role_service import ServerRoleService
 from utils.database import database
 
 logger = logging.getLogger("deban_manager")
 
-# IDs requis
-CATEGORY_ID = 1136367092870942842
-SPECIFIC_ROLE_ID = 1236375048252817418
+# Identifiants configurables
 
 # Vue pour l'embed principal de demande de débannissement
 class DebanManagerView(View):
@@ -191,18 +191,27 @@ class DebanManager(commands.Cog):
 
         # Créer le salon spécifique pour cette demande
         try:
-            category = guild.get_channel(CATEGORY_ID)
+            category_id = await ServerChannelService.get_channel_for_action(guild.id, guild.name, "deban_category")
+            category = guild.get_channel(category_id) if category_id else None
             if not category or not isinstance(category, discord.CategoryChannel):
-                await interaction.followup.send("Catégorie spécifiée introuvable. Veuillez contacter un administrateur.", ephemeral=True)
+                await interaction.followup.send(
+                    "Catégorie spécifiée introuvable. Veuillez contacter un administrateur.",
+                    ephemeral=True
+                )
                 return
+
+            role_id = await ServerRoleService.get_role_for_action(guild.id, guild.name, "deban_role")
+            deban_role = guild.get_role(role_id) if role_id else None
 
             # Définir les permissions spécifiques pour ce salon
             overwrites = {
                 guild.default_role: discord.PermissionOverwrite(read_messages=False),
                 guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True),
-                guild.get_role(SPECIFIC_ROLE_ID): discord.PermissionOverwrite(read_messages=True, send_messages=True),
+                deban_role: discord.PermissionOverwrite(read_messages=True, send_messages=True) if deban_role else None,
                 user: discord.PermissionOverwrite(read_messages=True, send_messages=True)  # Permission pour l'utilisateur demandeur
             }
+            # Nettoyer les clés None
+            overwrites = {k: v for k, v in overwrites.items() if k}
 
             # Créer le salon
             request_channel = await guild.create_text_channel(

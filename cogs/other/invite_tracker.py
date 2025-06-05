@@ -2,7 +2,9 @@ import discord
 from discord.ext import commands
 import asyncpg
 from utils.database import database  # Vérifie que le chemin est correct
+from cogs.configuration.services.channel_service import ServerChannelService
 import logging
+from typing import Dict
 
 logger = logging.getLogger("invite_tracker")
 
@@ -11,8 +13,8 @@ class InviteTrackerCog(commands.Cog):
         self.bot = bot
         # Cache des invitations par serveur : {guild.id: [invite, ...]}
         self.invites = {}
-        # Salon de log où envoyer les messages (ID à remplacer par ton salon)
-        self.log_channel_id = 1330360063566807132
+        # Salon de log par guilde
+        self.log_channel_ids: Dict[int, int] = {}
 
     async def init_invites(self):
         """Charge les invitations pour chaque serveur du bot."""
@@ -27,6 +29,10 @@ class InviteTrackerCog(commands.Cog):
     async def on_ready(self):
         # Au démarrage du bot, on charge le cache des invitations pour chaque serveur.
         await self.init_invites()
+        for guild in self.bot.guilds:
+            chan = await ServerChannelService.get_channel_for_action(guild.id, guild.name, "invite_log_channel")
+            if chan:
+                self.log_channel_ids[guild.id] = chan
         logger.info("Cache des invitations initialisé pour chaque serveur.")
 
     @commands.Cog.listener()
@@ -35,6 +41,9 @@ class InviteTrackerCog(commands.Cog):
         try:
             self.invites[guild.id] = await guild.invites()
             logger.info(f"Invitations chargées pour le serveur {guild.name}")
+            chan = await ServerChannelService.get_channel_for_action(guild.id, guild.name, "invite_log_channel")
+            if chan:
+                self.log_channel_ids[guild.id] = chan
         except Exception as e:
             logger.error(f"Erreur lors de la récupération des invitations pour {guild.name} : {e}")
 
@@ -128,7 +137,7 @@ class InviteTrackerCog(commands.Cog):
             await self.set_member_inviter(member.id, inviter.id)
 
             # Log
-            log_channel = self.bot.get_channel(self.log_channel_id)
+            log_channel = self.bot.get_channel(self.log_channel_ids.get(guild.id))
             if log_channel:
                 count = await self.get_invite_count(inviter.id)
                 await log_channel.send(
@@ -146,7 +155,7 @@ class InviteTrackerCog(commands.Cog):
         inviter_id = await self.get_member_inviter(member.id)
         if inviter_id:
             await self.decrement_invite_count(inviter_id)
-            log_channel = self.bot.get_channel(self.log_channel_id)
+            log_channel = self.bot.get_channel(self.log_channel_ids.get(guild.id))
             if log_channel:
                 count = await self.get_invite_count(inviter_id)
                 inviter = guild.get_member(inviter_id)

@@ -6,8 +6,8 @@ import random  # Pour choisir une réponse aléatoire
 import asyncio
 import time  # Pour obtenir l'horodatage actuel
 from utils.database import database  # On suppose que ce module fournit execute() et fetch() pour interagir avec la BDD
+from cogs.configuration.services.role_service import ServerRoleService
 
-TOP3_ROLE_ID = 1236427596128976906  # ID du rôle top 3
 
 class QuoiResponder(commands.Cog):
     """Cog pour répondre automatiquement aux messages se terminant par 'quoi'
@@ -123,7 +123,8 @@ class QuoiResponder(commands.Cog):
 
             # Mise à jour du rôle top 3 dans la guilde
             guild = interaction.guild
-            top3_role = guild.get_role(TOP3_ROLE_ID)
+            role_id = await ServerRoleService.get_role_for_action(guild.id, guild.name, "top3_role")
+            top3_role = guild.get_role(role_id) if role_id else None
             if top3_role is not None:
                 # Pour chaque membre possédant le rôle mais qui n'est plus dans le top 3, le retirer
                 for member in top3_role.members:
