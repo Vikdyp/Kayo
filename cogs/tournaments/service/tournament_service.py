@@ -1,7 +1,9 @@
 import logging
 from datetime import datetime
 from typing import Optional
+import discord
 from utils.database import database  # Module d'accès à la BDD
+from cogs.configuration.services.channel_service import ServerChannelService
 
 logger = logging.getLogger("tournament.service")
 
@@ -83,12 +85,11 @@ async def register_team(tournament_id: int, team_info: dict) -> Optional[int]:
         logger.error(f"Erreur lors de l'enregistrement de l'équipe: {e}")
         return None
 
-async def create_forum_post(tournament_id: int, team_info: dict) -> None:
-    """
-    Crée un post dans le forum avec les informations de l'équipe (sans Discord IDs ni pseudos Valorant).
-    Le forum ID est fixé à 1236736105106116668.
-    """
-    forum_channel_id = 1236736105106116668
+async def create_forum_post(bot, guild: discord.Guild, team_info: dict) -> None:
+    """Crée un post dans le forum configuré pour les équipes."""
+    forum_channel_id = await ServerChannelService.get_channel_for_action(
+        guild.id, guild.name, "teams_forum_id"
+    )
     content = f"**Équipe:** {team_info['team_name']}\n"
     content += "**Joueurs:**\n"
     for i in range(1, 6):
@@ -101,11 +102,7 @@ async def create_forum_post(tournament_id: int, team_info: dict) -> None:
         content += "**Coach:** en attente\n"
     
     try:
-        # La méthode pour obtenir le channel dépend de votre configuration.
-        # Assurez-vous d'avoir accès à l'objet bot via votre environnement.
-        from discord.ext import commands
-        bot = commands.Bot(command_prefix="!")
-        channel = bot.get_channel(forum_channel_id)
+        channel = bot.get_channel(forum_channel_id) if forum_channel_id else None
         if channel:
             await channel.send(content)
             logger.info("Post créé dans le forum.")

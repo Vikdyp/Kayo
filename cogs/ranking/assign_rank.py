@@ -131,7 +131,7 @@ class PseudoTagModal(discord.ui.Modal, title="Renseignez votre Pseudo et Tag Val
                     "Ce pseudo et tag Valorant sont déjà utilisés par un autre utilisateur.",
                     ephemeral=True
                 )
-                await self.cog.notify_duplicate_pseudo_tag(existing_user, self.user, pseudo, tag)
+                await self.cog.notify_duplicate_pseudo_tag(interaction.guild, existing_user, self.user, pseudo, tag)
                 return
 
         exists = await user_exists_in_db(interaction.user.id)
@@ -318,11 +318,15 @@ class EmbedCog(commands.Cog):
             logger.error(f"Erreur lors de l'envoi de l'embed : {e}")
             await ctx.send("Une erreur est survenue lors de l'envoi de l'embed.", delete_after=10)
 
-    async def notify_duplicate_pseudo_tag(self, existing_user: discord.User, current_user: discord.User, pseudo: str, tag: str):
-        channel_id = 1315770052431188069  # Remplacez par l'ID du salon désiré
-        channel = self.bot.get_channel(channel_id)
+    async def notify_duplicate_pseudo_tag(self, guild: discord.Guild, existing_user: discord.User, current_user: discord.User, pseudo: str, tag: str):
+        channel_id = await ServerChannelService.get_channel_for_action(
+            guild.id,
+            guild.name,
+            "duplicate_pseudo_channel"
+        )
+        channel = self.bot.get_channel(channel_id) if channel_id else None
         if not channel:
-            logger.error(f"Salon avec l'ID {channel_id} introuvable.")
+            logger.error("Salon pour doublons non configuré ou introuvable.")
             return
 
         embed = discord.Embed(

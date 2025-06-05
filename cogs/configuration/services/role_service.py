@@ -113,3 +113,22 @@ class ServerRoleService:
         except Exception as e:
             logger.error(f"[ServerRoleService] Erreur lors de la suppression du rôle '{role_name}' (guild_id={guild_id}): {e}")
             return False
+
+    @staticmethod
+    async def get_role_for_action(guild_id: int, guild_name: str, role_name: str):
+        """Récupère le role_id configuré pour un rôle spécifique."""
+        try:
+            server_db_id = await ServerRoleService.get_or_create_server_record(guild_id, guild_name)
+            if not server_db_id:
+                return None
+
+            query = """
+            SELECT role_id
+              FROM roles_configurations
+             WHERE server_id = $1 AND role_name = $2
+             LIMIT 1;
+            """
+            return await database.fetchval(query, server_db_id, role_name)
+        except Exception as e:
+            logger.error(f"[ServerRoleService] Erreur get_role_for_action: {e}")
+            return None

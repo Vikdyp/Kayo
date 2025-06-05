@@ -3,6 +3,7 @@ from discord.ext import commands
 import logging
 from typing import Optional
 from cogs.file_counter.services.file_counter_service import FileCounterService
+from cogs.configuration.services.channel_service import ServerChannelService
 
 logger = logging.getLogger("cogs.file_counter")
 
@@ -90,7 +91,7 @@ class FileCounterCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.channel_id = 1136359641899614408  # Remplace par l'ID de ton salon
+        self.channel_id: Optional[int] = None
         self.server_db_id: Optional[int] = None  # ID interne (table serveur_id)
         logger.info("FileCounterCog initialisé.")
 
@@ -103,15 +104,20 @@ class FileCounterCog(commands.Cog):
         """Initialisation lors du démarrage du bot."""
         logger.debug("FileCounterCog en cours d'initialisation.")
 
-        # Récupérer le salon
+        # Déterminer le salon configuré
+        if not self.bot.guilds:
+            logger.error("Aucune guilde disponible pour FileCounterCog.")
+            return
+
+        guild = self.bot.guilds[0]
+        self.channel_id = await ServerChannelService.get_channel_for_action(guild.id, guild.name, "file_counter_channel")
+        if not self.channel_id:
+            logger.error("Configuration 'file_counter_channel' manquante.")
+            return
+
         channel = self.bot.get_channel(self.channel_id)
         if not channel:
             logger.error(f"Salon avec l'ID {self.channel_id} introuvable.")
-            return
-
-        guild = channel.guild
-        if not guild:
-            logger.error("Impossible de récupérer la guilde à partir de ce salon.")
             return
 
         # 1) On convertit le guild.id Discord → server_db_id
@@ -166,7 +172,10 @@ class FileCounterCog(commands.Cog):
                 return
             self.server_db_id = server_db_id
 
-        channel = self.bot.get_channel(self.channel_id)
+        if not self.channel_id:
+            self.channel_id = await ServerChannelService.get_channel_for_action(ctx.guild.id, ctx.guild.name, "file_counter_channel")
+
+        channel = self.bot.get_channel(self.channel_id) if self.channel_id else None
         if not channel:
             await ctx.send("Salon introuvable.", delete_after=10)
             return
