@@ -338,6 +338,20 @@ async def user_exists_in_db(discord_id: int) -> bool:
     record = await database.fetchrow(query, discord_id)
     return record is not None
 
+async def valorant_account_linked(discord_id: int) -> bool:
+    """Vérifie si l'utilisateur possède une entrée dans ``valorant_info``."""
+    user_pk = await get_user_pk_by_discord_id(discord_id)
+    if not user_pk:
+        return False
+    query = """
+        SELECT 1
+          FROM valorant_info
+         WHERE user_id = $1
+         LIMIT 1
+    """
+    record = await database.fetchrow(query, user_pk)
+    return record is not None
+
 # ------------------------------------------------
 # RÔLES : gestion + cache local
 # ------------------------------------------------

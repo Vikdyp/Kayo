@@ -7,6 +7,7 @@ import asyncio
 import os
 from config import DISCORD_TOKEN, TEST_GUILD_ID, LOGGING, TEST_MODE
 from utils.database import database
+from utils.checks import rules_check, rules_interaction_check
 from cogs.other.online_count_updater import setup_rank_updater, teardown_rank_updater, rank_updater
 
 def configure_logging():
@@ -51,6 +52,11 @@ intents.message_content = True
 
 # On crée le bot
 bot = commands.Bot(command_prefix='!', intents=intents)
+bot.check(rules_check())
+
+@bot.tree.interaction_check
+async def _global_rules_check(interaction: discord.Interaction) -> bool:
+    return await rules_interaction_check(interaction)
 
 # On attache un logger "bot" à l'instance
 logger = logging.getLogger('bot')

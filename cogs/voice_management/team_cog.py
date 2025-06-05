@@ -11,6 +11,7 @@ import datetime
 import asyncio
 
 from .services.five_stack_service import MatchmakingService
+from utils.checks import valorant_link_required
 
 # Constantes
 FORUM_CHANNEL_ID: int = 1325629700248178778  # ID réel de votre forum
@@ -114,6 +115,7 @@ class TeamManager(commands.Cog):
     # ------------------------------------------------
 
     @app_commands.command(name="create_team", description="Créer une équipe (même région que le leader).")
+    @valorant_link_required()
     @app_commands.describe(visibility="Définissez la visibilité de l'équipe.")
     @app_commands.choices(visibility=[
         app_commands.Choice(name="Public", value="public"),
@@ -194,6 +196,7 @@ class TeamManager(commands.Cog):
         )
 
     @app_commands.command(name="join_team", description="Rejoindre une équipe via son code.")
+    @valorant_link_required()
     async def join_team(self, interaction: discord.Interaction, code: str) -> None:
         """
         Permet à un utilisateur de rejoindre une équipe existante si celle-ci n'est pas complète.
