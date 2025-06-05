@@ -28,6 +28,7 @@ from cogs.ranking.services.valorant_service import (
 )
 from cogs.moderation.services.moderation_service import ModerationService
 from utils.database import database
+from cogs.configuration.services.channel_service import ServerChannelService
 import logging
 import asyncio
 from datetime import datetime, timedelta
@@ -419,9 +420,10 @@ class EmbedCog(commands.Cog):
                         last_notif = await get_last_notification(discord_id)
                         if (last_notif is None) or ((now - last_notif) > timedelta(hours=24)):
                             try:
+                                info_channel_id = await ServerChannelService.get_channel_for_action(member.guild.id, member.guild.name, "valorant_info_channel")
                                 await member.send(
                                     f"La récupération de vos informations Valorant a échoué pour le pseudo et tag **{pseudo}#{tag}**.\n"
-                                    f"Veuillez vérifier vos identifiants ou modifier vos informations dans le salon <#1323673115922010143>."
+                                    f"Veuillez vérifier vos identifiants ou modifier vos informations dans le salon <#{info_channel_id}>."
                                 )
                                 await update_last_notification(discord_id, now)
                             except Exception as dm_error:
