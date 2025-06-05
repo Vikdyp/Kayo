@@ -4,7 +4,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import logging
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 from utils.confirmation_view import ConfirmationView
 # On importe le nouveau service combiné
@@ -60,24 +60,19 @@ class ChannelsConfiguration(commands.Cog):
         app_commands.Choice(name="Supprimer un salon", value="remove")
     ]
 
-    SALON_ACTION_CHOICES = [
-        app_commands.Choice(name=description, value=action)
-        for action, description in PREDEFINED_ACTIONS
-    ]
-
     @app_commands.command(name="salon", description="Gérer la configuration des salons.")
     @app_commands.describe(
         action="Action à effectuer",
         salon_action="Type de salon à gérer",
         channel="Salon Discord (nécessaire pour 'set')"
     )
-    @app_commands.choices(action=ACTION_CHOICES, salon_action=SALON_ACTION_CHOICES)
+    @app_commands.choices(action=ACTION_CHOICES)
     @app_commands.default_permissions(administrator=True)
     async def channels_execute(
         self,
         interaction: discord.Interaction,
         action: app_commands.Choice[str],
-        salon_action: Optional[app_commands.Choice[str]] = None,
+        salon_action: Optional[str] = None,
         channel: Optional[discord.TextChannel] = None
     ):
         """Exécute une action de configuration de salon en fonction de l'option spécifiée."""
@@ -124,11 +119,11 @@ class ChannelsConfiguration(commands.Cog):
                     return
 
                 success = await ServerChannelService.set_channel_for_action(
-                    guild_id, guild_name, salon_action.value, channel.id
+                    guild_id, guild_name, salon_action, channel.id
                 )
                 if success:
                     await interaction.followup.send(
-                        f"Salon {channel.mention} configuré pour **{self.get_action_display_name(salon_action.value)}**.",
+                        f"Salon {channel.mention} configuré pour **{self.get_action_display_name(salon_action)}**.",
                         ephemeral=True
                     )
                 else:
@@ -145,9 +140,9 @@ class ChannelsConfiguration(commands.Cog):
                     return
 
                 channels = await ServerChannelService.get_channels_config(guild_id, guild_name)
-                if salon_action.value not in channels:
+                if salon_action not in channels:
                     await interaction.followup.send(
-                        f"Aucune configuration trouvée pour **{self.get_action_display_name(salon_action.value)}**.",
+                        f"Aucune configuration trouvée pour **{self.get_action_display_name(salon_action)}**.",
                         ephemeral=True
                     )
                     return
@@ -156,11 +151,11 @@ class ChannelsConfiguration(commands.Cog):
                 async def confirmation_callback(result: Optional[bool]):
                     if result is True:
                         success = await ServerChannelService.remove_channel_for_action(
-                            guild_id, guild_name, salon_action.value
+                            guild_id, guild_name, salon_action
                         )
                         if success:
                             await interaction.followup.send(
-                                f"Configuration pour **{self.get_action_display_name(salon_action.value)}** supprimée.",
+                                f"Configuration pour **{self.get_action_display_name(salon_action)}** supprimée.",
                                 ephemeral=True
                             )
                         else:
@@ -177,7 +172,7 @@ class ChannelsConfiguration(commands.Cog):
                     callback=confirmation_callback
                 )
                 await interaction.followup.send(
-                    f"Êtes-vous sûr de vouloir supprimer la configuration pour **{self.get_action_display_name(salon_action.value)}** ?",
+                    f"Êtes-vous sûr de vouloir supprimer la configuration pour **{self.get_action_display_name(salon_action)}** ?",
                     view=view,
                     ephemeral=True
                 )
@@ -193,6 +188,26 @@ class ChannelsConfiguration(commands.Cog):
             await interaction.followup.send(
                 "Une erreur est survenue lors de l'exécution de cette commande.", ephemeral=True
             )
+
+    @channels_execute.autocomplete('salon_action')
+    async def salon_action_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> List[app_commands.Choice[str]]:
+        """Propose l'auto-complétion pour les types de salons."""
+        try:
+            current_lower = current.lower()
+            matches = [
+                (action, desc)
+                for action, desc in self.PREDEFINED_ACTIONS
+                if current_lower in action.lower() or current_lower in desc.lower()
+            ]
+            return [
+                app_commands.Choice(name=desc, value=action)
+                for action, desc in matches
+            ][:25]
+        except Exception as e:
+            logger.exception(f"[salon_action_autocomplete] Erreur : {e}")
+            return []
 
     def get_action_display_name(self, action_key: str) -> str:
         """Retourne le nom affiché de l'action."""

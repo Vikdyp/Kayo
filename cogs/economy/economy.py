@@ -28,7 +28,8 @@ class BuyButton(discord.ui.Button):
 
     async def callback(self, interaction: Any):
         item = self.cog.daily_shop_items[self.item_index]
-        economy_data = await self.cog.data.get_economy_data        user_id = str(interaction.user.id)
+        economy_data = await self.cog.data.get_economy_data()
+        user_id = str(interaction.user.id)
         user_info = economy_data.setdefault(user_id, {"balance":0, "last_claim":None, "items":[]})
         if user_info["balance"] < item["price"]:
             await interaction.response.send_message("Vous n'avez pas assez de pièces pour acheter cet item.", ephemeral=True)

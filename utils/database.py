@@ -8,7 +8,6 @@ import time
 
 import discord
 from config import DATABASE
-from cogs.configuration.services.channel_service import ServerChannelService
 
 logger = logging.getLogger("database")
 
@@ -43,6 +42,8 @@ class Database:
 
     async def update_log_channel_from_config(self, guild: discord.Guild):
         """Met à jour l'ID du salon de logs depuis la configuration en base."""
+        from cogs.configuration.services.channel_service import ServerChannelService
+
         channel_id = await ServerChannelService.get_channel_for_action(
             guild.id, guild.name, "database_log_channel"
         )
