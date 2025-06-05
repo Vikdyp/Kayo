@@ -2,21 +2,34 @@ import discord
 from discord.ext import commands, tasks
 import logging
 import asyncio
+from typing import Dict
+
+from cogs.configuration.services.channel_service import ServerChannelService
 
 logger = logging.getLogger("voice_cleaner")
 
 class VoiceManagement(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-        # ID de la catégorie à surveiller pour la suppression des salons vocaux vides
-        self.category_id: int = 1323077627413794847
-        # ID du salon AFK à exclure de la suppression 
-        self.afk_channel_id: int = 123456789012345678
+        # ID de la catégorie à surveiller par guilde
+        self.category_ids: Dict[int, int] = {}
+        # ID du salon AFK par guilde
+        self.afk_channel_ids: Dict[int, int] = {}
         # Démarrage de la tâche de vérification des salons vocaux vides
         self.check_empty_voice_channels.start()
 
     def cog_unload(self) -> None:
         self.check_empty_voice_channels.cancel()
+
+    @commands.Cog.listener()
+    async def on_ready(self) -> None:
+        for guild in self.bot.guilds:
+            cat = await ServerChannelService.get_channel_for_action(guild.id, guild.name, "temp_vocal_category")
+            if cat:
+                self.category_ids[guild.id] = cat
+            afk = await ServerChannelService.get_channel_for_action(guild.id, guild.name, "afk_channel")
+            if afk:
+                self.afk_channel_ids[guild.id] = afk
 
     @tasks.loop(minutes=5)
     async def check_empty_voice_channels(self) -> None:
@@ -26,14 +39,16 @@ class VoiceManagement(commands.Cog):
         """
         try:
             for guild in self.bot.guilds:
-                category = guild.get_channel(self.category_id)
+                category_id = self.category_ids.get(guild.id)
+                if not category_id:
+                    continue
+                category = guild.get_channel(category_id)
                 if not category:
-                    logger.warning(f"Catégorie avec l'ID {self.category_id} non trouvée dans la guilde {guild.name}.")
                     continue
 
+                afk_id = self.afk_channel_ids.get(guild.id)
                 for channel in category.voice_channels:
-                    # Ne pas supprimer le salon AFK
-                    if channel.id == self.afk_channel_id:
+                    if afk_id and channel.id == afk_id:
                         continue
                     if not channel.members:
                         logger.info(f"Suppression du salon vocal vide : {channel.name} dans la guilde {guild.name}.")
