@@ -11,9 +11,9 @@ import datetime
 import asyncio
 
 from .services.five_stack_service import MatchmakingService
+from cogs.configuration.services.channel_service import ServerChannelService
 
 # Constantes
-FORUM_CHANNEL_ID: int = 1325629700248178778  # ID réel de votre forum
 VOICE_CATEGORY_NAME: str = "Matchmaking"       # Nom de la catégorie vocale
 TEAM_CODE_LENGTH: int = 6                      # Longueur du code d'équipe
 
@@ -25,12 +25,13 @@ def generate_team_code(length: int = TEAM_CODE_LENGTH) -> str:
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
 
 
-async def get_forum_channel(bot: commands.Bot) -> Optional[discord.ForumChannel]:
-    """Récupère et vérifie le ForumChannel à partir de FORUM_CHANNEL_ID."""
-    channel = bot.get_channel(FORUM_CHANNEL_ID)
+async def get_forum_channel(bot: commands.Bot, guild: discord.Guild) -> Optional[discord.ForumChannel]:
+    """Récupère et vérifie le ForumChannel configuré pour la guilde."""
+    forum_id = await ServerChannelService.get_channel_for_action(guild.id, guild.name, "teams_forum_id")
+    channel = bot.get_channel(forum_id) if forum_id else None
     if channel and isinstance(channel, discord.ForumChannel):
         return channel
-    logger.error("Forum channel invalide ou introuvable.")
+    logger.error("Forum channel invalide ou introuvable pour cette guilde.")
     return None
 
 
@@ -138,7 +139,7 @@ class TeamManager(commands.Cog):
         code: str = generate_team_code()
         created_at: datetime.datetime = datetime.datetime.utcnow()
 
-        forum_channel: Optional[discord.ForumChannel] = await get_forum_channel(self.bot)
+        forum_channel: Optional[discord.ForumChannel] = await get_forum_channel(self.bot, interaction.guild)
         if not forum_channel:
             await interaction.edit_original_response(content="Forum channel invalide.")
             return

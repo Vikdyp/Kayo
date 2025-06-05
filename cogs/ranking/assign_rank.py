@@ -28,6 +28,7 @@ from cogs.ranking.services.valorant_service import (
 )
 from cogs.moderation.services.moderation_service import ModerationService
 from utils.database import database
+from cogs.configuration.services.channel_service import ServerChannelService
 import logging
 import asyncio
 from datetime import datetime, timedelta
@@ -130,7 +131,7 @@ class PseudoTagModal(discord.ui.Modal, title="Renseignez votre Pseudo et Tag Val
                     "Ce pseudo et tag Valorant sont déjà utilisés par un autre utilisateur.",
                     ephemeral=True
                 )
-                await self.cog.notify_duplicate_pseudo_tag(existing_user, self.user, pseudo, tag)
+                await self.cog.notify_duplicate_pseudo_tag(interaction.guild, existing_user, self.user, pseudo, tag)
                 return
 
         exists = await user_exists_in_db(interaction.user.id)
@@ -317,11 +318,15 @@ class EmbedCog(commands.Cog):
             logger.error(f"Erreur lors de l'envoi de l'embed : {e}")
             await ctx.send("Une erreur est survenue lors de l'envoi de l'embed.", delete_after=10)
 
-    async def notify_duplicate_pseudo_tag(self, existing_user: discord.User, current_user: discord.User, pseudo: str, tag: str):
-        channel_id = 1315770052431188069  # Remplacez par l'ID du salon désiré
-        channel = self.bot.get_channel(channel_id)
+    async def notify_duplicate_pseudo_tag(self, guild: discord.Guild, existing_user: discord.User, current_user: discord.User, pseudo: str, tag: str):
+        channel_id = await ServerChannelService.get_channel_for_action(
+            guild.id,
+            guild.name,
+            "duplicate_pseudo_channel"
+        )
+        channel = self.bot.get_channel(channel_id) if channel_id else None
         if not channel:
-            logger.error(f"Salon avec l'ID {channel_id} introuvable.")
+            logger.error("Salon pour doublons non configuré ou introuvable.")
             return
 
         embed = discord.Embed(
@@ -419,9 +424,10 @@ class EmbedCog(commands.Cog):
                         last_notif = await get_last_notification(discord_id)
                         if (last_notif is None) or ((now - last_notif) > timedelta(hours=24)):
                             try:
+                                info_channel_id = await ServerChannelService.get_channel_for_action(member.guild.id, member.guild.name, "valorant_info_channel")
                                 await member.send(
                                     f"La récupération de vos informations Valorant a échoué pour le pseudo et tag **{pseudo}#{tag}**.\n"
-                                    f"Veuillez vérifier vos identifiants ou modifier vos informations dans le salon <#1323673115922010143>."
+                                    f"Veuillez vérifier vos identifiants ou modifier vos informations dans le salon <#{info_channel_id}>."
                                 )
                                 await update_last_notification(discord_id, now)
                             except Exception as dm_error:

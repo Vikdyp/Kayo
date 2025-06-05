@@ -95,6 +95,8 @@ async def on_ready():
 
     await database.connect()
     database.set_bot_reference(bot)
+    for guild in bot.guilds:
+        await database.update_log_channel_from_config(guild)
 
     if not clean_old_logs.is_running():
         clean_old_logs.start()

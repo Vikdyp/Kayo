@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo  # Pour le fuseau Europe/Paris
 
 from cogs.scrims.service.scrims_services import ScrimService
+from cogs.configuration.services.channel_service import ServerChannelService
 
 logger = logging.getLogger("scrims")
 
@@ -259,8 +260,10 @@ class ScrimModal(discord.ui.Modal, title="Créer un scrim"):
         creator_discord_id = interaction.user.id
         internal_user_id = await self.service.get_internal_user_id(creator_discord_id)
         if internal_user_id is None:
-            rules_channel_id = 1236392632079618108
-            rules_channel_link = f"https://discord.com/channels/{interaction.guild.id}/{rules_channel_id}"
+            rules_channel_id = await ServerChannelService.get_channel_for_action(
+                interaction.guild.id, interaction.guild.name, "rules"
+            )
+            rules_channel_link = f"https://discord.com/channels/{interaction.guild.id}/{rules_channel_id}" if rules_channel_id else "le salon des règles"
             return await interaction.followup.send(
                 f"Veuillez d'abord accepter le règlement {rules_channel_link}.",
                 ephemeral=True
@@ -307,8 +310,10 @@ class ScrimView(discord.ui.View):
         service = self.cog.service
         internal_user_id = await service.get_internal_user_id(interaction.user.id)
         if internal_user_id is None:
-            rules_channel_id = 1236392632079618108
-            rules_channel_link = f"https://discord.com/channels/{interaction.guild.id}/{rules_channel_id}"
+            rules_channel_id = await ServerChannelService.get_channel_for_action(
+                interaction.guild.id, interaction.guild.name, "rules"
+            )
+            rules_channel_link = f"https://discord.com/channels/{interaction.guild.id}/{rules_channel_id}" if rules_channel_id else "le salon des règles"
             return await interaction.followup.send(
                 f"Veuillez d'abord accepter le règlement {rules_channel_link}.",
                 ephemeral=True
@@ -332,8 +337,10 @@ class ScrimView(discord.ui.View):
         service = self.cog.service
         internal_user_id = await service.get_internal_user_id(interaction.user.id)
         if internal_user_id is None:
-            rules_channel_id = 1236392632079618108
-            rules_channel_link = f"https://discord.com/channels/{interaction.guild.id}/{rules_channel_id}"
+            rules_channel_id = await ServerChannelService.get_channel_for_action(
+                interaction.guild.id, interaction.guild.name, "rules"
+            )
+            rules_channel_link = f"https://discord.com/channels/{interaction.guild.id}/{rules_channel_id}" if rules_channel_id else "le salon des règles"
             return await interaction.followup.send(
                 f"Veuillez d'abord accepter le règlement {rules_channel_link}.",
                 ephemeral=True
@@ -357,8 +364,10 @@ class ScrimView(discord.ui.View):
         service = self.cog.service
         internal_user_id = await service.get_internal_user_id(interaction.user.id)
         if internal_user_id is None:
-            rules_channel_id = 1236392632079618108
-            rules_channel_link = f"https://discord.com/channels/{interaction.guild.id}/{rules_channel_id}"
+            rules_channel_id = await ServerChannelService.get_channel_for_action(
+                interaction.guild.id, interaction.guild.name, "rules"
+            )
+            rules_channel_link = f"https://discord.com/channels/{interaction.guild.id}/{rules_channel_id}" if rules_channel_id else "le salon des règles"
             return await interaction.followup.send(
                 f"Veuillez d'abord accepter le règlement {rules_channel_link}.",
                 ephemeral=True

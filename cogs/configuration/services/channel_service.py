@@ -60,6 +60,25 @@ class ServerChannelService:
             return {}
 
     @staticmethod
+    async def get_channel_for_action(guild_id: int, guild_name: str, action: str):
+        """Récupère le channel_id configuré pour une action précise."""
+        try:
+            server_db_id = await ServerChannelService.get_or_create_server_record(guild_id, guild_name)
+            if not server_db_id:
+                return None
+
+            query = """
+            SELECT channel_id
+            FROM channel_configurations
+            WHERE server_id = $1 AND action = $2
+            LIMIT 1;
+            """
+            return await database.fetchval(query, server_db_id, action)
+        except Exception as e:
+            logger.error(f"[ServerChannelService] Erreur get_channel_for_action: {e}")
+            return None
+
+    @staticmethod
     async def set_channel_for_action(guild_id: int, guild_name: str, action: str, channel_id: int) -> bool:
         """
         Configure un salon pour une action, en stockant server_id (FK) au lieu du guild_id.

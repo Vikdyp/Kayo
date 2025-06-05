@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 import asyncio
 import time
+from cogs.configuration.services.channel_service import ServerChannelService
 
 ROLE_RANK = {
     "radiant": 1,
@@ -18,8 +19,6 @@ ROLE_RANK = {
 class RoleChangeCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # Remplace par l'ID du salon de logs
-        self.log_channel_id = 1236733103687340144
 
         # Mémorise temporairement les rôles retirés en attendant
         # de voir si un nouveau rôle arrive pour ce membre
@@ -31,8 +30,6 @@ class RoleChangeCog(commands.Cog):
         #
         self.pending_removal = {}
 
-    def get_log_channel(self):
-        return self.bot.get_channel(self.log_channel_id)
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
@@ -115,7 +112,10 @@ class RoleChangeCog(commands.Cog):
 
     async def _send_rank_change_message(self, member: discord.Member, old_rank: str, new_rank: str):
         """Envoie un message de promotion/rétrogradation unique avec une stat indiquant la position relative."""
-        log_channel = self.get_log_channel()
+        channel_id = await ServerChannelService.get_channel_for_action(
+            member.guild.id, member.guild.name, "rank_log_channel"
+        )
+        log_channel = member.guild.get_channel(channel_id) if channel_id else None
         if not log_channel:
             return
 

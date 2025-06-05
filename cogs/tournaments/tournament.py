@@ -184,8 +184,8 @@ class TeamRegistrationModal(discord.ui.Modal, title="Inscription d'équipe"):
             except Exception as e:
                 logger.error(f"Erreur lors de l'envoi du DM à {player_id}: {e}")
 
-        # Créer un post dans le forum (ID: 1236736105106116668) avec les infos publiques de l'équipe
-        await create_forum_post(self.tournament_id, team_info)
+        # Créer un post dans le forum configuré avec les infos publiques de l'équipe
+        await create_forum_post(self.bot, interaction.guild, team_info)
         await interaction.response.send_message(
             "Inscription d'équipe enregistrée ! Vous recevrez prochainement un DM pour compléter votre inscription.",
             ephemeral=True

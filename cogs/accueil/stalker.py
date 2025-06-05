@@ -9,6 +9,8 @@ from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
 from cogs.accueil.services import accueil_services
+from cogs.configuration.services.channel_service import ServerChannelService
+from typing import Dict
 
 logger = logging.getLogger("accueil.stalker")
 
@@ -60,7 +62,8 @@ class StatsView(discord.ui.View):
 class StalkerCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.channel_id = 1236437099310219336
+        self.channel_ids: Dict[int, int] = {}
+        self.thread_ids: Dict[int, int] = {}
         self.persistent_message = None
 
         # Tâche de mise à jour quotidienne
@@ -71,6 +74,16 @@ class StalkerCog(commands.Cog):
 
     def cog_unload(self):
         self.daily_update.cancel()
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        for guild in self.bot.guilds:
+            chan = await ServerChannelService.get_channel_for_action(guild.id, guild.name, "stats_channel")
+            if chan:
+                self.channel_ids[guild.id] = chan
+            thread = await ServerChannelService.get_channel_for_action(guild.id, guild.name, "depart_thread")
+            if thread:
+                self.thread_ids[guild.id] = thread
 
     async def load_persistent_message(self):
         """Récupère le message persistant depuis la base et réattache la vue."""
@@ -157,9 +170,10 @@ class StalkerCog(commands.Cog):
         selon la période demandée.
         """
         await accueil_services.ensure_today_member_stats(guild.id)
-        channel = self.bot.get_channel(self.channel_id)
+        channel_id = self.channel_ids.get(guild.id)
+        channel = self.bot.get_channel(channel_id) if channel_id else None
         if channel is None:
-            logger.error(f"Canal introuvable avec l'ID {self.channel_id}.")
+            logger.error(f"Canal introuvable pour guild {guild.id}.")
             return
 
         # Récupère les stats selon la période cliquée
@@ -268,9 +282,10 @@ class StalkerCog(commands.Cog):
         """
         try:
             await self.update_stats_embed(ctx.guild, period="default")
-            channel = self.bot.get_channel(self.channel_id)
+            channel_id = self.channel_ids.get(ctx.guild.id)
+            channel = self.bot.get_channel(channel_id) if channel_id else None
             if channel is None:
-                raise Exception(f"Canal introuvable avec l'ID {self.channel_id}")
+                raise Exception("Canal introuvable pour ce serveur")
 
             messages = [msg async for msg in channel.history(limit=10)]
             bot_message = None
@@ -306,11 +321,13 @@ class StalkerCog(commands.Cog):
         await accueil_services.log_member_event_aggregated(member.guild.id, "leave")
         logger.info(f"{member.name} a quitté le serveur.")
 
-        channel = self.bot.get_channel(self.channel_id)
+        channel_id = self.channel_ids.get(member.guild.id)
+        channel = self.bot.get_channel(channel_id) if channel_id else None
         if not channel:
-            logger.error(f"Canal introuvable avec l'ID {self.channel_id}")
+            logger.error("Canal de statistiques introuvable pour ce serveur.")
             return
-        thread = self.bot.get_channel(1328749667449831434)
+        thread_id = self.thread_ids.get(member.guild.id)
+        thread = self.bot.get_channel(thread_id) if thread_id else None
         if thread is None:
             logger.error("Thread pour les notifications de départ introuvable.")
             return

@@ -8,6 +8,7 @@ import time
 
 import discord
 from config import DATABASE
+from cogs.configuration.services.channel_service import ServerChannelService
 
 logger = logging.getLogger("database")
 
@@ -27,7 +28,7 @@ class Database:
         self.retry_delay = 5
 
         # ID de salon Discord utilisé pour envoyer les logs en cas d'échec de reconnexion.
-        self.log_channel_id = 1245888235604021348  # faux ID pour ne pas recevoir de message
+        self.log_channel_id = None
 
         # Gestion des vérifications de connexion
         self._last_connection_check = 0       # Timestamp de la dernière vérification
@@ -39,6 +40,14 @@ class Database:
         afin d'envoyer éventuellement des logs sur un salon.
         """
         self.bot = bot
+
+    async def update_log_channel_from_config(self, guild: discord.Guild):
+        """Met à jour l'ID du salon de logs depuis la configuration en base."""
+        channel_id = await ServerChannelService.get_channel_for_action(
+            guild.id, guild.name, "database_log_channel"
+        )
+        if channel_id:
+            self.log_channel_id = channel_id
 
     async def connect(self):
         """
@@ -136,6 +145,10 @@ class Database:
         """
         if not self.bot:
             logger.error("Impossible d'envoyer les logs : bot non défini dans database.")
+            return
+
+        if not self.log_channel_id:
+            logger.error("log_channel_id non configuré.")
             return
 
         channel = self.bot.get_channel(self.log_channel_id)
