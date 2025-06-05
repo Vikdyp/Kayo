@@ -5,6 +5,7 @@ import logging
 from typing import Any
 
 from cogs.voice_management.services.five_stack_service import MatchmakingService
+from cogs.ranking.services.assign_rank_service import valorant_account_linked
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,12 @@ class BaseLeaveTeamView(discord.ui.View):
 
     async def handle_leave_team(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
+        if not await valorant_account_linked(interaction.user.id):
+            await interaction.followup.send(
+                content="Veuillez lier votre compte Valorant avant de rejoindre l'équipe.",
+                ephemeral=True,
+            )
+            return
 
         team = await MatchmakingService.get_team(self.code)
         if not team:
@@ -118,6 +125,12 @@ class TeamForumJoinButtonView(BaseLeaveTeamView):
         Si l'équipe atteint 5 membres, le salon vocal est créé.
         """
         await interaction.response.defer(ephemeral=True)
+        if not await valorant_account_linked(interaction.user.id):
+            await interaction.followup.send(
+                content="Veuillez lier votre compte Valorant avant de rejoindre l'équipe.",
+                ephemeral=True,
+            )
+            return
 
         team = await MatchmakingService.get_team(self.code)
         if not team:

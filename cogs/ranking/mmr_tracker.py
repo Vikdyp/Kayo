@@ -16,6 +16,7 @@ from typing import List, Optional
 import numpy as np
 
 from cogs.ranking.services.mmr_tracker_service import ValorantService
+from utils.checks import valorant_link_required
 
 logger = logging.getLogger('valorant_mmr')
 
@@ -92,6 +93,7 @@ class MMRTracker(commands.Cog):
             await ValorantService.insert_history_entry(user_id, entry)
 
     @app_commands.command(name="mmr_track", description="Gérer le suivi MMR : activer, désactiver ou afficher les stats.")
+    @valorant_link_required()
     @app_commands.describe(periode="Période à afficher (today, week, all, ou episode/act)")
     @app_commands.choices(action=ACTION_CHOICES)
     async def mmr_track(

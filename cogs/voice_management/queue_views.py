@@ -8,6 +8,7 @@ from discord import ButtonStyle, Interaction
 from discord.ui import Button, Select, View
 
 from cogs.voice_management.services.five_stack_service import MatchmakingService
+from cogs.ranking.services.assign_rank_service import valorant_account_linked
 
 # Constante pour l'ID du salon où l'utilisateur doit lier ses informations Valorant
 VALORANT_INFO_CHANNEL_ID: int = 1323673115922010143
@@ -186,15 +187,15 @@ class TeamSizeSelect(Select):
                 )
                 return
 
-            # Récupération des informations Valorant de l'utilisateur
-            user_info = await MatchmakingService.get_user_info(user.id)
-            if not user_info:
+            # Vérification de la présence des infos Valorant
+            if not await valorant_account_linked(user.id):
                 await interaction.followup.send(
-                    f"Vous n'avez pas encore configuré vos informations Valorant. "
                     f"Veuillez lier votre compte dans le salon <#{VALORANT_INFO_CHANNEL_ID}> avant de rejoindre la queue.",
                     ephemeral=True
                 )
                 return
+
+            user_info = await MatchmakingService.get_user_info(user.id)
 
             elo = user_info.get("elo")
             region = user_info.get("region")

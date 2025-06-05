@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo  # Pour le fuseau Europe/Paris
 
 from cogs.scrims.service.scrims_services import ScrimService
+from utils.checks import rules_interaction_check
 
 logger = logging.getLogger("scrims")
 
@@ -243,7 +244,9 @@ class ScrimModal(discord.ui.Modal, title="Créer un scrim"):
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
-        
+        if not await rules_interaction_check(interaction):
+            return
+
         try:
             scrim_datetime = datetime.strptime(f"{self.date.value} {self.heure.value}", "%d/%m/%Y %H:%M")
             from zoneinfo import ZoneInfo
@@ -259,12 +262,7 @@ class ScrimModal(discord.ui.Modal, title="Créer un scrim"):
         creator_discord_id = interaction.user.id
         internal_user_id = await self.service.get_internal_user_id(creator_discord_id)
         if internal_user_id is None:
-            rules_channel_id = 1236392632079618108
-            rules_channel_link = f"https://discord.com/channels/{interaction.guild.id}/{rules_channel_id}"
-            return await interaction.followup.send(
-                f"Veuillez d'abord accepter le règlement {rules_channel_link}.",
-                ephemeral=True
-            )
+            return await interaction.followup.send("Erreur : utilisateur non trouvé.", ephemeral=True)
 
         # Lors de la création, le créateur est ajouté par défaut dans team1
         scrim_id = await self.service.create_scrim(
@@ -304,15 +302,12 @@ class ScrimView(discord.ui.View):
     @discord.ui.button(label="Rejoindre Équipe 1", style=discord.ButtonStyle.success, custom_id="join_team1")
     async def join_team1_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
+        if not await rules_interaction_check(interaction):
+            return
         service = self.cog.service
         internal_user_id = await service.get_internal_user_id(interaction.user.id)
         if internal_user_id is None:
-            rules_channel_id = 1236392632079618108
-            rules_channel_link = f"https://discord.com/channels/{interaction.guild.id}/{rules_channel_id}"
-            return await interaction.followup.send(
-                f"Veuillez d'abord accepter le règlement {rules_channel_link}.",
-                ephemeral=True
-            )
+            return await interaction.followup.send("Erreur : utilisateur non trouvé.", ephemeral=True)
         if await service.is_user_registered_in_any_team(self.scrim_id, internal_user_id):
             return await interaction.followup.send("Vous êtes déjà inscrit dans une équipe.", ephemeral=True)
         if not await service.add_team_participant(self.scrim_id, "team1", internal_user_id):
@@ -329,15 +324,12 @@ class ScrimView(discord.ui.View):
     @discord.ui.button(label="Rejoindre Équipe 2", style=discord.ButtonStyle.success, custom_id="join_team2")
     async def join_team2_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
+        if not await rules_interaction_check(interaction):
+            return
         service = self.cog.service
         internal_user_id = await service.get_internal_user_id(interaction.user.id)
         if internal_user_id is None:
-            rules_channel_id = 1236392632079618108
-            rules_channel_link = f"https://discord.com/channels/{interaction.guild.id}/{rules_channel_id}"
-            return await interaction.followup.send(
-                f"Veuillez d'abord accepter le règlement {rules_channel_link}.",
-                ephemeral=True
-            )
+            return await interaction.followup.send("Erreur : utilisateur non trouvé.", ephemeral=True)
         if await service.is_user_registered_in_any_team(self.scrim_id, internal_user_id):
             return await interaction.followup.send("Vous êtes déjà inscrit dans une équipe.", ephemeral=True)
         if not await service.add_team_participant(self.scrim_id, "team2", internal_user_id):
@@ -354,15 +346,12 @@ class ScrimView(discord.ui.View):
     @discord.ui.button(label="Quitter le scrim", style=discord.ButtonStyle.danger, custom_id="leave_scrim")
     async def leave_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
+        if not await rules_interaction_check(interaction):
+            return
         service = self.cog.service
         internal_user_id = await service.get_internal_user_id(interaction.user.id)
         if internal_user_id is None:
-            rules_channel_id = 1236392632079618108
-            rules_channel_link = f"https://discord.com/channels/{interaction.guild.id}/{rules_channel_id}"
-            return await interaction.followup.send(
-                f"Veuillez d'abord accepter le règlement {rules_channel_link}.",
-                ephemeral=True
-            )
+            return await interaction.followup.send("Erreur : utilisateur non trouvé.", ephemeral=True)
         if not await service.is_user_registered_in_any_team(self.scrim_id, internal_user_id):
             return await interaction.followup.send("Vous n'êtes pas inscrit dans une équipe.", ephemeral=True)
         if not await service.remove_team_participant(self.scrim_id, internal_user_id):

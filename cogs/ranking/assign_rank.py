@@ -16,7 +16,6 @@ from cogs.ranking.services.assign_rank_service import (
     get_role_mappings,
     refresh_role_mappings,
     delete_valo_data,
-    user_exists_in_db,
     get_role_id_for_config,
     get_or_create_server_record,
     get_user_by_pseudo_tag,
@@ -28,6 +27,7 @@ from cogs.ranking.services.valorant_service import (
 )
 from cogs.moderation.services.moderation_service import ModerationService
 from utils.database import database
+from utils.checks import rules_interaction_check
 import logging
 import asyncio
 from datetime import datetime, timedelta
@@ -133,15 +133,7 @@ class PseudoTagModal(discord.ui.Modal, title="Renseignez votre Pseudo et Tag Val
                 await self.cog.notify_duplicate_pseudo_tag(existing_user, self.user, pseudo, tag)
                 return
 
-        exists = await user_exists_in_db(interaction.user.id)
-        if not exists:
-            rules_channel_id = await get_rules_channel_id(interaction.guild_id)
-            if rules_channel_id:
-                channel_mention = f"<#{rules_channel_id}>"
-                msg = f"Veuillez d'abord accepter le règlement ici : {channel_mention}"
-            else:
-                msg = "Veuillez d'abord accepter le règlement (salon introuvable)."
-            await interaction.response.send_message(msg, ephemeral=True)
+        if not await rules_interaction_check(interaction):
             return
 
         try:
