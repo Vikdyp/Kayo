@@ -4,6 +4,7 @@ from typing import Optional, Dict, List
 from utils.database import database
 import logging
 
+from services.base import get_or_create_server_record, store_persistent_message, get_persistent_message, delete_persistent_message
 logger = logging.getLogger("rank_service")
 
 # Les rangs Valorant de base
@@ -30,120 +31,6 @@ async def get_user_pk_by_discord_id(discord_id: int) -> Optional[int]:
         return record["id"]
     return None
 
-# ------------------------------------------------
-# NOUVEAU : get_or_create_server_record
-# ------------------------------------------------
-async def get_or_create_server_record(guild_id: int, guild_name: str) -> Optional[int]:
-    """
-    Récupère l'ID interne (PK) de la table serveur_id pour un guild_id donné.
-    Si le serveur n'existe pas déjà, il est créé.
-    """
-    try:
-        select_query = """
-        SELECT id
-        FROM serveur_id
-        WHERE guild_id = $1
-        """
-        record = await database.fetchrow(select_query, guild_id)
-        if record:
-            return record['id']
-
-        insert_query = """
-        INSERT INTO serveur_id (guild_id, serveur)
-        VALUES ($1, $2)
-        RETURNING id;
-        """
-        new_id = await database.fetchval(insert_query, guild_id, guild_name)
-        logger.info(f"[get_or_create_server_record] Serveur créé pour guild_id={guild_id}, id={new_id}")
-        return new_id
-    except Exception as e:
-        logger.error(f"[get_or_create_server_record] Erreur : {e}")
-        return None
-
-# ------------------------------------------------
-# PERSISTENT MESSAGES
-# ------------------------------------------------
-async def store_persistent_message(discord_guild_id: int, channel_id: int, message_id: int, message_type: str, guild_name: str = "Inconnu") -> bool:
-    """
-    Enregistre ou met à jour un message persistant pour un serveur donné.
-    Désormais, on récupère d'abord l'ID interne du serveur (server_db_id),
-    puis on insère/MAJ dans persistent_messages (colonne guild_id = server_db_id).
-    """
-    try:
-        server_db_id = await get_or_create_server_record(discord_guild_id, guild_name)
-        if not server_db_id:
-            return False
-
-        query = """
-            INSERT INTO persistent_messages (guild_id, channel_id, message_id, message_type)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (guild_id, message_type) DO UPDATE
-            SET channel_id = EXCLUDED.channel_id,
-                message_id = EXCLUDED.message_id,
-                created_at = now();
-        """
-        await database.execute(query, server_db_id, channel_id, message_id, message_type)
-        logger.info(
-            f"Message persistant stocké: server_db_id={server_db_id}, "
-            f"channel_id={channel_id}, message_id={message_id}, type={message_type}"
-        )
-        return True
-    except Exception as e:
-        logger.error(f"Erreur lors du stockage du message persistant: {e}")
-        return False
-
-async def get_persistent_message(discord_guild_id: int, message_type: str, guild_name: str = "Inconnu") -> Optional[Dict[str, int]]:
-    """
-    Récupère channel_id et message_id pour un type de message persistant.
-    On convertit d'abord discord_guild_id → server_db_id (FK dans persistent_messages).
-    """
-    try:
-        server_db_id = await get_or_create_server_record(discord_guild_id, guild_name)
-        if not server_db_id:
-            return None
-
-        query = """
-            SELECT channel_id, message_id 
-              FROM persistent_messages 
-             WHERE guild_id = $1
-               AND message_type = $2
-        """
-        record = await database.fetchrow(query, server_db_id, message_type)
-        if record:
-            logger.debug(
-                f"Message persistant récupéré: server_db_id={server_db_id}, "
-                f"type={message_type}, channel_id={record['channel_id']}, message_id={record['message_id']}"
-            )
-            return {'channel_id': record['channel_id'], 'message_id': record['message_id']}
-        else:
-            logger.warning(
-                f"Aucun message persistant trouvé pour server_db_id={server_db_id}, type={message_type}."
-            )
-            return None
-    except Exception as e:
-        logger.error(f"Erreur lors de la récupération du message persistant: {e}")
-        return None
-
-async def delete_persistent_message(discord_guild_id: int, message_type: str, guild_name: str = "Inconnu") -> bool:
-    """
-    Supprime l'enregistrement d'un message persistant pour un type donné.
-    """
-    try:
-        server_db_id = await get_or_create_server_record(discord_guild_id, guild_name)
-        if not server_db_id:
-            return False
-
-        query = """
-            DELETE FROM persistent_messages 
-             WHERE guild_id = $1
-               AND message_type = $2;
-        """
-        await database.execute(query, server_db_id, message_type)
-        logger.info(f"Message persistant supprimé: server_db_id={server_db_id}, type={message_type}")
-        return True
-    except Exception as e:
-        logger.error(f"Erreur lors de la suppression du message persistant: {e}")
-        return False
 
 # ------------------------------------------------
 # CHANNEL CONFIG
