@@ -231,10 +231,11 @@ async def user_exists_in_db(discord_id: int) -> bool:
     return record is not None
 
 async def valorant_account_linked(discord_id: int) -> bool:
-    """Vérifie si l'utilisateur possède une entrée dans ``valorant_info``."""
+    """Vérifie si l'utilisateur possède une entrée dans `valorant_info` (quel que soit le contenu de puuid)."""
     user_pk = await get_user_pk_by_discord_id(discord_id)
     if not user_pk:
         return False
+
     query = """
         SELECT 1
           FROM valorant_info
@@ -243,6 +244,23 @@ async def valorant_account_linked(discord_id: int) -> bool:
     """
     record = await database.fetchrow(query, user_pk)
     return record is not None
+
+
+async def valorant_puuid_present(discord_id: int) -> bool:
+    """Vérifie que l'utilisateur est dans `valorant_info` ET que le champ puuid n'est pas NULL."""
+    user_pk = await get_user_pk_by_discord_id(discord_id)
+    if not user_pk:
+        return False
+
+    query = """
+        SELECT puuid
+          FROM valorant_info
+         WHERE user_id = $1
+         LIMIT 1
+    """
+    record = await database.fetchrow(query, user_pk)
+    # record peut être None (pas de ligne) ou {"puuid": None} si le PUUID n'est pas encore récupéré
+    return (record is not None) and (record["puuid"] is not None)
 
 # ------------------------------------------------
 # RÔLES : gestion + cache local
