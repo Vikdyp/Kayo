@@ -1,6 +1,7 @@
 from typing import Optional, Dict
 import logging
 from utils.database import database
+from utils.base import get_or_create_server_record
 
 logger = logging.getLogger("services.file_counter_service")
 
@@ -8,31 +9,8 @@ class FileCounterService:
 
     @staticmethod
     async def get_or_create_server_record(discord_guild_id: int, guild_name: str = "Inconnu") -> Optional[int]:
-        """
-        Récupère ou crée l'ID interne (PK) dans la table serveur_id 
-        pour un guild_id (Discord) donné.
-        """
-        try:
-            select_query = """
-                SELECT id
-                  FROM serveur_id
-                 WHERE guild_id = $1
-            """
-            record = await database.fetchrow(select_query, discord_guild_id)
-            if record:
-                return record["id"]
-
-            insert_query = """
-                INSERT INTO serveur_id (guild_id, serveur)
-                VALUES ($1, $2)
-                RETURNING id;
-            """
-            new_id = await database.fetchval(insert_query, discord_guild_id, guild_name)
-            logger.info(f"[get_or_create_server_record] Création d'un nouveau serveur_id={new_id} pour guild_id={discord_guild_id}.")
-            return new_id
-        except Exception as e:
-            logger.error(f"[get_or_create_server_record] Erreur : {e}")
-            return None
+        """Wrapper vers :func:`utils.base.get_or_create_server_record`."""
+        return await get_or_create_server_record(discord_guild_id, guild_name)
 
     @staticmethod
     async def get_counter(server_db_id: int, channel_id: int) -> Optional[Dict]:

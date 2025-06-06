@@ -3,6 +3,11 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 from utils.database import database
+from utils.base import (
+    get_or_create_server_record,
+    store_persistent_message,
+    get_persistent_message as base_get_persistent_message,
+)
 import logging
 
 logger = logging.getLogger("accueil.services")
@@ -214,48 +219,26 @@ async def get_member_evolution(guild_id: int, days: Optional[int] = 30) -> List[
 # =========================
 
 async def get_persistent_message(guild_id: int, message_type: str) -> Optional[Tuple[int, int]]:
-    """
-    Récupère (channel_id, message_id) pour un message persistant dans 'persistent_messages'.
-    """
-    server_id = await get_server_id(guild_id)
-    if not server_id:
-        logger.warning(f"Serveur ID non trouvé pour guild {guild_id}.")
-        return None
-    query = """
-        SELECT channel_id, message_id
-        FROM persistent_messages
-        WHERE guild_id = $1 AND message_type = $2;
-    """
-    try:
-        row = await database.fetchrow(query, server_id, message_type)
-        if row:
-            return (row["channel_id"], row["message_id"])
-        logger.warning(f"Message persistant '{message_type}' non trouvé (guild={guild_id}).")
-    except Exception as e:
-        logger.error(f"Erreur get_persistent_message: {e}")
+    """Délègue à :func:`utils.base.get_persistent_message`."""
+    data = await base_get_persistent_message(guild_id, message_type)
+    if data:
+        return data["channel_id"], data["message_id"]
     return None
 
-async def save_persistent_message(discord_guild_id: int, message_type: str,
-                                  channel_id: int, message_id: int,
-                                  requester_id: Optional[int] = None) -> None:
-    """
-    Sauvegarde (ou met à jour) un message persistant dans la table 'persistent_messages'.
-    """
-    server_id = await get_server_id(discord_guild_id)
-    if not server_id:
-        logger.error(f"Impossible de save_persistent_message: server_id introuvable pour {discord_guild_id}.")
-        return
-    query = """
-        INSERT INTO persistent_messages (guild_id, message_type, channel_id, message_id, requester_id)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (guild_id, message_type)
-        DO UPDATE SET channel_id = EXCLUDED.channel_id, message_id = EXCLUDED.message_id, requester_id = EXCLUDED.requester_id;
-    """
-    try:
-        await database.execute(query, server_id, message_type, channel_id, message_id, requester_id)
-        logger.info(f"Message persistant '{message_type}' sauvegardé pour guild {discord_guild_id}.")
-    except Exception as e:
-        logger.error(f"Erreur save_persistent_message: {e}")
+async def save_persistent_message(
+    discord_guild_id: int,
+    message_type: str,
+    channel_id: int,
+    message_id: int,
+    requester_id: Optional[int] = None,
+) -> None:
+    """Enregistre ou met à jour un message persistant."""
+    await store_persistent_message(
+        discord_guild_id,
+        channel_id,
+        message_id,
+        message_type,
+    )
 
 async def get_period_stats(guild_id: int, days: Optional[int]) -> dict:
     """

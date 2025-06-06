@@ -1,7 +1,12 @@
 from typing import Optional, Dict, List
 from utils.database import database
 import logging
-from services.base import get_or_create_server_record, store_persistent_message, get_persistent_message, delete_persistent_message
+from utils.base import (
+    get_or_create_server_record,
+    store_persistent_message,
+    get_persistent_message,
+    delete_persistent_message,
+)
 
 logger = logging.getLogger("game_role_service")
 

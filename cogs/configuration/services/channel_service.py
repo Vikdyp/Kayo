@@ -2,38 +2,15 @@
 
 import logging
 from utils.database import database
+from utils.base import get_or_create_server_record
 
 logger = logging.getLogger('services.server_channel_service')
 
 class ServerChannelService:
     @staticmethod
     async def get_or_create_server_record(guild_id: int, guild_name: str) -> int:
-        """
-        Vérifie si le serveur Discord (guild_id) existe déjà dans la table serveur_id.
-        Si non, l'insère. Retourne ensuite l'id (PK) de la table serveur_id.
-        """
-        try:
-            select_query = """
-            SELECT id
-            FROM serveur_id
-            WHERE guild_id = $1
-            """
-            record = await database.fetchrow(select_query, guild_id)
-            if record:
-                return record["id"]
-
-            insert_query = """
-            INSERT INTO serveur_id (guild_id, serveur)
-            VALUES ($1, $2)
-            RETURNING id;
-            """
-            new_id = await database.fetchval(insert_query, guild_id, guild_name)
-            logger.info(f"[ServerChannelService] Serveur créé: guild_id={guild_id}, id={new_id}")
-            return new_id
-
-        except Exception as e:
-            logger.error(f"[ServerChannelService] Erreur get_or_create_server_record: {e}")
-            return None
+        """Wrapper vers :func:`utils.base.get_or_create_server_record`."""
+        return await get_or_create_server_record(guild_id, guild_name)
 
     @staticmethod
     async def get_channels_config(guild_id: int, guild_name: str) -> dict:

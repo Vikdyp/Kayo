@@ -2,41 +2,15 @@
 
 import logging
 from utils.database import database
+from utils.base import get_or_create_server_record
 
 logger = logging.getLogger('services.server_role_service')
 
 class ServerRoleService:
     @staticmethod
     async def get_or_create_server_record(guild_id: int, guild_name: str) -> int:
-        """
-        Vérifie si le serveur Discord (guild_id) existe déjà dans la table serveur_id.
-        Si non, l'insère. Retourne ensuite l'id (PK) de la table serveur_id.
-        """
-        try:
-            # Tenter de récupérer l'ID du serveur
-            select_query = """
-            SELECT id
-            FROM serveur_id
-            WHERE guild_id = $1
-            """
-            record = await database.fetchrow(select_query, guild_id)
-            if record:
-                logger.debug(f"[ServerRoleService] Serveur existant trouvé: guild_id={guild_id}, id={record['id']}")
-                return record["id"]
-
-            # Si le serveur n'existe pas, l'insérer
-            insert_query = """
-            INSERT INTO serveur_id (guild_id, serveur)
-            VALUES ($1, $2)
-            RETURNING id;
-            """
-            new_id = await database.fetchval(insert_query, guild_id, guild_name)
-            logger.info(f"[ServerRoleService] Serveur créé: guild_id={guild_id}, id={new_id}")
-            return new_id
-
-        except Exception as e:
-            logger.error(f"[ServerRoleService] Erreur lors de la récupération/création du serveur {guild_id}: {e}")
-            return None
+        """Wrapper vers :func:`utils.base.get_or_create_server_record`."""
+        return await get_or_create_server_record(guild_id, guild_name)
 
     @staticmethod
     async def get_roles_config(guild_id: int, guild_name: str) -> dict:

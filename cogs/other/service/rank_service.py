@@ -1,6 +1,7 @@
 # cogs/voice_management/services/rank_service.py
 from typing import Optional
 from utils.database import database
+from utils.base import get_or_create_server_record
 import logging
 
 logger = logging.getLogger('services.rank_service')
@@ -8,31 +9,8 @@ logger = logging.getLogger('services.rank_service')
 class RankService:
     
     async def get_or_create_server_record(self, guild_id: int, guild_name: str) -> Optional[int]:
-        """
-        Récupère l'ID interne (PK) de la table serveur_id pour un guild_id donné.
-        Si le serveur n'existe pas déjà, il est créé.
-        """
-        try:
-            select_query = """
-            SELECT id
-            FROM serveur_id
-            WHERE guild_id = $1
-            """
-            record = await database.fetchrow(select_query, guild_id)
-            if record:
-                return record['id']
-
-            insert_query = """
-            INSERT INTO serveur_id (guild_id, serveur)
-            VALUES ($1, $2)
-            RETURNING id;
-            """
-            new_id = await database.fetchval(insert_query, guild_id, guild_name)
-            logger.info(f"[get_or_create_server_record] Serveur créé pour guild_id={guild_id}, id={new_id}")
-            return new_id
-        except Exception as e:
-            logger.error(f"[get_or_create_server_record] Erreur : {e}")
-            return None
+        """Wrapper vers :func:`utils.base.get_or_create_server_record`."""
+        return await get_or_create_server_record(guild_id, guild_name)
 
     async def get_config(self, guild_id: int, guild_name: str):
         """

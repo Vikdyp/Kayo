@@ -2,7 +2,12 @@
 import logging
 from typing import Optional, Dict
 from utils.database import database
-from services.base import get_or_create_server_record, store_persistent_message, get_persistent_message, delete_persistent_message
+from utils.base import (
+    get_or_create_server_record,
+    store_persistent_message,
+    get_persistent_message,
+    delete_persistent_message,
+)
 
 logger = logging.getLogger("rules_service")
 
