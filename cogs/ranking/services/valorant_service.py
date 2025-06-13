@@ -14,6 +14,7 @@ API_KEY = os.getenv("HENRIK_VALO_KEY")
 HEADERS = {"Authorization": API_KEY} if API_KEY else {}
 
 BASE_URL = "https://api.henrikdev.xyz/valorant/v2"
+VALORANT_API_URL = "https://valorant-api.com/v1"
 
 # Limiteur de taux : 90 requêtes par minute
 rate_limiter = AsyncLimiter(max_rate=90, time_period=60)
@@ -239,5 +240,23 @@ async def get_featured_store() -> Optional[List[Dict]]:
             else:
                 msg = (await resp.json()).get("message", "Erreur")
                 logger.error(f"[get_featured_store] {resp.status} – {msg}")
+                return None
+
+async def get_bundle_info(bundle_uuid: str) -> Optional[Dict]:
+    """Récupère les informations détaillées d'un bundle."""
+    url = f"{VALORANT_API_URL}/bundles/{bundle_uuid}"
+    async with rate_limiter:
+        session = get_session()
+        async with session.get(url) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                return data.get("data")
+            elif resp.status == 429:
+                msg = (await resp.json()).get("message", "")
+                logger.error(f"[get_bundle_info] 429 RateLimit – {msg}")
+                raise RateLimitException(msg)
+            else:
+                msg = (await resp.json()).get("message", "Erreur")
+                logger.error(f"[get_bundle_info] {resp.status} – {msg}")
                 return None
 
