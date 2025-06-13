@@ -86,4 +86,8 @@ LOGGING = {
     'twitch' : True,
     'twitch.service' : True,
 
+    # SHOP
+    'shop_notif' : True,
+    'valorant.shop_service' : True,
+
 }

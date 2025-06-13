@@ -41,6 +41,7 @@ class ChannelsConfiguration(commands.Cog):
         ("modération", "salon de modération"),
         ("rang", "salon pour definir les rang"),
         ("twitch", "salon des notif twitch"),
+        ("valorant_shop", "Salon des shops Valorant"),
     ]
 
     ACTION_CHOICES = [

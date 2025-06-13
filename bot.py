@@ -93,6 +93,7 @@ cog_paths = [
     'cogs.admin.status',
     'cogs.twitch.twitch_notifier',
     'cogs.ranking.mmr_tracker',
+    'cogs.shop.shop_notifier',
 ]
 
 @bot.event
