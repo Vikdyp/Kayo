@@ -222,3 +222,22 @@ async def get_stored_mmr_history(
                     logger.error(f"[get_stored_mmr_history] {resp.status} – {msg}")
                     break
     return history
+
+async def get_featured_store() -> Optional[List[Dict]]:
+    """Récupère les offres de la boutique en vedette."""
+    url = f"{BASE_URL}/store-featured"
+    async with rate_limiter:
+        session = get_session()
+        async with session.get(url, headers=HEADERS) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                return data.get("data", [])
+            elif resp.status == 429:
+                msg = (await resp.json()).get("message", "")
+                logger.error(f"[get_featured_store] 429 RateLimit – {msg}")
+                raise RateLimitException(msg)
+            else:
+                msg = (await resp.json()).get("message", "Erreur")
+                logger.error(f"[get_featured_store] {resp.status} – {msg}")
+                return None
+
