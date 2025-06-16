@@ -281,15 +281,12 @@ class EmbedCog(commands.Cog):
             title="Gestion de vos informations Valorant",
             description=(
                 "Ce message vous permet de **renseigner** ou d'**effacer** vos données Valorant.\n\n"
-                "**Bouton bleu** : Enregistrer votre pseudo et votre tag Valorant.\n"
-                "**Bouton rouge** : Supprimer vos informations Valorant de la base.\n\n"
                 "**Instructions :**\n"
                 "1. Cliquez sur le bouton bleu pour lier votre compte Valorant.\n"
                 "2. Un formulaire s'ouvrira où vous devrez entrer :\n"
                 "   - **Pseudo** : Votre pseudo Valorant (exemple : `globeX`).\n"
                 "   - **Tag** : Votre tag Valorant sans le `#` (exemple : `meow`).\n\n"
-                "*Note : Vous devez d'abord accepter le règlement si vous n'êtes pas encore enregistré.*\n\n"
-                f"*Les rôles correspondant à votre rang Valorant seront mis à jour rapidement.*"
+                "*Note : Vous devez d'abord accepter le règlement.*\n\n"
             ),
             color=discord.Color.blue()
         )
