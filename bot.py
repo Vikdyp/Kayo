@@ -107,9 +107,8 @@ async def on_ready():
         clean_old_logs.start()
         logger.info("Tâche de nettoyage planifiée démarrée.")
 
-    if not rank_updater.task or not rank_updater.task.is_running():
-        setup_rank_updater(bot)
-        logger.info("Tâche de mise à jour des salons démarrée.")
+    setup_rank_updater(bot)
+    logger.info("RankUpdater : écoute des mises à jour de présence activée.")
 
     await asyncio.sleep(1)
     try:

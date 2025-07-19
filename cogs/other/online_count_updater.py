@@ -2,13 +2,13 @@
 
 import discord
 import logging
-from discord.ext import tasks
+from datetime import datetime, timedelta
 
 from cogs.other.service.rank_service import RankService
 
 logger = logging.getLogger("rank_updater")
 
-# Dictionnaires de correspondance pour la police spéciale
+# Dictionnaire de correspondance pour la police spéciale
 ALPHABET_STYLE = {
     "a": "𝙖", "b": "𝙗", "c": "𝙘", "d": "𝙙", "e": "𝙚", "f": "𝙛", "g": "𝙜",
     "h": "𝙝", "i": "𝙞", "j": "𝙟", "k": "𝙠", "l": "𝙡", "m": "𝙢", "n": "𝙣",
@@ -39,87 +39,91 @@ def stylize(text: str) -> str:
             result += char
     return result
 
+
 class RankUpdater:
     def __init__(self, bot: discord.Client):
         self.bot = bot
-        self.rank_service = RankService()  # Création d'une instance de RankService
-        self.task = self._task_loop  # Référence à la tâche
+        self.rank_service = RankService()
+        # Pour le rate-limit : stocke pour chaque salon la liste des timestamps d'édition
+        self._edit_timestamps: dict[int, list[datetime]] = {}
 
-    def start(self):
-        """Démarre la tâche de mise à jour."""
-        if not self.task.is_running():
-            self.task.start()
-            logger.info("Tâche périodique de mise à jour des salons démarrée.")
+    async def on_presence_update(self, before: discord.Member, after: discord.Member):
+        # Ne rien faire si le status n'a pas changé offline ↔ online
+        if ((before.status == discord.Status.offline and after.status != discord.Status.offline)
+            or (before.status != discord.Status.offline and after.status == discord.Status.offline)):
 
-    def stop(self):
-        """Arrête proprement la tâche."""
-        if self.task.is_running():
-            self.task.cancel()
-            logger.info("Tâche périodique de mise à jour des salons arrêtée.")
-
-    @tasks.loop(minutes=10)
-    async def _task_loop(self):
-        """Tâche principale pour mettre à jour les salons des rangs."""
-        logger.info("Exécution de la tâche de mise à jour des salons.")
-        for guild in self.bot.guilds:
+            guild = after.guild
             guild_id = guild.id
             guild_name = guild.name
 
+            # Récupère la config mise à jour
             config = await self.rank_service.get_config(guild_id, guild_name)
-            roles_config = config.get("roles", {})
-            channels_config = config.get("channels", {})
+            roles_cfg = config.get("roles", {})
+            channels_cfg = config.get("channels", {})
 
-            ranks = ["fer", "bronze", "argent", "or", "platine", "diamant", "ascendant", "immortel", "radiant"]
+            # Pour chaque rang configuré, vérifier si l'utilisateur a ce rôle
+            for rank, role_id in roles_cfg.items():
+                if role_id not in [r.id for r in after.roles]:
+                    continue
 
-            for rank in ranks:
-                role_id = roles_config.get(rank)
-                channel_id = channels_config.get(rank)
-
-                if not role_id or not channel_id:
-                    logger.warning(f"Rang {rank.capitalize()} : rôle ou salon non configuré pour le serveur {guild_id}.")
+                channel_id = channels_cfg.get(rank)
+                if not channel_id:
                     continue
 
                 role = guild.get_role(role_id)
                 channel = guild.get_channel(channel_id)
-
-                if not role:
-                    logger.warning(f"Rôle {rank.capitalize()} introuvable dans le serveur {guild_id}.")
+                if not role or not channel:
                     continue
 
-                if not channel:
-                    logger.warning(f"Salon {rank.capitalize()} introuvable dans le serveur {guild_id}.")
-                    continue
+                # Compte les membres en ligne pour ce rôle
+                online_count = sum(1 for m in role.members if m.status != discord.Status.offline)
+                new_name = f"{stylize(rank.capitalize())} - {stylize(str(online_count))} {stylize('en ligne')}"
 
-                # Filtrer les membres en ligne pour ce rôle
-                online_members = [member for member in role.members if member.status != discord.Status.offline]
-                online_count = len(online_members)
+                if channel.name != new_name:
+                    await self._edit_channel_name(channel, new_name)
 
-                # Construit le nouveau nom du salon en stylisant à la fois le rang et "en ligne"
-                new_channel_name = f"{stylize(rank.capitalize())} - {stylize(str(online_count))} {stylize('en ligne')}"
-                if channel.name != new_channel_name:
-                    try:
-                        await channel.edit(name=new_channel_name)
-                        logger.info(f"Nom du salon mis à jour pour le serveur {guild_id} : {new_channel_name}.")
-                    except Exception as e:
-                        logger.error(f"Erreur lors de la mise à jour du salon {channel.name} pour le serveur {guild_id} : {e}")
-                else:
-                    logger.debug(f"Nom du salon {channel.name} déjà à jour.")
+    async def _edit_channel_name(self, channel: discord.TextChannel, new_name: str):
+        """Nomme le salon en limitant à 2 edits toutes les 10 minutes par salon."""
+        now = datetime.utcnow()
+        timestamps = self._edit_timestamps.setdefault(channel.id, [])
 
-    @_task_loop.before_loop
-    async def before_task_loop(self):
-        """Attendez que le bot soit prêt avant de démarrer la tâche."""
-        logger.info("Attente que le bot soit prêt pour démarrer la tâche de mise à jour des salons.")
-        await self.bot.wait_until_ready()
+        # Conserve uniquement les timestamps des 10 dernières minutes
+        ten_min_ago = now - timedelta(minutes=10)
+        timestamps = [t for t in timestamps if t > ten_min_ago]
+        self._edit_timestamps[channel.id] = timestamps
+
+        if len(timestamps) < 2:
+            try:
+                await channel.edit(name=new_name)
+                timestamps.append(now)
+                logger.info(f"Salon {channel.id} renommé en « {new_name} »")
+            except Exception as e:
+                logger.error(f"Erreur lors de l'édition du salon {channel.id} : {e}")
+        else:
+            logger.warning(f"Rate limit atteint pour le salon {channel.id} — update ignorée.")
+
+    def start(self):
+        """Active le RankUpdater (listener de présence)."""
+        logger.info("RankUpdater : écoute des mises à jour de présence activée.")
+
+    def stop(self):
+        """Désactive le RankUpdater."""
+        logger.info("RankUpdater : écoute des mises à jour de présence désactivée.")
+
 
 # Singleton
 rank_updater = RankUpdater(None)
 
+
 def setup_rank_updater(bot: discord.Client):
-    """Initialise et démarre le RankUpdater avec le bot."""
+    """Initialise et configure le RankUpdater avec le bot."""
     rank_updater.bot = bot
-    rank_updater.rank_service = RankService()  # Assurez-vous que RankService est initialisé avec l'instance
+    rank_updater.rank_service = RankService()
+    # Écoute les mises à jour de présence
+    bot.add_listener(rank_updater.on_presence_update, 'on_presence_update')
     rank_updater.start()
     logger.info("RankUpdater setup complete.")
+
 
 def teardown_rank_updater():
     """Arrête le RankUpdater."""
