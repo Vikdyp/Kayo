@@ -1,5 +1,5 @@
 # Environnements virtuels
-venv/
+.venv/
 env/
 .env
 
