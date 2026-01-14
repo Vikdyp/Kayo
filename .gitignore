@@ -25,7 +25,6 @@ SQL_test.py
 *.swp
 
 # Discloud
-discloud.config
 
 testss.py
 
