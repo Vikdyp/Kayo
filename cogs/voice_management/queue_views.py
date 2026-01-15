@@ -270,7 +270,7 @@ class TeamSizeSelect(Select):
                 )
                 # Message clarifié pour indiquer le malus appliqué
                 await interaction.followup.send(
-                    "Confirmez-vous l'utilisation du MMR étendu (-25%) ?",
+                    "Accepter vous le -25% ?",
                     view=mmr_view,
                     ephemeral=True
                 )

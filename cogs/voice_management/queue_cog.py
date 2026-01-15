@@ -512,6 +512,9 @@ class MatchmakingQueue(commands.Cog):
 
     async def remove_from_queue(self, user: discord.Member) -> None:
         async with self.queue_lock():
+            server_id = await self._get_server_id(user.guild.id)
+            if not server_id:
+                raise ValueError("Serveur introuvable.")
             # Récupérer les rôles avant suppression
             roles = await MatchmakingService.get_roles_for_discord_member(server_id, user.id) or []
 
