@@ -113,12 +113,21 @@ async def on_ready():
     await asyncio.sleep(1)
     try:
         if TEST_MODE:
-            guild = discord.Object(id=int(TEST_GUILD_ID))
-            synced_commands = await bot.tree.sync(guild=guild)
-            logger.info(f"Commandes synchronisées pour la guilde {TEST_GUILD_ID}: {len(synced_commands)}")
+            if not TEST_GUILD_ID:
+                logger.error("TEST_MODE enabled but TEST_GUILD_ID is not set; skipping command sync.")
+            else:
+                try:
+                    guild_id = int(TEST_GUILD_ID)
+                except ValueError:
+                    logger.error("Invalid TEST_GUILD_ID: %s", TEST_GUILD_ID)
+                else:
+                    guild = discord.Object(id=guild_id)
+                    bot.tree.copy_global_to(guild=guild)
+                    synced_commands = await bot.tree.sync(guild=guild)
+                    logger.info("Synced commands for test guild %s: %s", guild_id, len(synced_commands))
         else:
             synced_commands = await bot.tree.sync()
-            logger.info(f"Commandes globales synchronisées : {len(synced_commands)}")
+            logger.info("Synced global commands: %s", len(synced_commands))
     except Exception as e:
         logger.error(f"Erreur lors de la synchronisation des commandes : {e}")
 
@@ -160,6 +169,9 @@ async def load_cogs():
 async def main():
     logger = logging.getLogger('bot')
     try:
+        if not DISCORD_TOKEN:
+            logger.error("Missing DISCORD_TOKEN for current mode (TEST_MODE=%s).", TEST_MODE)
+            return
         async with bot:
             await load_cogs()
             await bot.start(DISCORD_TOKEN)

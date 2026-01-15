@@ -102,6 +102,14 @@ class ScrimService:
         info["team2"] = team2
         return info
 
+    async def get_scrim_participants(self, scrim_id: int) -> List[int]:
+        info = await self.get_scrim_info(scrim_id)
+        if not info:
+            return []
+        team1 = info.get("team1") or []
+        team2 = info.get("team2") or []
+        return list(team1) + list(team2)
+
     async def delete_scrim(self, scrim_id: int) -> bool:
         query = "DELETE FROM scrims WHERE id = $1;"
         try:
