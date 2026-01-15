@@ -7,10 +7,13 @@ from matplotlib import ticker
 import matplotlib.pyplot as plt
 from datetime import datetime, time
 from zoneinfo import ZoneInfo
+from typing import Optional
 
 from cogs.accueil.services import accueil_services
 
 logger = logging.getLogger("accueil.stalker")
+
+STATS_EMBED_ACTIONS = ("stat_embed", "stats_embed")
 
 
 # ----- VUE POUR LES BOUTONS -----
@@ -60,7 +63,6 @@ class StatsView(discord.ui.View):
 class StalkerCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.channel_id = 1236437099310219336
         self.persistent_message = None
 
         # Tâche de mise à jour quotidienne
@@ -71,6 +73,23 @@ class StalkerCog(commands.Cog):
 
     def cog_unload(self):
         self.daily_update.cancel()
+
+    async def get_stats_channel(self, guild: discord.Guild) -> Optional[discord.abc.GuildChannel]:
+        actions = list(STATS_EMBED_ACTIONS)
+        channels = await accueil_services.get_channel_ids(guild.id, actions)
+        channel_id = None
+        for action in actions:
+            channel_id = channels.get(action)
+            if channel_id:
+                break
+        if not channel_id:
+            logger.warning("Aucun salon stats_embed configure pour la guilde %s.", guild.id)
+            return None
+        channel = guild.get_channel(channel_id) or self.bot.get_channel(channel_id)
+        if not channel:
+            logger.error("Salon stats_embed introuvable pour la guilde %s (id=%s).", guild.id, channel_id)
+            return None
+        return channel
 
     async def load_persistent_message(self):
         """Récupère le message persistant depuis la base et réattache la vue."""
@@ -157,9 +176,8 @@ class StalkerCog(commands.Cog):
         selon la période demandée.
         """
         await accueil_services.ensure_today_member_stats(guild.id)
-        channel = self.bot.get_channel(self.channel_id)
+        channel = await self.get_stats_channel(guild)
         if channel is None:
-            logger.error(f"Canal introuvable avec l'ID {self.channel_id}.")
             return
 
         # Récupère les stats selon la période cliquée
@@ -268,9 +286,10 @@ class StalkerCog(commands.Cog):
         """
         try:
             await self.update_stats_embed(ctx.guild, period="default")
-            channel = self.bot.get_channel(self.channel_id)
+            channel = await self.get_stats_channel(ctx.guild)
             if channel is None:
-                raise Exception(f"Canal introuvable avec l'ID {self.channel_id}")
+                await ctx.send("Aucun salon stats_embed configure pour cette guilde.", delete_after=10)
+                return
 
             messages = [msg async for msg in channel.history(limit=10)]
             bot_message = None
@@ -306,9 +325,8 @@ class StalkerCog(commands.Cog):
         await accueil_services.log_member_event_aggregated(member.guild.id, "leave")
         logger.info(f"{member.name} a quitté le serveur.")
 
-        channel = self.bot.get_channel(self.channel_id)
+        channel = await self.get_stats_channel(member.guild)
         if not channel:
-            logger.error(f"Canal introuvable avec l'ID {self.channel_id}")
             return
         thread = self.bot.get_channel(1328749667449831434)
         if thread is None:

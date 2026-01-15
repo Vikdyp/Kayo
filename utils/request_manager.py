@@ -86,7 +86,7 @@ class RequestManager:
         self.workers: list[asyncio.Task] = []
         self.shutdown_flag: bool = False
         self.worker_count: int = worker_count
-        self.role_cache: Dict[str, discord.Role] = {}
+        self.role_cache: Dict[tuple[int, str], discord.Role] = {}
         self.request_count_per_hour: Dict[int, int] = {}
 
     def start(self, bot: discord.Client) -> None:
@@ -158,9 +158,10 @@ class RequestManager:
         """
         Retourne un rôle en vérifiant d'abord dans le cache, puis dans la guild.
         """
-        if role_name not in self.role_cache:
-            self.role_cache[role_name] = discord.utils.get(guild.roles, name=role_name)
-        return self.role_cache.get(role_name)
+        cache_key = (guild.id, role_name)
+        if cache_key not in self.role_cache:
+            self.role_cache[cache_key] = discord.utils.get(guild.roles, name=role_name)
+        return self.role_cache.get(cache_key)
 
     async def is_admin_user(self, user: discord.Member) -> bool:
         """

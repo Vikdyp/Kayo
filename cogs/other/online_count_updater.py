@@ -2,6 +2,7 @@
 
 import discord
 import logging
+import asyncio
 from datetime import datetime, timedelta
 
 from cogs.other.service.rank_service import RankService
@@ -46,6 +47,10 @@ class RankUpdater:
         self.rank_service = RankService()
         # Pour le rate-limit : stocke pour chaque salon la liste des timestamps d'édition
         self._edit_timestamps: dict[int, list[datetime]] = {}
+        # Periodic refresh to avoid stale names after restarts.
+        self._refresh_task = None
+        self._refresh_interval = 600
+        self._listener_added = False
 
     async def on_presence_update(self, before: discord.Member, after: discord.Member):
         # Ne rien faire si le status n'a pas changé offline ↔ online
@@ -56,31 +61,62 @@ class RankUpdater:
             guild_id = guild.id
             guild_name = guild.name
 
-            # Récupère la config mise à jour
             config = await self.rank_service.get_config(guild_id, guild_name)
             roles_cfg = config.get("roles", {})
-            channels_cfg = config.get("channels", {})
+            if not roles_cfg:
+                return
 
-            # Pour chaque rang configuré, vérifier si l'utilisateur a ce rôle
-            for rank, role_id in roles_cfg.items():
-                if role_id not in [r.id for r in after.roles]:
-                    continue
+            member_role_ids = {r.id for r in after.roles}
+            only_ranks = {rank for rank, role_id in roles_cfg.items() if role_id in member_role_ids}
+            if not only_ranks:
+                return
 
-                channel_id = channels_cfg.get(rank)
-                if not channel_id:
-                    continue
+            await self.refresh_guild(guild, config=config, only_ranks=only_ranks)
 
-                role = guild.get_role(role_id)
-                channel = guild.get_channel(channel_id)
-                if not role or not channel:
-                    continue
+    async def refresh_guild(self, guild, config=None, only_ranks=None):
+        if config is None:
+            config = await self.rank_service.get_config(guild.id, guild.name)
 
-                # Compte les membres en ligne pour ce rôle
-                online_count = sum(1 for m in role.members if m.status != discord.Status.offline)
-                new_name = f"{stylize(rank.capitalize())} - {stylize(str(online_count))} {stylize('en ligne')}"
+        roles_cfg = config.get("roles", {})
+        channels_cfg = config.get("channels", {})
+        if not roles_cfg or not channels_cfg:
+            return
 
-                if channel.name != new_name:
-                    await self._edit_channel_name(channel, new_name)
+        for rank, role_id in roles_cfg.items():
+            if only_ranks is not None and rank not in only_ranks:
+                continue
+
+            channel_id = channels_cfg.get(rank)
+            if not channel_id:
+                continue
+
+            role = guild.get_role(role_id)
+            channel = guild.get_channel(channel_id)
+            if not role or not channel:
+                continue
+
+            online_count = sum(1 for m in role.members if m.status != discord.Status.offline)
+            new_name = f"{stylize(rank.capitalize())} - {stylize(str(online_count))} {stylize('en ligne')}"
+
+            if channel.name != new_name:
+                await self._edit_channel_name(channel, new_name)
+
+    async def refresh_all_guilds(self):
+        if not self.bot:
+            return
+        for guild in self.bot.guilds:
+            await self.refresh_guild(guild)
+
+    async def _refresh_loop(self):
+        if not self.bot:
+            return
+        await self.bot.wait_until_ready()
+        while True:
+            try:
+                await self.refresh_all_guilds()
+            except Exception as e:
+                logger.error(f"[rank_updater] Erreur refresh periodique: {e}")
+            await asyncio.sleep(self._refresh_interval)
 
     async def _edit_channel_name(self, channel: discord.TextChannel, new_name: str):
         """Nomme le salon en limitant à 2 edits toutes les 10 minutes par salon."""
@@ -104,10 +140,15 @@ class RankUpdater:
 
     def start(self):
         """Active le RankUpdater (listener de présence)."""
+        if self.bot and (self._refresh_task is None or self._refresh_task.done()):
+            self._refresh_task = self.bot.loop.create_task(self._refresh_loop())
         logger.info("RankUpdater : écoute des mises à jour de présence activée.")
 
     def stop(self):
         """Désactive le RankUpdater."""
+        if self._refresh_task and not self._refresh_task.done():
+            self._refresh_task.cancel()
+        self._refresh_task = None
         logger.info("RankUpdater : écoute des mises à jour de présence désactivée.")
 
 
@@ -120,7 +161,9 @@ def setup_rank_updater(bot: discord.Client):
     rank_updater.bot = bot
     rank_updater.rank_service = RankService()
     # Écoute les mises à jour de présence
-    bot.add_listener(rank_updater.on_presence_update, 'on_presence_update')
+    if not rank_updater._listener_added:
+        bot.add_listener(rank_updater.on_presence_update, 'on_presence_update')
+        rank_updater._listener_added = True
     rank_updater.start()
     logger.info("RankUpdater setup complete.")
 

@@ -6,6 +6,12 @@ from dotenv import load_dotenv
 # Charger les variables d'environnement depuis le fichier .env
 load_dotenv()
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in ["true", "1", "t", "yes", "y", "on"]
+
 DATABASE = {
     'user': os.getenv('DATABASE_USER'),
     'password': os.getenv('DATABASE_PASSWORD'),
@@ -16,11 +22,10 @@ DATABASE = {
 
 }
 
-DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
-TEST_GUILD_ID = os.getenv('TEST_GUILD_ID')
-
 # Activer le mode test
-TEST_MODE = False
+TEST_MODE = _env_bool("TEST_MODE", False)
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN_TEST" if TEST_MODE else "DISCORD_TOKEN")
+TEST_GUILD_ID = os.getenv('TEST_GUILD_ID')
 
 # Configuration des logs
 LOGGING = {

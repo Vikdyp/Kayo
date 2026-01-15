@@ -42,9 +42,6 @@ async def add_event(guild_id: int, reporter_discord_id: int, target_discord_id: 
     # Récupération des IDs internes
     reporter_id = await get_internal_id(reporter_discord_id)
     target_id = await get_internal_id(target_discord_id)
-    server_id = await get_server_id(guild_id)
-    if not server_id:
-        return {"reports": 0, "recommendations": 0}
     if reporter_id is None or target_id is None:
         return (False, "Erreur interne lors de la récupération des identifiants.")
 
@@ -92,6 +89,10 @@ async def add_event(guild_id: int, reporter_discord_id: int, target_discord_id: 
 async def get_profile_data(guild_id: int, target_discord_id: int) -> Dict[str, int]:
     target_id = await get_internal_id(target_discord_id)
     if target_id is None:
+        return {"reports": 0, "recommendations": 0}
+
+    server_id = await get_server_id(guild_id)
+    if not server_id:
         return {"reports": 0, "recommendations": 0}
 
     query_reports = """

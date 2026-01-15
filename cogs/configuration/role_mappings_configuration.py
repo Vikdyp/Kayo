@@ -22,8 +22,6 @@ class RolesConfiguration(commands.Cog):
         "bon joueur", "booster", "ban", "mauvais joueur", "admin",
         "fer", "bronze", "argent", "or", "platine", "diamant", "ascendant",
         "immortel", "radiant", "sentinel", "duelist", "controller", "initiator", "fill",
-        "valorant", "valorant e-sports", "valorant tryhard", "valorant chill",
-        "rocket league", "rocket league tryhard", "rocket league chill",
         "tryhard", "e-sports", "chill", "tester", "francais", "anglais", "espagnol", "pc", "console",
         "quoicoubeh_top3"
     ]

@@ -36,6 +36,7 @@ class ChannelsConfiguration(commands.Cog):
         ("immortel", "Salon rang immortel"),
         ("radiant", "Salon rang radiant"),
         ("welcome", "Salon d'acceuil"),
+        ("stat_embed", "Salon embed statistiques"),
         ("rules", "Salon des regle du serveur"),
         ("introductions", "salon pour la presentation du serveur"),
         ("modération", "salon de modération"),
