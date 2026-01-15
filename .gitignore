@@ -14,6 +14,7 @@ __pycache__/
 # Fichiers de données
 data/*.json
 backup.dump
+*.sql
 
 restore_database.py
 restore_database2.py

@@ -9,9 +9,10 @@ from discord.ui import Button, Select, View
 
 from cogs.voice_management.services.five_stack_service import MatchmakingService
 from cogs.ranking.services.assign_rank_service import valorant_account_linked
+from cogs.configuration.services.channel_service import ServerChannelService
 
 # Constante pour l'ID du salon où l'utilisateur doit lier ses informations Valorant
-VALORANT_INFO_CHANNEL_ID: int = 1323673115922010143
+VALORANT_INFO_ACTION = "rang"
 
 # Logger local
 logger = logging.getLogger(__name__)
@@ -176,11 +177,28 @@ class TeamSizeSelect(Select):
                 await interaction.response.defer(ephemeral=True)
 
             user = interaction.user
+            channel_ref = "`#rang`"
+            if interaction.guild:
+                channel_id = await ServerChannelService.get_channel_id(
+                    interaction.guild.id,
+                    interaction.guild.name,
+                    VALORANT_INFO_ACTION,
+                )
+                if channel_id:
+                    channel_ref = f"<#{channel_id}>"
             selected_value = self.values[0]
             team_size = int(selected_value)
 
+            server_id = await MatchmakingService.get_server_id_by_guild_id(self.guild_id)
+            if not server_id:
+                await interaction.followup.send(
+                    "Impossible de recuperer les informations du serveur. Reessayez plus tard.",
+                    ephemeral=True
+                )
+                return
+
             # Vérifier si l'utilisateur est déjà en queue
-            if await MatchmakingService.is_player_in_queue(user.id):
+            if await MatchmakingService.is_player_in_queue(server_id, user.id):
                 await interaction.followup.send(
                     "Vous êtes déjà dans la queue.",
                     ephemeral=True
@@ -190,7 +208,7 @@ class TeamSizeSelect(Select):
             # Vérification de la présence des infos Valorant
             if not await valorant_account_linked(user.id):
                 await interaction.followup.send(
-                    f"Veuillez lier votre compte dans le salon <#{VALORANT_INFO_CHANNEL_ID}> avant de rejoindre la queue.",
+                    f"Veuillez lier votre compte dans le salon {channel_ref} avant de rejoindre la queue.",
                     ephemeral=True
                 )
                 return
@@ -202,7 +220,7 @@ class TeamSizeSelect(Select):
             if elo is None or region is None:
                 await interaction.followup.send(
                     f"Vos informations Valorant sont incomplètes. "
-                    f"Veuillez lier votre compte dans le salon <#{VALORANT_INFO_CHANNEL_ID}> avant de rejoindre la queue.",
+                    f"Veuillez lier votre compte dans le salon {channel_ref} avant de rejoindre la queue.",
                     ephemeral=True
                 )
                 return
@@ -226,7 +244,7 @@ class TeamSizeSelect(Select):
 
             # Vérification pour les équipes : seul le leader peut inscrire l'équipe
             if self.entry_type == "team":
-                code = await MatchmakingService.is_user_leader_of_team(user.id)
+                code = await MatchmakingService.is_user_leader_of_team(user.id, server_id)
                 if not code:
                     await interaction.followup.send(
                         "Vous n'êtes pas leader d'une équipe. Seul le leader peut inscrire l'équipe dans la queue. "

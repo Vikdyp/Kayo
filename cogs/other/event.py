@@ -28,7 +28,7 @@ class ParticipateButton(Button):
         user = interaction.user
 
         # Vérification du nombre d'invitations
-        invite_count = await self.cog.get_invite_count(user.id)
+        invite_count = await self.cog.get_invite_count(interaction.guild, user.id)
         if invite_count < MIN_INVITES_REQUIRED:
             await interaction.response.send_message(
                 f"Tu dois avoir invité au moins {MIN_INVITES_REQUIRED} membres pour participer. Tu en as invité {invite_count}.",
@@ -37,13 +37,13 @@ class ParticipateButton(Button):
             return
 
         # Vérification de l'inscription
-        if await self.cog.is_participant(user.id):
+        if await self.cog.is_participant(interaction.guild, user.id):
             await interaction.response.send_message("Tu es déjà inscrit(e) à l'événement.", ephemeral=True)
             return
 
         # Ajout en base de données
-        await self.cog.add_participant(user.id)
-        current_count = await self.cog.get_participant_count()
+        await self.cog.add_participant(interaction.guild, user.id)
+        current_count = await self.cog.get_participant_count(interaction.guild)
         updated_embed = self.event_embed.copy()
         updated_embed.set_field_at(
             0, name="👤Participants", value=f"{current_count} / {OBJECTIF_PARTICIPANTS}", inline=False
@@ -131,7 +131,7 @@ class EventCog(commands.Cog):
 
         # Préparation de l'embed mis à jour
         total_members = guild.member_count
-        current_participants = await self.get_participant_count()
+        current_participants = await self.get_participant_count(guild)
         embed = discord.Embed(
             title="🎁GIVEAWAY🎁",
             description=(
@@ -168,38 +168,53 @@ class EventCog(commands.Cog):
 
     # Méthodes d'accès à la BDD pour l'invitation et les participants
 
-    async def get_invite_count(self, user_id: int) -> int:
+    async def get_invite_count(self, guild: discord.Guild, user_id: int) -> int:
         await database.ensure_connected()
-        query = "SELECT count FROM invite_tracker WHERE inviter_id = $1;"
-        result = await database.fetchval(query, user_id)
+        internal_server_id = await self.get_internal_server_id(guild)
+        if not internal_server_id:
+            return
+        internal_server_id = await self.get_internal_server_id(guild)
+        if not internal_server_id:
+            return 0
+        query = "SELECT count FROM invite_tracker WHERE inviter_id = $1 AND server_id = $2;"
+        result = await database.fetchval(query, user_id, internal_server_id)
         return result if result is not None else 0
 
-    async def add_participant(self, user_id: int):
+    async def add_participant(self, guild: discord.Guild, user_id: int):
         await database.ensure_connected()
         query = """
-        INSERT INTO participant (user_id)
-        VALUES ($1)
-        ON CONFLICT (user_id) DO NOTHING;
+        INSERT INTO participant (user_id, server_id)
+        VALUES ($1, $2)
+        ON CONFLICT (user_id, server_id) DO NOTHING;
         """
-        await database.execute(query, user_id)
+        await database.execute(query, user_id, internal_server_id)
         logger.info(f"Participant ajouté : {user_id}")
 
-    async def is_participant(self, user_id: int) -> bool:
+    async def is_participant(self, guild: discord.Guild, user_id: int) -> bool:
         await database.ensure_connected()
-        query = "SELECT user_id FROM participant WHERE user_id = $1;"
-        result = await database.fetchval(query, user_id)
+        internal_server_id = await self.get_internal_server_id(guild)
+        if not internal_server_id:
+            return False
+        query = "SELECT user_id FROM participant WHERE user_id = $1 AND server_id = $2;"
+        result = await database.fetchval(query, user_id, internal_server_id)
         return result is not None
 
-    async def get_participant_count(self) -> int:
+    async def get_participant_count(self, guild: discord.Guild) -> int:
         await database.ensure_connected()
-        query = "SELECT COUNT(*) FROM participant;"
-        result = await database.fetchval(query)
+        internal_server_id = await self.get_internal_server_id(guild)
+        if not internal_server_id:
+            return 0
+        query = "SELECT COUNT(*) FROM participant WHERE server_id = $1;"
+        result = await database.fetchval(query, internal_server_id)
         return result if result is not None else 0
 
-    async def get_all_participants(self):
+    async def get_all_participants(self, guild: discord.Guild):
         await database.ensure_connected()
-        query = "SELECT user_id FROM participant;"
-        rows = await database.fetch(query)
+        internal_server_id = await self.get_internal_server_id(guild)
+        if not internal_server_id:
+            return []
+        query = "SELECT user_id FROM participant WHERE server_id = $1;"
+        rows = await database.fetch(query, internal_server_id)
         return [row['user_id'] for row in rows]
 
     # ----------------- Commandes -----------------
@@ -236,7 +251,7 @@ class EventCog(commands.Cog):
         """
         Commande admin qui tire au sort un membre parmi ceux inscrits à l'événement.
         """
-        participants = await self.get_all_participants()
+        participants = await self.get_all_participants(ctx.guild)
         if not participants:
             await ctx.send("Aucun participant n'est inscrit pour le moment.")
             return

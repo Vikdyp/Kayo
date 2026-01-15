@@ -112,16 +112,16 @@ class ScrimService:
             logger.error("Erreur lors de la suppression du scrim %s: %s", scrim_id, e)
             return False
 
-    async def increment_victory(self, internal_user_id: int) -> None:
-        update_query = "UPDATE scrim_wins SET wins = wins + 1 WHERE internal_user_id = $1;"
-        result = await database.execute(update_query, internal_user_id)
+    async def increment_victory(self, internal_user_id: int, server_id: int) -> None:
+        update_query = "UPDATE scrim_wins SET wins = wins + 1 WHERE internal_user_id = $1 AND server_id = $2;"
+        result = await database.execute(update_query, internal_user_id, server_id)
         if result is None:
-            insert_query = "INSERT INTO scrim_wins (internal_user_id, wins) VALUES ($1, 1);"
-            await database.execute(insert_query, internal_user_id)
+            insert_query = "INSERT INTO scrim_wins (internal_user_id, wins, server_id) VALUES ($1, 1, $2);"
+            await database.execute(insert_query, internal_user_id, server_id)
 
-    async def get_top50_scrim_players(self) -> List[Dict[str, Any]]:
-        query = "SELECT internal_user_id, wins FROM scrim_wins ORDER BY wins DESC LIMIT 50;"
-        records = await database.fetch(query)
+    async def get_top50_scrim_players(self, server_id: int) -> List[Dict[str, Any]]:
+        query = "SELECT internal_user_id, wins FROM scrim_wins WHERE server_id = $1 ORDER BY wins DESC LIMIT 50;"
+        records = await database.fetch(query, server_id)
         return [dict(record) for record in records] if records else []
 
     async def persist_message(

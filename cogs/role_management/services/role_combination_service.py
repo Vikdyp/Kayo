@@ -6,6 +6,17 @@ import logging
 
 logger = logging.getLogger("role_combination_service")
 
+async def get_server_id(guild_id: int) -> Optional[int]:
+    query = "SELECT id FROM serveur_id WHERE guild_id = $1;"
+    try:
+        server_id = await database.fetchval(query, guild_id)
+        if not server_id:
+            logger.warning(f"Aucun serveur trouve pour guild_id={guild_id}.")
+        return server_id
+    except Exception as e:
+        logger.error(f"Erreur lors de la recuperation du server_id pour guild_id={guild_id}: {e}")
+        return None
+
 
 class RoleCombinationService:
     """Service pour gérer les combinaisons de rôles."""
@@ -18,6 +29,11 @@ class RoleCombinationService:
         :param guild_id: ID du serveur Discord.
         :return: Liste des combinaisons de rôles avec leurs IDs Discord.
         """
+        server_id = await get_server_id(guild_id)
+        if not server_id:
+            return []
+
+        guild_id = server_id
         query = """
         SELECT 
             rc.primary_role_id, 
@@ -30,10 +46,10 @@ class RoleCombinationService:
         JOIN roles_configurations r1 ON rc.primary_role_id = r1.id
         JOIN roles_configurations r2 ON rc.secondary_role_id = r2.id
         JOIN roles_configurations r3 ON rc.combined_role_id = r3.id
-        WHERE rc.guild_id = $1;
+        WHERE rc.server_id = $1;
         """
         try:
-            records = await database.fetch(query, guild_id)
+            records = await database.fetch(query, server_id)
             combinations = [
                 {
                     "primary_role_id": record["primary_role_id_discord"],
@@ -52,6 +68,9 @@ class RoleCombinationService:
     async def add_role_combination(
         guild_id: int, primary_role_id: int, secondary_role_id: int, combined_role_id: int
     ) -> bool:
+        server_id = await get_server_id(guild_id)
+        if not server_id:
+            return False
         """
         Ajoute une nouvelle combinaison de rôles dans la base de données.
 
@@ -63,9 +82,12 @@ class RoleCombinationService:
         """
         try:
             # Récupérer les IDs de configuration des rôles depuis roles_configurations
-            primary_config_id = await RoleCombinationService.get_config_id(guild_id, primary_role_id)
-            secondary_config_id = await RoleCombinationService.get_config_id(guild_id, secondary_role_id)
-            combined_config_id = await RoleCombinationService.get_config_id(guild_id, combined_role_id)
+            server_id = await get_server_id(guild_id)
+            if not server_id:
+                return False
+            primary_config_id = await RoleCombinationService.get_config_id(server_id, primary_role_id)
+            secondary_config_id = await RoleCombinationService.get_config_id(server_id, secondary_role_id)
+            combined_config_id = await RoleCombinationService.get_config_id(server_id, combined_role_id)
 
             logger.debug(f"Configuration IDs récupérés: primary={primary_config_id}, secondary={secondary_config_id}, combined={combined_config_id}")
 
@@ -77,12 +99,12 @@ class RoleCombinationService:
 
             # Insérer la combinaison dans role_combinations
             query = """
-            INSERT INTO role_combinations (guild_id, primary_role_id, secondary_role_id, combined_role_id)
+            INSERT INTO role_combinations (server_id, primary_role_id, secondary_role_id, combined_role_id)
             VALUES ($1, $2, $3, $4)
-            ON CONFLICT (guild_id, primary_role_id, secondary_role_id) DO UPDATE
+            ON CONFLICT (server_id, primary_role_id, secondary_role_id) DO UPDATE
             SET combined_role_id = EXCLUDED.combined_role_id;
             """
-            result = await database.execute(query, guild_id, primary_config_id, secondary_config_id, combined_config_id)
+            result = await database.execute(query, server_id, primary_config_id, secondary_config_id, combined_config_id)
             logger.info(
                 f"Combinaison de rôles ajoutée pour guild_id={guild_id}: {primary_role_id} + {secondary_role_id} → {combined_role_id} - Résultat SQL: {result}"
             )
@@ -105,8 +127,8 @@ class RoleCombinationService:
         """
         try:
             # Récupérer les IDs de configuration des rôles depuis roles_configurations
-            primary_config_id = await RoleCombinationService.get_config_id(guild_id, primary_role_id)
-            secondary_config_id = await RoleCombinationService.get_config_id(guild_id, secondary_role_id)
+            primary_config_id = await RoleCombinationService.get_config_id(server_id, primary_role_id)
+            secondary_config_id = await RoleCombinationService.get_config_id(server_id, secondary_role_id)
 
             if not primary_config_id or not secondary_config_id:
                 logger.warning(
@@ -117,9 +139,9 @@ class RoleCombinationService:
             # Supprimer la combinaison de role_combinations
             query = """
             DELETE FROM role_combinations
-            WHERE guild_id = $1 AND primary_role_id = $2 AND secondary_role_id = $3;
+            WHERE server_id = $1 AND primary_role_id = $2 AND secondary_role_id = $3;
             """
-            result = await database.execute(query, guild_id, primary_config_id, secondary_config_id)
+            result = await database.execute(query, server_id, primary_config_id, secondary_config_id)
             logger.info(
                 f"Combinaison de rôles supprimée pour guild_id={guild_id}: {primary_role_id} + {secondary_role_id} - Résultat SQL: {result}"
             )
@@ -129,7 +151,7 @@ class RoleCombinationService:
             return False
 
     @staticmethod
-    async def get_config_id(guild_id: int, role_id: int) -> Optional[int]:
+    async def get_config_id(server_id: int, role_id: int) -> Optional[int]:
         """
         Récupère l'ID de configuration d'un rôle en fonction de son ID Discord et de l'ID du serveur.
 
@@ -139,10 +161,10 @@ class RoleCombinationService:
         """
         query = """
         SELECT id FROM roles_configurations
-        WHERE guild_id = $1 AND role_id = $2;
+        WHERE server_id = $1 AND role_id = $2;
         """
         try:
-            config_id = await database.fetchval(query, guild_id, role_id)
+            config_id = await database.fetchval(query, server_id, role_id)
             if config_id:
                 logger.debug(f"ID de configuration du rôle '{role_id}' récupéré : {config_id}")
             else:
@@ -159,7 +181,11 @@ class RoleCombinationService:
         (Optionnel : si vous avez besoin de charger les combinaisons au démarrage)
         """
         try:
-            query = "SELECT DISTINCT guild_id FROM role_combinations;"
+            query = """
+            SELECT DISTINCT s.guild_id
+            FROM role_combinations rc
+            JOIN serveur_id s ON s.id = rc.server_id;
+            """
             guild_ids = await database.fetch(query)
             for guild in guild_ids:
                 guild_id = guild["guild_id"]

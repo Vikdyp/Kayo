@@ -115,28 +115,28 @@ class Reputation(commands.Cog):
                 if user.id == interaction.user.id:
                     return await interaction.response.send_message("Vous ne pouvez pas vous signaler vous-même.", ephemeral=True)
                 
-                success, msg = await add_event(interaction.user.id, user.id, 'report')
+                success, msg = await add_event(interaction.guild.id, interaction.user.id, user.id, 'report')
                 if not success:
                     return await interaction.response.send_message(msg, ephemeral=True)
                 
                 await interaction.response.send_message(f"{user.mention} a été signalé pour `{reason or 'Aucune raison fournie'}`.", ephemeral=True)
-                profile_data = await get_profile_data(user.id)
+                profile_data = await get_profile_data(interaction.guild.id, user.id)
                 await update_roles(user, profile_data)
 
             elif action_lower == "recommend":
                 if user.id == interaction.user.id:
                     return await interaction.response.send_message("Vous ne pouvez pas vous recommander vous-même.", ephemeral=True)
                 
-                success, msg = await add_event(interaction.user.id, user.id, 'recommendation')
+                success, msg = await add_event(interaction.guild.id, interaction.user.id, user.id, 'recommendation')
                 if not success:
                     return await interaction.response.send_message(msg, ephemeral=True)
                 
                 await interaction.response.send_message(f"{user.mention} a été recommandé !", ephemeral=True)
-                profile_data = await get_profile_data(user.id)
+                profile_data = await get_profile_data(interaction.guild.id, user.id)
                 await update_roles(user, profile_data)
 
             elif action_lower == "view":
-                profile_data = await get_profile_data(user.id)
+                profile_data = await get_profile_data(interaction.guild.id, user.id)
                 reports_count = profile_data.get("reports", 0)
                 recos_count = profile_data.get("recommendations", 0)
                 ratio = (recos_count + 1) / (reports_count + 1)
@@ -211,7 +211,7 @@ class Reputation(commands.Cog):
         if member is None:
             member = interaction.user
 
-        rep_data = await get_profile_data(member.id)
+        rep_data = await get_profile_data(interaction.guild.id, member.id)
         reports_count = rep_data.get("reports", 0)
         recos_count = rep_data.get("recommendations", 0)
         ratio = (recos_count + 1) / (reports_count + 1)
