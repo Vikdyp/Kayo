@@ -116,20 +116,20 @@ class ModerationService:
             return False
 
     @staticmethod
-    async def save_roles_backup(internal_user_id: int, roles: List[int]) -> bool:
+    async def save_roles_backup(internal_user_id: int, roles: List[int], server_id: int) -> bool:
         """
         Sauvegarde les rôles d'un utilisateur dans la table 'role_backups'.
 
         Retourne True si l'opération réussit, False sinon.
         """
         query = """
-        INSERT INTO role_backups (user_id, roles)
-        VALUES ($1, $2)
-        ON CONFLICT (user_id) DO UPDATE
+        INSERT INTO role_backups (user_id, roles, server_id)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (user_id, server_id) DO UPDATE
         SET roles = EXCLUDED.roles;
         """
         try:
-            await database.execute(query, internal_user_id, roles)
+            await database.execute(query, internal_user_id, roles, server_id)
             logger.info(f"Backup de rôles sauvegardé pour l'utilisateur interne ID {internal_user_id}.")
             return True
         except Exception as e:
@@ -137,30 +137,30 @@ class ModerationService:
             return False
 
     @staticmethod
-    async def get_roles_backup(internal_user_id: int) -> List[int]:
+    async def get_roles_backup(internal_user_id: int, server_id: int) -> List[int]:
         """
         Récupère les rôles sauvegardés d'un utilisateur depuis la table 'role_backups'.
 
         Retourne une liste d'IDs de rôles ou une liste vide en cas d'erreur.
         """
-        query = "SELECT roles FROM role_backups WHERE user_id = $1;"
+        query = "SELECT roles FROM role_backups WHERE user_id = $1 AND server_id = $2;"
         try:
-            result = await database.fetchval(query, internal_user_id)
+            result = await database.fetchval(query, internal_user_id, server_id)
             return result if result else []
         except Exception as e:
             logger.error(f"Erreur lors de la récupération des rôles sauvegardés pour l'utilisateur interne ID {internal_user_id}: {e}")
             return []
 
     @staticmethod
-    async def delete_roles_backup(internal_user_id: int) -> bool:
+    async def delete_roles_backup(internal_user_id: int, server_id: int) -> bool:
         """
         Supprime le backup des rôles d'un utilisateur de la table 'role_backups'.
 
         Retourne True si l'opération réussit, False sinon.
         """
-        query = "DELETE FROM role_backups WHERE user_id = $1;"
+        query = "DELETE FROM role_backups WHERE user_id = $1 AND server_id = $2;"
         try:
-            await database.execute(query, internal_user_id)
+            await database.execute(query, internal_user_id, server_id)
             logger.info(f"Backup de rôles supprimé pour l'utilisateur interne ID {internal_user_id}.")
             return True
         except Exception as e:

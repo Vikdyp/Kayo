@@ -14,6 +14,20 @@ class InviteTrackerCog(commands.Cog):
         # Salon de log où envoyer les messages (ID à remplacer par ton salon)
         self.log_channel_id = 1330360063566807132
 
+    async def get_internal_server_id(self, guild: discord.Guild) -> int:
+        await database.ensure_connected()
+        internal_server_id = await self.get_internal_server_id(guild)
+        if not internal_server_id:
+            return
+        internal_server_id = await self.get_internal_server_id(guild)
+        if not internal_server_id:
+            return
+        query = "SELECT id FROM serveur_id WHERE guild_id = $1;"
+        internal_id = await database.fetchval(query, guild.id)
+        if not internal_id:
+            logger.error(f"Serveur non trouve dans serveur_id pour guild_id {guild.id}.")
+        return internal_id
+
     async def init_invites(self):
         """Charge les invitations pour chaque serveur du bot."""
         for guild in self.bot.guilds:
@@ -124,13 +138,13 @@ class InviteTrackerCog(commands.Cog):
         if used_invite:
             inviter = used_invite.inviter
             # Enregistre dans la base
-            await self.increment_invite_count(inviter.id)
-            await self.set_member_inviter(member.id, inviter.id)
+            await self.increment_invite_count(guild, inviter.id)
+            await self.set_member_inviter(guild, member.id, inviter.id)
 
             # Log
             log_channel = self.bot.get_channel(self.log_channel_id)
             if log_channel:
-                count = await self.get_invite_count(inviter.id)
+                count = await self.get_invite_count(guild, inviter.id)
                 await log_channel.send(
                     f"{member.mention} a rejoint grâce à l'invitation de {inviter.mention} (total des invite : {count} membre{'s' if count != 1 else ''})."
                 )
@@ -143,73 +157,85 @@ class InviteTrackerCog(commands.Cog):
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member):
         guild = member.guild
-        inviter_id = await self.get_member_inviter(member.id)
+        inviter_id = await self.get_member_inviter(guild, member.id)
         if inviter_id:
-            await self.decrement_invite_count(inviter_id)
+            await self.decrement_invite_count(guild, inviter_id)
             log_channel = self.bot.get_channel(self.log_channel_id)
             if log_channel:
-                count = await self.get_invite_count(inviter_id)
+                count = await self.get_invite_count(guild, inviter_id)
                 inviter = guild.get_member(inviter_id)
                 if inviter:
                     await log_channel.send(
                         f"{member.mention} a quitté le serveur,{inviter.mention} passe à {count} invitation{'s' if count != 1 else ''}."
                     )
             # Supprimer le mapping en BDD
-            await self.delete_member_inviter(member.id)
+            await self.delete_member_inviter(guild, member.id)
 
     # ---------- Méthodes d'accès à la BDD ----------
-    async def increment_invite_count(self, inviter_id: int):
+    async def increment_invite_count(self, guild: discord.Guild, inviter_id: int):
         """Incrémente le compteur d'invitations pour l'inviteur."""
         await database.ensure_connected()
         query = """
-        INSERT INTO invite_tracker (inviter_id, count)
-        VALUES ($1, 1)
-        ON CONFLICT (inviter_id) DO UPDATE
+        INSERT INTO invite_tracker (inviter_id, count, server_id)
+        VALUES ($1, 1, $2)
+        ON CONFLICT (inviter_id, server_id) DO UPDATE
           SET count = invite_tracker.count + 1;
         """
-        await database.execute(query, inviter_id)
+        await database.execute(query, inviter_id, internal_server_id)
         logger.debug(f"Invitations incrémentées pour {inviter_id}")
 
-    async def decrement_invite_count(self, inviter_id: int):
+    async def decrement_invite_count(self, guild: discord.Guild, inviter_id: int):
         """Décrémente le compteur d'invitations pour l'inviteur, sans descendre en dessous de 0."""
         await database.ensure_connected()
         query = """
         UPDATE invite_tracker
         SET count = GREATEST(count - 1, 0)
-        WHERE inviter_id = $1;
+        WHERE inviter_id = $1 AND server_id = $2;
         """
-        await database.execute(query, inviter_id)
+        await database.execute(query, inviter_id, internal_server_id)
         logger.debug(f"Invitations décrémentées pour {inviter_id}")
 
-    async def get_invite_count(self, inviter_id: int) -> int:
+    async def get_invite_count(self, guild: discord.Guild, inviter_id: int) -> int:
         """Retourne le compteur d'invitations de l'inviteur."""
         await database.ensure_connected()
-        query = "SELECT count FROM invite_tracker WHERE inviter_id = $1;"
-        result = await database.fetchval(query, inviter_id)
+        internal_server_id = await self.get_internal_server_id(guild)
+        if not internal_server_id:
+            return 0
+        query = "SELECT count FROM invite_tracker WHERE inviter_id = $1 AND server_id = $2;"
+        result = await database.fetchval(query, inviter_id, internal_server_id)
         return result if result is not None else 0
 
-    async def set_member_inviter(self, member_id: int, inviter_id: int):
+    async def set_member_inviter(self, guild: discord.Guild, member_id: int, inviter_id: int):
         """Sauvegarde en BDD le mapping entre le membre invité et son invitant."""
         await database.ensure_connected()
+        internal_server_id = await self.get_internal_server_id(guild)
+        if not internal_server_id:
+            return
         query = """
-        INSERT INTO member_inviter (member_id, inviter_id)
-        VALUES ($1, $2)
-        ON CONFLICT (member_id) DO UPDATE SET inviter_id = EXCLUDED.inviter_id;
+        INSERT INTO member_inviter (member_id, inviter_id, server_id)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (member_id, server_id) DO UPDATE SET inviter_id = EXCLUDED.inviter_id;
         """
-        await database.execute(query, member_id, inviter_id)
+        await database.execute(query, member_id, inviter_id, internal_server_id)
         logger.debug(f"Mapping enregistré: {member_id} -> {inviter_id}")
 
-    async def get_member_inviter(self, member_id: int) -> int:
+    async def get_member_inviter(self, guild: discord.Guild, member_id: int) -> int:
         """Renvoie l'ID de l'invitant pour un membre donné, ou None."""
         await database.ensure_connected()
-        query = "SELECT inviter_id FROM member_inviter WHERE member_id = $1;"
-        return await database.fetchval(query, member_id)
+        internal_server_id = await self.get_internal_server_id(guild)
+        if not internal_server_id:
+            return None
+        query = "SELECT inviter_id FROM member_inviter WHERE member_id = $1 AND server_id = $2;"
+        return await database.fetchval(query, member_id, internal_server_id)
 
-    async def delete_member_inviter(self, member_id: int):
+    async def delete_member_inviter(self, guild: discord.Guild, member_id: int):
         """Supprime le mapping d'un membre invité de la BDD."""
         await database.ensure_connected()
-        query = "DELETE FROM member_inviter WHERE member_id = $1;"
-        await database.execute(query, member_id)
+        internal_server_id = await self.get_internal_server_id(guild)
+        if not internal_server_id:
+            return
+        query = "DELETE FROM member_inviter WHERE member_id = $1 AND server_id = $2;"
+        await database.execute(query, member_id, internal_server_id)
         logger.debug(f"Mapping supprimé pour le membre {member_id}")
 
 async def setup(bot):

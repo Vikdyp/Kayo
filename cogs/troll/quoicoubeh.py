@@ -1,13 +1,16 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
+import logging
 import re  # Pour détecter les messages se terminant par "quoi"
 import random  # Pour choisir une réponse aléatoire
 import asyncio
 import time  # Pour obtenir l'horodatage actuel
 from utils.database import database  # On suppose que ce module fournit execute() et fetch() pour interagir avec la BDD
+from cogs.configuration.services.role_service import ServerRoleService
 
 TOP3_ROLE_ID = 1236427596128976906  # ID du rôle top 3
+TOP3_ROLE_ACTION = "quoicoubeh_top3"
 
 class QuoiResponder(commands.Cog):
     """Cog pour répondre automatiquement aux messages se terminant par 'quoi'
@@ -34,6 +37,15 @@ class QuoiResponder(commands.Cog):
         self.user_quoi_timestamps = {}
         # Lock pour gérer l'accès concurrent au dictionnaire
         self.lock = asyncio.Lock()
+
+    async def get_internal_server_id(self, guild: discord.Guild) -> int:
+        await database.ensure_connected()
+        query = "SELECT id FROM serveur_id WHERE guild_id = $1;"
+        internal_id = await database.fetchval(query, guild.id)
+        if not internal_id:
+            logger = logging.getLogger("quoicoubeh")
+            logger.error(f"Serveur non trouve pour guild_id {guild.id}.")
+        return internal_id
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -77,13 +89,16 @@ class QuoiResponder(commands.Cog):
 
             # Incrémenter le compteur dans la base de données pour cet utilisateur
             try:
+                server_id = await self.get_internal_server_id(message.guild)
+                if not server_id:
+                    return
                 query = """
-                INSERT INTO quoi_responses (user_id, trigger_count, last_triggered)
-                VALUES ($1, 1, NOW())
-                ON CONFLICT (user_id)
+                INSERT INTO quoi_responses (user_id, trigger_count, last_triggered, server_id)
+                VALUES ($1, 1, NOW(), $2)
+                ON CONFLICT (user_id, server_id)
                 DO UPDATE SET trigger_count = quoi_responses.trigger_count + 1, last_triggered = NOW();
                 """
-                await database.execute(query, message.author.id)
+                await database.execute(query, message.author.id, server_id)
             except Exception as e:
                 print(f"Erreur lors de la mise à jour du compteur: {e}")
 
@@ -96,13 +111,18 @@ class QuoiResponder(commands.Cog):
         De plus, le rôle top 3 (ID 1236427596128976906) est attribué aux trois premiers et retiré aux autres.
         """
         try:
+            server_id = await self.get_internal_server_id(interaction.guild)
+            if not server_id:
+                await interaction.response.send_message("Serveur introuvable.", ephemeral=True)
+                return
             query = """
             SELECT user_id, trigger_count
             FROM quoi_responses
+            WHERE server_id = $1
             ORDER BY trigger_count DESC
             LIMIT 10;
             """
-            rows = await database.fetch(query)
+            rows = await database.fetch(query, server_id)
             if not rows:
                 await interaction.response.send_message("Aucune donnée disponible.", ephemeral=True)
                 return
@@ -123,7 +143,9 @@ class QuoiResponder(commands.Cog):
 
             # Mise à jour du rôle top 3 dans la guilde
             guild = interaction.guild
-            top3_role = guild.get_role(TOP3_ROLE_ID)
+            roles_config = await ServerRoleService.get_roles_config(guild.id, guild.name)
+            top3_role_id = roles_config.get(TOP3_ROLE_ACTION) if roles_config else None
+            top3_role = guild.get_role(top3_role_id) if top3_role_id else None
             if top3_role is not None:
                 # Pour chaque membre possédant le rôle mais qui n'est plus dans le top 3, le retirer
                 for member in top3_role.members:

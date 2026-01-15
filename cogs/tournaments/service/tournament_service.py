@@ -1,20 +1,48 @@
 import logging
 from datetime import datetime
 from typing import Optional
+
+import discord
+
 from utils.database import database  # Module d'accès à la BDD
+from cogs.configuration.services.channel_service import ServerChannelService
 
 logger = logging.getLogger("tournament.service")
 
-async def create_tournament(tournament_name: str, max_teams: int, registration_start: datetime, registration_end: datetime, tournament_date: datetime) -> Optional[int]:
+async def get_server_id(guild_id: int) -> Optional[int]:
+    query = "SELECT id FROM serveur_id WHERE guild_id = $1;"
+    try:
+        if isinstance(channel, discord.ForumChannel):
+            await channel.create_thread(
+                name=f"Equipe {team_info['team_name']}",
+                content=content,
+            )
+        else:
+            await channel.send(content)
+        logger.info("Post cree dans le forum.")
+        return
+        server_id = await database.fetchval(query, guild_id)
+        if not server_id:
+            logger.warning(f"Aucun serveur pour guild_id {guild_id}.")
+        return server_id
+    except Exception as e:
+        logger.error(f"Erreur lors de la recuperation du server_id pour guild_id {guild_id}: {e}")
+        return None
+
+async def create_tournament(guild_id: int, tournament_name: str, max_teams: int, registration_start: datetime, registration_end: datetime, tournament_date: datetime) -> Optional[int]:
     """
     Crée un tournoi dans la BDD et retourne son ID.
     Avant insertion, vérifie qu'il n'existe pas déjà un tournoi actif.
     Le tournoi est créé avec le status 'active'.
     """
     # Vérifier s'il existe déjà un tournoi actif
-    query_check = "SELECT id FROM tournaments WHERE status = 'active';"
+    server_id = await get_server_id(guild_id)
+    if not server_id:
+        return None
+
+    query_check = "SELECT id FROM tournaments WHERE status = 'active' AND server_id = $1;"
     try:
-        existing = await database.fetchval(query_check)
+        existing = await database.fetchval(query_check, server_id)
         logger.debug(f"Résultat vérification tournoi actif: {existing}")
     except Exception as e:
         logger.error(f"Erreur lors de la vérification du tournoi actif: {e}")
@@ -24,26 +52,43 @@ async def create_tournament(tournament_name: str, max_teams: int, registration_s
         logger.error("Un tournoi actif existe déjà.")
         return None
 
+    server_id = await get_server_id(guild_id)
+    if not server_id:
+        return
+    server_id = await get_server_id(guild_id)
+    if not server_id:
+        return
     query = """
-    INSERT INTO tournaments (tournament_name, max_teams, registration_start, registration_end, tournament_date, status)
-    VALUES ($1, $2, $3, $4, $5, 'active')
+    INSERT INTO tournaments (tournament_name, max_teams, registration_start, registration_end, tournament_date, status, server_id)
+    VALUES ($1, $2, $3, $4, $5, 'active', $6)
     RETURNING id;
     """
     try:
-        tournament_id = await database.fetchval(query, tournament_name, max_teams, registration_start, registration_end, tournament_date)
+        tournament_id = await database.fetchval(
+            query,
+            tournament_name,
+            max_teams,
+            registration_start,
+            registration_end,
+            tournament_date,
+            server_id,
+        )
         logger.info(f"Tournoi créé avec ID: {tournament_id}")
         return tournament_id
     except Exception as e:
         logger.error(f"Erreur lors de la création du tournoi: {e}")
         return None
 
-async def get_active_tournament() -> Optional[int]:
+async def get_active_tournament(guild_id: int) -> Optional[int]:
     """
     Retourne l'ID du tournoi actif s'il existe, sinon None.
     """
-    query = "SELECT id FROM tournaments WHERE status = 'active';"
+    server_id = await get_server_id(guild_id)
+    if not server_id:
+        return None
+    query = "SELECT id FROM tournaments WHERE status = 'active' AND server_id = $1;"
     try:
-        active_id = await database.fetchval(query)
+        active_id = await database.fetchval(query, server_id)
         logger.debug(f"Tournoi actif trouvé: {active_id}")
         return active_id
     except Exception as e:
@@ -61,34 +106,56 @@ async def persist_registration_message(channel_id: int, message_id: int, tournam
     DO UPDATE SET channel_id = $1, message_id = $2, requester_id = NULL, created_at = NOW();
     """
     try:
-        await database.execute(query, channel_id, message_id, guild_id)
+        await database.execute(query, channel_id, message_id, server_id)
         logger.info("Message d'inscription persistant enregistré.")
     except Exception as e:
         logger.error(f"Erreur lors de la persistance du message: {e}")
 
-async def register_team(tournament_id: int, team_info: dict) -> Optional[int]:
+async def register_team(guild_id: int, tournament_id: int, team_info: dict) -> Optional[int]:
     """
     Enregistre une équipe dans la BDD et retourne son ID.
     """
+    server_id = await get_server_id(guild_id)
+    if not server_id:
+        return None
     query = """
-    INSERT INTO team_registrations (tournament_id, team_name, players, substitutes, coach)
-    VALUES ($1, $2, $3, $4, $5)
+    INSERT INTO team_registrations (tournament_id, team_name, players, substitutes, coach, server_id)
+    VALUES ($1, $2, $3, $4, $5, $6)
     RETURNING id;
     """
     try:
-        team_id = await database.fetchval(query, tournament_id, team_info["team_name"], team_info["players"], team_info["substitutes"], team_info["coach"])
+        team_id = await database.fetchval(
+            query,
+            tournament_id,
+            team_info["team_name"],
+            team_info["players"],
+            team_info["substitutes"],
+            team_info["coach"],
+            server_id,
+        )
         logger.info(f"Équipe enregistrée avec ID: {team_id}")
         return team_id
     except Exception as e:
         logger.error(f"Erreur lors de l'enregistrement de l'équipe: {e}")
         return None
 
-async def create_forum_post(tournament_id: int, team_info: dict) -> None:
+async def create_forum_post(guild: discord.Guild, team_info: dict) -> None:
     """
     Crée un post dans le forum avec les informations de l'équipe (sans Discord IDs ni pseudos Valorant).
     Le forum ID est fixé à 1236736105106116668.
     """
-    forum_channel_id = 1236736105106116668
+    channel_id = await ServerChannelService.get_channel_id(
+        guild.id,
+        guild.name,
+        "tournament_channel_id",
+    )
+    if not channel_id:
+        logger.error("Tournament channel not configured (tournament_channel_id).")
+        return
+    channel = guild.get_channel(channel_id)
+    if not channel:
+        logger.error("Tournament channel not found.")
+        return
     content = f"**Équipe:** {team_info['team_name']}\n"
     content += "**Joueurs:**\n"
     for i in range(1, 6):
@@ -114,7 +181,7 @@ async def create_forum_post(tournament_id: int, team_info: dict) -> None:
     except Exception as e:
         logger.error(f"Erreur lors de la création du post dans le forum: {e}")
 
-async def close_tournament() -> bool:
+async def close_tournament(guild_id: int) -> bool:
     """
     Ferme le tournoi actif en mettant à jour son status en 'closed'
     et supprime toutes les inscriptions d'équipe dans la BDD.
@@ -122,12 +189,15 @@ async def close_tournament() -> bool:
     """
     try:
         # Mettre à jour le tournoi actif en 'closed'
-        query_update = "UPDATE tournaments SET status = 'closed' WHERE status = 'active';"
-        await database.execute(query_update)
+        server_id = await get_server_id(guild_id)
+        if not server_id:
+            return False
+        query_update = "UPDATE tournaments SET status = 'closed' WHERE status = 'active' AND server_id = $1;"
+        await database.execute(query_update, server_id)
         logger.info("Tournoi fermé (status mis à 'closed').")
         # Supprimer toutes les inscriptions d'équipe
-        query_delete = "DELETE FROM team_registrations;"
-        await database.execute(query_delete)
+        query_delete = "DELETE FROM team_registrations WHERE server_id = $1;"
+        await database.execute(query_delete, server_id)
         logger.info("Toutes les inscriptions d'équipe supprimées.")
         return True
     except Exception as e:

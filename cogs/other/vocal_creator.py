@@ -4,13 +4,14 @@ import asyncio
 import logging
 from discord.ext import commands, tasks
 import discord
+from cogs.configuration.services.channel_service import ServerChannelService
 
 logger = logging.getLogger("vocal.creator")
 
 # ID de la catégorie pour les salons vocaux temporaires
-TEMP_VOCAL_CATEGORY_ID = 1328538201668980878
+TEMP_VOCAL_CATEGORY_ACTION = "temp_vocal_category"
 # ID du salon "lobby" que l'on rejoint pour créer un VC
-LOBBY_CHANNEL_ID = 1384590000825303111
+TEMP_VOCAL_LOBBY_ACTION = "temp_vocal_lobby"
 # Temps d'inactivité avant suppression en secondes (5 minutes)
 IDLE_TIMEOUT = 5 * 60
 
@@ -28,9 +29,12 @@ class VocalCreatorCog(commands.Cog):
     async def on_voice_state_update(self, member: discord.Member,
                                     before: discord.VoiceState,
                                     after: discord.VoiceState):
+        guild = member.guild
+        config = await ServerChannelService.get_channels_config(guild.id, guild.name)
+        temp_category_id = config.get(TEMP_VOCAL_CATEGORY_ACTION)
+        lobby_channel_id = config.get(TEMP_VOCAL_LOBBY_ACTION)
         # 1) Création d'un nouveau salon à chaque entrée dans le lobby
-        if after.channel and after.channel.id == LOBBY_CHANNEL_ID:
-            guild = member.guild
+        if after.channel and lobby_channel_id and after.channel.id == lobby_channel_id:
             # Préparer le nom exact avec display_name
             channel_name = f"Salon de {member.display_name}"
 
@@ -39,7 +43,7 @@ class VocalCreatorCog(commands.Cog):
                 if (
                     vc.name == channel_name
                     and vc.category
-                    and vc.category.id == TEMP_VOCAL_CATEGORY_ID
+                    and vc.category.id == temp_category_id
                     and len(vc.members) == 0
                 ):
                     try:
@@ -48,9 +52,9 @@ class VocalCreatorCog(commands.Cog):
                         logger.error(f"Erreur suppression salon vide {vc.id}: {e}")
 
             # Création du nouveau salon
-            category = guild.get_channel(TEMP_VOCAL_CATEGORY_ID)
+            category = guild.get_channel(temp_category_id)
             if category is None:
-                logger.error(f"Catégorie temporaire {TEMP_VOCAL_CATEGORY_ID} introuvable.")
+                logger.error(f"Catégorie temporaire {temp_category_id} introuvable.")
                 return
 
             new_vc = await guild.create_voice_channel(
@@ -69,7 +73,7 @@ class VocalCreatorCog(commands.Cog):
         channel_before = before.channel
         if (channel_before
                 and channel_before.category
-                and channel_before.category.id == TEMP_VOCAL_CATEGORY_ID):
+                and channel_before.category.id == temp_category_id):
             if len(channel_before.members) == 0:
                 if channel_before.id not in self.deletion_tasks:
                     self.deletion_tasks[channel_before.id] = \
@@ -85,9 +89,16 @@ class VocalCreatorCog(commands.Cog):
         """
         try:
             await asyncio.sleep(IDLE_TIMEOUT)
-            if len(channel.members) == 0:
-                await channel.delete()
-                logger.info(f"Salon temporaire {channel.id} supprimé après inactivité.")
+            existing_channel = channel.guild.get_channel(channel.id)
+            if not existing_channel:
+                logger.info(f"Salon temporaire {channel.id} déjà supprimé.")
+                return
+            if len(existing_channel.members) == 0:
+                try:
+                    await existing_channel.delete()
+                    logger.info(f"Salon temporaire {channel.id} supprimé après inactivité.")
+                except discord.NotFound:
+                    logger.info(f"Salon temporaire {channel.id} déjà supprimé (NotFound).")
         except asyncio.CancelledError:
             logger.info(f"Suppression du salon {channel.id} annulée.")
         finally:
@@ -100,8 +111,12 @@ class VocalCreatorCog(commands.Cog):
         et annuler les suppressions si nécessaire.
         """
         for guild in self.bot.guilds:
+            config = await ServerChannelService.get_channels_config(guild.id, guild.name)
+            temp_category_id = config.get(TEMP_VOCAL_CATEGORY_ACTION)
+            if not temp_category_id:
+                continue
             for channel in guild.voice_channels:
-                if channel.category and channel.category.id == TEMP_VOCAL_CATEGORY_ID:
+                if channel.category and channel.category.id == temp_category_id:
                     if len(channel.members) == 0 and channel.id not in self.deletion_tasks:
                         self.deletion_tasks[channel.id] = self.bot.loop.create_task(
                             self.schedule_deletion(channel)

@@ -12,8 +12,12 @@ import asyncio
 
 from .services.five_stack_service import MatchmakingService
 from utils.checks import valorant_link_required
+from cogs.configuration.services.channel_service import ServerChannelService
 
 # Constantes
+TEAM_FORUM_ACTION: str = "teams_forum_id"
+MATCHMAKING_CATEGORY_ACTION: str = "matchmaking_voice_category"
+DEFAULT_VOICE_CATEGORY_NAME: str = "Matchmaking"
 FORUM_CHANNEL_ID: int = 1325629700248178778  # ID réel de votre forum
 VOICE_CATEGORY_NAME: str = "Matchmaking"       # Nom de la catégorie vocale
 TEAM_CODE_LENGTH: int = 6                      # Longueur du code d'équipe
@@ -26,9 +30,17 @@ def generate_team_code(length: int = TEAM_CODE_LENGTH) -> str:
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
 
 
-async def get_forum_channel(bot: commands.Bot) -> Optional[discord.ForumChannel]:
+async def get_forum_channel(guild: discord.Guild) -> Optional[discord.ForumChannel]:
     """Récupère et vérifie le ForumChannel à partir de FORUM_CHANNEL_ID."""
-    channel = bot.get_channel(FORUM_CHANNEL_ID)
+    channel_id = await ServerChannelService.get_channel_id(
+        guild.id,
+        guild.name,
+        TEAM_FORUM_ACTION,
+    )
+    if not channel_id:
+        logger.error("Forum channel not configured (teams_forum_id).")
+        return None
+    channel = guild.get_channel(channel_id)
     if channel and isinstance(channel, discord.ForumChannel):
         return channel
     logger.error("Forum channel invalide ou introuvable.")
@@ -37,7 +49,22 @@ async def get_forum_channel(bot: commands.Bot) -> Optional[discord.ForumChannel]
 
 async def get_voice_category(guild: discord.Guild) -> Optional[discord.CategoryChannel]:
     """Récupère la catégorie vocale par son nom, ou la crée si elle n'existe pas."""
-    category = discord.utils.get(guild.categories, name=VOICE_CATEGORY_NAME)
+    category = None
+    category_id = await ServerChannelService.get_channel_id(
+        guild.id,
+        guild.name,
+        MATCHMAKING_CATEGORY_ACTION,
+    )
+    if category_id:
+        configured = guild.get_channel(category_id)
+        if isinstance(configured, discord.CategoryChannel):
+            category = configured
+        else:
+            logger.warning(
+                f"Matchmaking category config is not a CategoryChannel: {category_id}"
+            )
+    if not category:
+        category = discord.utils.get(guild.categories, name=VOICE_CATEGORY_NAME)
     if not category:
         try:
             category = await guild.create_category(VOICE_CATEGORY_NAME)
@@ -66,6 +93,12 @@ class TeamManager(commands.Cog):
     def cog_unload(self) -> None:
         self.cleanup_teams_task.cancel()
 
+    async def _get_server_id(self, guild_id: int) -> Optional[int]:
+        server_id = await MatchmakingService.get_server_id_by_guild_id(guild_id)
+        if not server_id:
+            logger.warning(f"Serveur introuvable pour la guilde={guild_id}.")
+        return server_id
+
     # ------------------------------------------------
     # Initialisation du Cog
     # ------------------------------------------------
@@ -75,34 +108,39 @@ class TeamManager(commands.Cog):
         Au démarrage, charge et supprime toutes les équipes existantes
         (threads/forums + vocal + BD) afin de repartir sur une base propre.
         """
-        await self.load_existing_teams()
-        await self.delete_all_teams()
+        await self.bot.wait_until_ready()
+        for guild in self.bot.guilds:
+            server_id = await self._get_server_id(guild.id)
+            if not server_id:
+                continue
+            await self.load_existing_teams(server_id)
+            await self.delete_all_teams(server_id)
         logger.info("Initialisation du TeamManager terminée.")
 
-    async def load_existing_teams(self) -> None:
+    async def load_existing_teams(self, server_id: int) -> None:
         """
         Charge toutes les équipes existantes pour log/debug.
         """
         try:
-            teams = await MatchmakingService.get_all_teams()
+            teams = await MatchmakingService.get_all_teams(server_id)
             for t in teams:
                 logger.info(f"Équipe existante chargée (BD): code={t['code']}")
             logger.info("Toutes les équipes existantes ont été chargées (log uniquement).")
         except Exception as e:
             logger.error(f"Erreur lors du chargement des équipes existantes : {e}")
 
-    async def delete_all_teams(self) -> None:
+    async def delete_all_teams(self, server_id: int) -> None:
         """
         Supprime toutes les équipes existantes, leurs ressources Discord et leurs enregistrements en BD.
         """
         logger.info("Début de la suppression de toutes les équipes existantes (init).")
         try:
-            teams = await MatchmakingService.get_all_teams()
+            teams = await MatchmakingService.get_all_teams(server_id)
             for t in teams:
                 code = t["code"]
                 logger.info(f"Suppression de l'équipe : {code}")
                 await self.delete_team_resources(t)
-                success = await MatchmakingService.delete_team(code)
+                success = await MatchmakingService.delete_team(code, server_id)
                 if success:
                     logger.info(f"Équipe '{code}' supprimée en BD au démarrage.")
                 else:
@@ -128,7 +166,11 @@ class TeamManager(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         leader: discord.Member = interaction.user
 
-        if await MatchmakingService.is_user_in_any_team(leader.id):
+        server_id = await self._get_server_id(interaction.guild.id)
+        if not server_id:
+            await interaction.edit_original_response(content="Serveur introuvable.")
+            return
+        if await MatchmakingService.is_user_in_any_team(leader.id, server_id):
             await interaction.edit_original_response(content="Vous êtes déjà membre d'une équipe.")
             return
 
@@ -140,7 +182,7 @@ class TeamManager(commands.Cog):
         code: str = generate_team_code()
         created_at: datetime.datetime = datetime.datetime.utcnow()
 
-        forum_channel: Optional[discord.ForumChannel] = await get_forum_channel(self.bot)
+        forum_channel: Optional[discord.ForumChannel] = await get_forum_channel(interaction.guild)
         if not forum_channel:
             await interaction.edit_original_response(content="Forum channel invalide.")
             return
@@ -176,13 +218,19 @@ class TeamManager(commands.Cog):
         thread_id: int = real_thread.id
 
         success: bool = await MatchmakingService.create_team(
-            code, leader.id, forum_channel.id, thread_id, visibility.value, created_at
+            code,
+            leader.id,
+            forum_channel.id,
+            thread_id,
+            visibility.value,
+            created_at,
+            server_id,
         )
         if not success:
             await interaction.edit_original_response(content="Erreur lors de la création de l'équipe en base.")
             return
 
-        ok: bool = await MatchmakingService.add_member_to_team(code, leader.id)
+        ok: bool = await MatchmakingService.add_member_to_team(code, leader.id, server_id)
         if not ok:
             await interaction.edit_original_response(content="Erreur lors de l'ajout du leader à l'équipe.")
             return
@@ -204,18 +252,22 @@ class TeamManager(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         code = code.strip().upper()
 
-        team: Optional[Dict[str, Any]] = await MatchmakingService.get_team(code)
+        server_id = await self._get_server_id(interaction.guild.id)
+        if not server_id:
+            await interaction.edit_original_response(content="Serveur introuvable.")
+            return
+        team: Optional[Dict[str, Any]] = await MatchmakingService.get_team(code, server_id)
         if not team:
             await interaction.edit_original_response(content="Équipe introuvable ou expirée.")
             return
 
-        if await MatchmakingService.is_user_in_any_team(interaction.user.id):
+        if await MatchmakingService.is_user_in_any_team(interaction.user.id, server_id):
             await interaction.edit_original_response(content="Vous êtes déjà membre d'une équipe. Impossible d'en rejoindre une autre.")
             return
 
         lock = self.get_team_lock(code)
         async with lock:
-            members: List[int] = await MatchmakingService.get_team_members(code)
+            members: List[int] = await MatchmakingService.get_team_members(code, server_id)
             if len(members) >= 5:
                 await interaction.edit_original_response(content="Cette équipe est déjà complète (5).")
                 return
@@ -229,14 +281,14 @@ class TeamManager(commands.Cog):
                 await interaction.edit_original_response(content="Région différente du leader.")
                 return
 
-            if not await MatchmakingService.add_member_to_team(code, interaction.user.id):
+            if not await MatchmakingService.add_member_to_team(code, interaction.user.id, server_id):
                 await interaction.edit_original_response(content="Erreur lors de l'ajout à l'équipe.")
                 return
 
-            await self.update_team_thread(code)
+            await self.update_team_thread(code, server_id)
             await interaction.edit_original_response(content="Vous avez rejoint l'équipe !")
 
-            members = await MatchmakingService.get_team_members(code)
+            members = await MatchmakingService.get_team_members(code, server_id)
             if len(members) == 5:
                 await self.create_voice_channel_and_invite(team)
 
@@ -248,7 +300,11 @@ class TeamManager(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         code = code.strip().upper()
 
-        team = await MatchmakingService.get_team(code)
+        server_id = await self._get_server_id(interaction.guild.id)
+        if not server_id:
+            await interaction.edit_original_response(content="Serveur introuvable.")
+            return
+        team = await MatchmakingService.get_team(code, server_id)
         if not team:
             await interaction.edit_original_response(content="Équipe introuvable.")
             return
@@ -259,19 +315,19 @@ class TeamManager(commands.Cog):
 
         lock = self.get_team_lock(code)
         async with lock:
-            members = await MatchmakingService.get_team_members(code)
+            members = await MatchmakingService.get_team_members(code, server_id)
             if member.id not in members:
                 await interaction.edit_original_response(content="Ce membre n'est pas dans l'équipe.")
                 return
 
-            if not await MatchmakingService.remove_member_from_team(code, member.id):
+            if not await MatchmakingService.remove_member_from_team(code, member.id, server_id):
                 await interaction.edit_original_response(content="Erreur lors du retrait du membre.")
                 return
 
-            await self.update_team_thread(code)
+            await self.update_team_thread(code, server_id)
             await interaction.edit_original_response(content=f"{member.display_name} expulsé.")
 
-            members = await MatchmakingService.get_team_members(code)
+            members = await MatchmakingService.get_team_members(code, server_id)
             if len(members) == 0:
                 await self.delete_team_resources(team)
                 self.remove_team_lock(code)
@@ -285,7 +341,11 @@ class TeamManager(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         code = code.strip().upper()
 
-        team = await MatchmakingService.get_team(code)
+        server_id = await self._get_server_id(interaction.guild.id)
+        if not server_id:
+            await interaction.edit_original_response(content="Serveur introuvable.")
+            return
+        team = await MatchmakingService.get_team(code, server_id)
         if not team:
             await interaction.edit_original_response(content="Équipe introuvable ou déjà supprimée.")
             return
@@ -299,7 +359,7 @@ class TeamManager(commands.Cog):
         lock = self.get_team_lock(code)
         async with lock:
             await self.delete_team_resources(team)
-            if await MatchmakingService.delete_team(code):
+            if await MatchmakingService.delete_team(code, server_id):
                 await interaction.edit_original_response(content=f"L'équipe {code} a été supprimée.")
                 logger.info(f"Équipe {code} supprimée par {user.id}.")
             else:
@@ -313,7 +373,11 @@ class TeamManager(commands.Cog):
         """
         await interaction.response.defer(ephemeral=True)
         try:
-            teams = await MatchmakingService.get_public_teams()
+            server_id = await self._get_server_id(interaction.guild.id)
+            if not server_id:
+                await interaction.edit_original_response(content="Serveur introuvable.")
+                return
+            teams = await MatchmakingService.get_public_teams(server_id)
             if not teams:
                 await interaction.edit_original_response(content="Aucune équipe publique disponible.")
                 return
@@ -346,7 +410,7 @@ class TeamManager(commands.Cog):
                 lock = self.get_team_lock(code)
                 async with lock:
                     await self.delete_team_resources(t)
-                    if await MatchmakingService.delete_team(code):
+                    if await MatchmakingService.delete_team(code, t["server_id"]):
                         logger.info(f"Équipe obsolète {code} supprimée en BD.")
                     else:
                         logger.error(f"Échec de la suppression de l'équipe {code} en BD.")
@@ -363,16 +427,16 @@ class TeamManager(commands.Cog):
     # Gestion des ressources (threads et salons vocaux)
     # ------------------------------------------------
 
-    async def update_team_thread(self, code: str) -> None:
+    async def update_team_thread(self, code: str, server_id: int) -> None:
         """
         Met à jour l'embed du thread dans le ForumChannel pour une équipe donnée.
         """
-        team = await MatchmakingService.get_team(code)
+        team = await MatchmakingService.get_team(code, server_id)
         if not team:
             logger.warning(f"update_team_thread: Équipe {code} introuvable.")
             return
 
-        members: List[int] = await MatchmakingService.get_team_members(code)
+        members: List[int] = await MatchmakingService.get_team_members(code, server_id)
         forum_channel = self.bot.get_channel(team["forum_channel_id"])
         if not forum_channel or not isinstance(forum_channel, discord.ForumChannel):
             logger.error(f"forum_channel invalide pour {code}.")
@@ -380,6 +444,10 @@ class TeamManager(commands.Cog):
 
         guild: discord.Guild = forum_channel.guild
         thread = forum_channel.get_thread(team["thread_id"])
+        server_id = team.get("server_id")
+        if not server_id:
+            logger.error(f"server_id manquant pour l'Ç¸quipe '{team['code']}'.")
+            return
         if not thread:
             logger.error(f"Thread introuvable pour {code}.")
             return
@@ -436,7 +504,7 @@ class TeamManager(commands.Cog):
             return
 
         overwrites = {guild.default_role: discord.PermissionOverwrite(view_channel=False)}
-        mem_ids = await MatchmakingService.get_team_members(team["code"])
+        mem_ids = await MatchmakingService.get_team_members(team["code"], server_id)
         for mid in mem_ids:
             member = guild.get_member(mid)
             if member:
@@ -448,7 +516,7 @@ class TeamManager(commands.Cog):
                 category=category,
                 overwrites=overwrites
             )
-            await MatchmakingService.update_voice_channel_id(team["code"], vc.id)
+            await MatchmakingService.update_voice_channel_id(team["code"], vc.id, server_id)
             logger.info(f"Salon vocal '{vc.name}' créé pour l'équipe {team['code']}.")
 
             invite = await vc.create_invite(max_uses=1, unique=True, reason="Équipe 5 stack formée.")

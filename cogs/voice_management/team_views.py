@@ -24,6 +24,13 @@ class BaseLeaveTeamView(discord.ui.View):
 
     async def handle_leave_team(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
+        server_id = await self.cog._get_server_id(interaction.guild.id)
+        if not server_id:
+            await interaction.followup.send(
+                content="Serveur introuvable.",
+                ephemeral=True,
+            )
+            return
         if not await valorant_account_linked(interaction.user.id):
             await interaction.followup.send(
                 content="Veuillez lier votre compte Valorant avant de rejoindre l'équipe.",
@@ -31,7 +38,7 @@ class BaseLeaveTeamView(discord.ui.View):
             )
             return
 
-        team = await MatchmakingService.get_team(self.code)
+        team = await MatchmakingService.get_team(self.code, server_id)
         if not team:
             await interaction.followup.send(
                 content="Équipe introuvable ou expirée.",
@@ -40,7 +47,7 @@ class BaseLeaveTeamView(discord.ui.View):
             return
 
         success = await MatchmakingService.remove_member_from_team(
-            self.code, interaction.user.id
+            self.code, interaction.user.id, server_id
         )
         if not success:
             await interaction.followup.send(
@@ -49,12 +56,12 @@ class BaseLeaveTeamView(discord.ui.View):
             )
             return
 
-        members = await MatchmakingService.get_team_members(self.code)
+        members = await MatchmakingService.get_team_members(self.code, server_id)
 
         if team.get("leader_id") == interaction.user.id:
             if members:
                 new_leader_id = members[0]
-                await MatchmakingService.update_team_leader(self.code, new_leader_id)
+                await MatchmakingService.update_team_leader(self.code, new_leader_id, server_id)
                 logger.info(
                     f"Transfert du lead de {interaction.user.id} vers {new_leader_id} pour l'équipe {self.code}."
                 )
@@ -69,12 +76,12 @@ class BaseLeaveTeamView(discord.ui.View):
                 content=self.EMPTY_TEAM_MESSAGE,
                 ephemeral=True,
             )
-            team_data = await MatchmakingService.get_team(self.code)
+            team_data = await MatchmakingService.get_team(self.code, server_id)
             if team_data:
                 await self.cog.delete_team_resources(team_data)
-                await MatchmakingService.delete_team(self.code)
+                await MatchmakingService.delete_team(self.code, server_id)
         else:
-            await self.cog.update_team_thread(self.code)
+            await self.cog.update_team_thread(self.code, server_id)
             await interaction.followup.send(
                 content="Vous avez quitté l'équipe.",
                 ephemeral=True,
@@ -125,6 +132,13 @@ class TeamForumJoinButtonView(BaseLeaveTeamView):
         Si l'équipe atteint 5 membres, le salon vocal est créé.
         """
         await interaction.response.defer(ephemeral=True)
+        server_id = await self.cog._get_server_id(interaction.guild.id)
+        if not server_id:
+            await interaction.followup.send(
+                content="Serveur introuvable.",
+                ephemeral=True,
+            )
+            return
         if not await valorant_account_linked(interaction.user.id):
             await interaction.followup.send(
                 content="Veuillez lier votre compte Valorant avant de rejoindre l'équipe.",
@@ -132,7 +146,7 @@ class TeamForumJoinButtonView(BaseLeaveTeamView):
             )
             return
 
-        team = await MatchmakingService.get_team(self.code)
+        team = await MatchmakingService.get_team(self.code, server_id)
         if not team:
             await interaction.followup.send(
                 content="Équipe introuvable ou expirée.",
@@ -148,7 +162,7 @@ class TeamForumJoinButtonView(BaseLeaveTeamView):
             return
 
         # Vérifier si l'utilisateur est déjà membre d'une autre équipe
-        if await MatchmakingService.is_user_in_any_team(interaction.user.id):
+        if await MatchmakingService.is_user_in_any_team(interaction.user.id, server_id):
             await interaction.followup.send(
                 content="Vous êtes déjà membre d'une autre équipe.",
                 ephemeral=True
@@ -156,7 +170,7 @@ class TeamForumJoinButtonView(BaseLeaveTeamView):
             return
 
         # Vérifier si l'équipe est complète
-        members = await MatchmakingService.get_team_members(self.code)
+        members = await MatchmakingService.get_team_members(self.code, server_id)
         if len(members) >= 5:
             await interaction.followup.send(
                 content="Cette équipe est déjà complète (5 membres).",
@@ -181,7 +195,7 @@ class TeamForumJoinButtonView(BaseLeaveTeamView):
             return
 
         # Ajouter le joueur à l'équipe
-        if not await MatchmakingService.add_member_to_team(self.code, interaction.user.id):
+        if not await MatchmakingService.add_member_to_team(self.code, interaction.user.id, server_id):
             await interaction.followup.send(
                 content="Erreur lors de l'ajout à l'équipe.",
                 ephemeral=True
@@ -189,7 +203,7 @@ class TeamForumJoinButtonView(BaseLeaveTeamView):
             return
 
         # Mettre à jour le thread pour refléter le changement
-        await self.cog.update_team_thread(self.code)
+        await self.cog.update_team_thread(self.code, server_id)
         await interaction.followup.send(
             content="Vous avez rejoint l'équipe !",
             ephemeral=True

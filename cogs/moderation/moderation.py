@@ -407,7 +407,11 @@ class Moderation(commands.Cog):
             # Convertir l'ID Discord en ID interne
             internal_id = await ModerationService.get_or_create_user_id(member.id)
             if internal_id:
-                success = await ModerationService.save_roles_backup(internal_id, roles_to_backup)
+                server_id = await ModerationService.get_internal_server_id(member.guild.id)
+                if not server_id:
+                    logger.error("Serveur introuvable pour la sauvegarde des roles.")
+                    return
+                success = await ModerationService.save_roles_backup(internal_id, roles_to_backup, server_id)
                 if success:
                     logger.info(f"Rôles de {member.display_name} sauvegardés: {roles_to_backup}")
                 else:
@@ -425,7 +429,12 @@ class Moderation(commands.Cog):
             logger.error(f"Impossible de convertir l'ID Discord {member.id} en ID interne pour la restauration des rôles.")
             return
 
-        roles = await ModerationService.get_roles_backup(internal_id)
+        server_id = await ModerationService.get_internal_server_id(member.guild.id)
+        if not server_id:
+            logger.error("Serveur introuvable pour la restauration des roles.")
+            return
+
+        roles = await ModerationService.get_roles_backup(internal_id, server_id)
 
         if not roles:
             logger.warning(f"Aucune sauvegarde de rôles trouvée pour {member.display_name}.")
@@ -447,7 +456,7 @@ class Moderation(commands.Cog):
             else:
                 logger.warning(f"Aucun rôle valide à restaurer pour {member.display_name}.")
 
-        await ModerationService.delete_roles_backup(internal_id)
+        await ModerationService.delete_roles_backup(internal_id, server_id)
         logger.debug(f"Données de rôles supprimées pour {member.display_name} après restauration.")
 
     @tasks.loop(minutes=1)

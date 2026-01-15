@@ -52,14 +52,14 @@ class MatchmakingService:
         return None
 
     @staticmethod
-    async def is_user_leader_of_team(member_id: int) -> Optional[str]:
+    async def is_user_leader_of_team(member_id: int, server_id: int) -> Optional[str]:
         """
         Vérifie si un utilisateur est le leader d'une équipe (table 'teams').
         Retourne le code de l'équipe si oui, None sinon.
         """
-        query = "SELECT code FROM teams WHERE leader_id = $1;"
+        query = "SELECT code FROM teams WHERE leader_id = $1 AND server_id = $2;"
         try:
-            row = await database.fetchrow(query, member_id)
+            row = await database.fetchrow(query, member_id, server_id)
             if row:
                 logger.info(f"L'utilisateur {member_id} est leader de l'équipe {row['code']}.")
                 return row["code"]
@@ -70,7 +70,7 @@ class MatchmakingService:
             return None
 
     @staticmethod
-    async def is_user_in_any_team(member_id: int) -> Optional[str]:
+    async def is_user_in_any_team(member_id: int, server_id: int) -> Optional[str]:
         """
         Vérifie si un utilisateur est membre de n'importe quelle équipe (table 'team_members').
         Retourne le code de l'équipe si trouvé, None sinon.
@@ -78,11 +78,11 @@ class MatchmakingService:
         query = """
         SELECT team_code 
         FROM team_members 
-        WHERE member_id = $1 
+        WHERE member_id = $1 AND server_id = $2
         LIMIT 1;
         """
         try:
-            row = await database.fetchrow(query, member_id)
+            row = await database.fetchrow(query, member_id, server_id)
             return row["team_code"] if row else None
         except Exception as e:
             logger.error(f"Erreur vérif appartenance user {member_id}: {e}")
@@ -273,20 +273,26 @@ class MatchmakingService:
     # ------------------------------------------------
 
     @staticmethod
-    async def create_team(code: str, leader_id: int, forum_channel_id: int,
-                          thread_id: int, visibility: str,
-                          created_at: datetime.datetime) -> bool:
+    async def create_team(
+        code: str,
+        leader_id: int,
+        forum_channel_id: int,
+        thread_id: int,
+        visibility: str,
+        created_at: datetime.datetime,
+        server_id: int,
+    ) -> bool:
         """
         Crée une nouvelle entrée dans la table 'teams'.
         """
         query = """
-        INSERT INTO teams (code, leader_id, forum_channel_id, thread_id, visibility, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO teams (code, leader_id, forum_channel_id, thread_id, visibility, created_at, server_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         ON CONFLICT (code) DO NOTHING;
         """
         try:
             result = await database.execute(query, code, leader_id, forum_channel_id,
-                                            thread_id, visibility, created_at)
+                                            thread_id, visibility, created_at, server_id)
             if result == "INSERT 0 1":
                 logger.info(f"Équipe '{code}' créée avec succès.")
                 return True
@@ -298,17 +304,17 @@ class MatchmakingService:
             return False
 
     @staticmethod
-    async def add_member_to_team(code: str, member_id: int) -> bool:
+    async def add_member_to_team(code: str, member_id: int, server_id: int) -> bool:
         """
         Ajoute un membre à l'équipe (table 'team_members').
         """
         query = """
-        INSERT INTO team_members (team_code, member_id)
-        VALUES ($1, $2)
+        INSERT INTO team_members (team_code, member_id, server_id)
+        VALUES ($1, $2, $3)
         ON CONFLICT DO NOTHING;
         """
         try:
-            await database.execute(query, code, member_id)
+            await database.execute(query, code, member_id, server_id)
             logger.info(f"Membre {member_id} ajouté à l'équipe '{code}'.")
             return True
         except Exception as e:
@@ -316,16 +322,16 @@ class MatchmakingService:
             return False
 
     @staticmethod
-    async def remove_member_from_team(code: str, member_id: int) -> bool:
+    async def remove_member_from_team(code: str, member_id: int, server_id: int) -> bool:
         """
         Retire un membre de l'équipe (table 'team_members').
         """
         query = """
         DELETE FROM team_members
-        WHERE team_code=$1 AND member_id=$2;
+        WHERE team_code=$1 AND member_id=$2 AND server_id=$3;
         """
         try:
-            result = await database.execute(query, code, member_id)
+            result = await database.execute(query, code, member_id, server_id)
             if result == "DELETE 1":
                 logger.info(f"Membre {member_id} retiré de l'équipe '{code}'.")
                 return True
@@ -337,13 +343,13 @@ class MatchmakingService:
             return False
 
     @staticmethod
-    async def get_team(code: str) -> Optional[Dict]:
+    async def get_team(code: str, server_id: int) -> Optional[Dict]:
         """
         Récupère l'équipe (table 'teams') via son code.
         """
-        query = "SELECT * FROM teams WHERE code=$1;"
+        query = "SELECT * FROM teams WHERE code=$1 AND server_id=$2;"
         try:
-            row = await database.fetchrow(query, code)
+            row = await database.fetchrow(query, code, server_id)
             if row:
                 return {
                     "code": row["code"],
@@ -351,7 +357,8 @@ class MatchmakingService:
                     "forum_channel_id": row["forum_channel_id"],
                     "thread_id": row["thread_id"],
                     "visibility": row["visibility"],
-                    "voice_channel_id": row["voice_channel_id"]
+                    "voice_channel_id": row["voice_channel_id"],
+                    "server_id": row["server_id"],
                 }
             logger.warning(f"Équipe '{code}' introuvable.")
             return None
@@ -360,26 +367,26 @@ class MatchmakingService:
             return None
 
     @staticmethod
-    async def get_team_members(code: str) -> List[int]:
+    async def get_team_members(code: str, server_id: int) -> List[int]:
         """
         Récupère la liste des member_id (table 'team_members') pour l'équipe donnée.
         """
-        query = "SELECT member_id FROM team_members WHERE team_code=$1;"
+        query = "SELECT member_id FROM team_members WHERE team_code=$1 AND server_id=$2;"
         try:
-            rows = await database.fetch(query, code)
+            rows = await database.fetch(query, code, server_id)
             return [r["member_id"] for r in rows]
         except Exception as e:
             logger.error(f"Erreur get_team_members '{code}': {e}")
             return []
 
     @staticmethod
-    async def delete_team(code: str) -> bool:
+    async def delete_team(code: str, server_id: int) -> bool:
         """
         Supprime l'équipe (table 'teams') + triggers on 'team_members' si on veut ON DELETE CASCADE.
         """
-        query = "DELETE FROM teams WHERE code=$1;"
+        query = "DELETE FROM teams WHERE code=$1 AND server_id=$2;"
         try:
-            result = await database.execute(query, code)
+            result = await database.execute(query, code, server_id)
             if result.startswith("DELETE"):
                 logger.info(f"Équipe '{code}' supprimée avec succès.")
                 return True
@@ -391,17 +398,17 @@ class MatchmakingService:
             return False
 
     @staticmethod
-    async def update_voice_channel_id(code: str, voice_channel_id: int) -> bool:
+    async def update_voice_channel_id(code: str, voice_channel_id: int, server_id: int) -> bool:
         """
         Met à jour le champ voice_channel_id dans table 'teams'.
         """
         query = """
         UPDATE teams
         SET voice_channel_id=$2
-        WHERE code=$1;
+        WHERE code=$1 AND server_id=$3;
         """
         try:
-            result = await database.execute(query, code, voice_channel_id)
+            result = await database.execute(query, code, voice_channel_id, server_id)
             if result == "UPDATE 1":
                 logger.info(f"voice_channel_id={voice_channel_id} mis à jour pour team '{code}'.")
                 return True
@@ -413,13 +420,13 @@ class MatchmakingService:
             return False
 
     @staticmethod
-    async def get_all_teams() -> List[Dict]:
+    async def get_all_teams(server_id: int) -> List[Dict]:
         """
         Récupère toutes les équipes (table 'teams').
         """
-        query = "SELECT * FROM teams;"
+        query = "SELECT * FROM teams WHERE server_id=$1;"
         try:
-            rows = await database.fetch(query)
+            rows = await database.fetch(query, server_id)
             teams = []
             for r in rows:
                 teams.append({
@@ -436,17 +443,17 @@ class MatchmakingService:
             return []
 
     @staticmethod
-    async def get_public_teams() -> List[Dict]:
+    async def get_public_teams(server_id: int) -> List[Dict]:
         """
         Récupère toutes les équipes avec visibility='public'.
         """
         query = """
         SELECT code, leader_id, visibility 
-        FROM teams 
-        WHERE visibility='public';
+        FROM teams
+        WHERE visibility='public' AND server_id=$1;
         """
         try:
-            rows = await database.fetch(query)
+            rows = await database.fetch(query, server_id)
             return [
                 {"code": r["code"], "leader_id": r["leader_id"], "visibility": r["visibility"]}
                 for r in rows
@@ -456,14 +463,18 @@ class MatchmakingService:
             return []
 
     @staticmethod
-    async def get_teams_older_than(hours: int = 24) -> List[Dict]:
+    async def get_teams_older_than(server_id: Optional[int] = None, hours: int = 24) -> List[Dict]:
         """
         Récupère toutes les équipes dont created_at < now() - hours.
         """
         cutoff = datetime.datetime.utcnow() - datetime.timedelta(hours=hours)
-        query = "SELECT * FROM teams WHERE created_at < $1;"
         try:
-            rows = await database.fetch(query, cutoff)
+            if server_id is None:
+                query = "SELECT * FROM teams WHERE created_at < $1;"
+                rows = await database.fetch(query, cutoff)
+            else:
+                query = "SELECT * FROM teams WHERE created_at < $1 AND server_id=$2;"
+                rows = await database.fetch(query, cutoff, server_id)
             results = []
             for r in rows:
                 results.append({
@@ -472,7 +483,8 @@ class MatchmakingService:
                     "forum_channel_id": r["forum_channel_id"],
                     "thread_id": r["thread_id"],
                     "visibility": r["visibility"],
-                    "voice_channel_id": r["voice_channel_id"]
+                    "voice_channel_id": r["voice_channel_id"],
+                    "server_id": r["server_id"],
                 })
             return results
         except Exception as e:
@@ -485,6 +497,7 @@ class MatchmakingService:
 
     @staticmethod
     async def add_entry_to_queue(
+        server_id: int,
         entry_type: int,                 # 1=solo,2=duo,3=trio,4=quatuor,5=full
         discord_member_id: int,         # ID du leader ou du joueur solo
         team_member_ids: Optional[List[int]],
@@ -504,6 +517,7 @@ class MatchmakingService:
         """
         query = """
         INSERT INTO matchmaking_queue (
+            server_id,
             entry_type,
             discord_member_id,
             team_member_ids,
@@ -518,11 +532,12 @@ class MatchmakingService:
             roles
         )
         VALUES ($1, $2, $3, $4, $5, $6,
-                $7, $8, $9, $10, $11, $12)
+                $7, $8, $9, $10, $11, $12, $13)
         """
         try:
             await database.execute(
                 query,
+                server_id,
                 entry_type,
                 discord_member_id,
                 team_member_ids if team_member_ids else None,
@@ -546,31 +561,40 @@ class MatchmakingService:
             raise e
 
     @staticmethod
-    async def get_queue_entries() -> List[Dict]:
+    async def get_queue_entries(server_id: Optional[int] = None) -> List[Dict]:
         """
         Récupère toutes les entrées (matchmaking_queue), triées par timestamp ASC.
         """
-        query = """
-        SELECT * 
-        FROM matchmaking_queue
-        ORDER BY timestamp ASC;
-        """
         try:
-            rows = await database.fetch(query)
+            if server_id is None:
+                query = """
+                SELECT *
+                FROM matchmaking_queue
+                ORDER BY timestamp ASC;
+                """
+                rows = await database.fetch(query)
+            else:
+                query = """
+                SELECT *
+                FROM matchmaking_queue
+                WHERE server_id = $1
+                ORDER BY timestamp ASC;
+                """
+                rows = await database.fetch(query, server_id)
             return [dict(r) for r in rows]
         except Exception as e:
             logger.error(f"Erreur get_queue_entries: {e}")
             return []
 
     @staticmethod
-    async def remove_player_from_queue(discord_id: int) -> bool:
+    async def remove_player_from_queue(server_id: int, discord_id: int) -> bool:
         """
         Supprime UNE entrée repérée par discord_member_id (cas solo ou leader).
         Note : si c'est un groupe, on laisse la question de la suppr complète ou non au code du cog.
         """
-        query = "DELETE FROM matchmaking_queue WHERE discord_member_id = $1;"
+        query = "DELETE FROM matchmaking_queue WHERE discord_member_id = $1 AND server_id = $2;"
         try:
-            result = await database.execute(query, discord_id)
+            result = await database.execute(query, discord_id, server_id)
             if "DELETE 1" in result:
                 logger.info(f"[Queue] Joueur/leader {discord_id} retiré de la queue.")
                 return True
@@ -582,28 +606,28 @@ class MatchmakingService:
             return False
 
     @staticmethod
-    async def remove_players_from_queue(member_ids: List[int]) -> None:
+    async def remove_players_from_queue(server_id: int, member_ids: List[int]) -> None:
         """
         Retire plusieurs joueurs en se basant sur discord_member_id IN (..).
         """
         query = """
         DELETE FROM matchmaking_queue
-        WHERE discord_member_id = ANY($1::bigint[]);
+        WHERE discord_member_id = ANY($1::bigint[]) AND server_id = $2;
         """
         try:
-            await database.execute(query, member_ids)
+            await database.execute(query, member_ids, server_id)
             logger.info(f"[Queue] Joueurs retirés: {member_ids}")
         except Exception as e:
             logger.error(f"[Queue] Erreur remove_players_from_queue {member_ids}: {e}")
 
     @staticmethod
-    async def is_player_in_queue(discord_id: int) -> bool:
+    async def is_player_in_queue(server_id: int, discord_id: int) -> bool:
         """
         Vérifie si un discord_member_id (solo ou leader) figure dans matchmaking_queue.
         """
-        query = "SELECT 1 FROM matchmaking_queue WHERE discord_member_id=$1 LIMIT 1;"
+        query = "SELECT 1 FROM matchmaking_queue WHERE discord_member_id=$1 AND server_id=$2 LIMIT 1;"
         try:
-            row = await database.fetchrow(query, discord_id)
+            row = await database.fetchrow(query, discord_id, server_id)
             return (row is not None)
         except Exception as e:
             logger.error(f"Erreur is_player_in_queue {discord_id}: {e}")
@@ -614,45 +638,45 @@ class MatchmakingService:
     #
 
     @staticmethod
-    async def count_solos_in_queue() -> int:
+    async def count_solos_in_queue(server_id: int) -> int:
         """
         Compte les entrées 'solo' => entry_type=1
         """
-        query = "SELECT COUNT(*) FROM matchmaking_queue WHERE entry_type=1;"
+        query = "SELECT COUNT(*) FROM matchmaking_queue WHERE entry_type=1 AND server_id=$1;"
         try:
-            return await database.fetchval(query) or 0
+            return await database.fetchval(query, server_id) or 0
         except Exception as e:
             logger.error(f"Erreur count_solos_in_queue: {e}")
             return 0
 
     @staticmethod
-    async def count_teams_in_queue() -> int:
+    async def count_teams_in_queue(server_id: int) -> int:
         """
         Compte les blocs où entry_type>1 (duo, trio, quatuor, 5-stack).
         """
-        query = "SELECT COUNT(*) FROM matchmaking_queue WHERE entry_type>1;"
+        query = "SELECT COUNT(*) FROM matchmaking_queue WHERE entry_type>1 AND server_id=$1;"
         try:
-            return await database.fetchval(query) or 0
+            return await database.fetchval(query, server_id) or 0
         except Exception as e:
             logger.error(f"Erreur count_teams_in_queue: {e}")
             return 0
 
     @staticmethod
-    async def count_total_members_in_queue() -> int:
+    async def count_total_members_in_queue(server_id: int) -> int:
         """
         Compte le nombre total d'entrées (pas le nombre total de PERSONNES).
         Si vous voulez réellement la somme de tous les membres :
         - Option : SUM cardinalité de team_member_ids + count solo
         """
-        query = "SELECT COUNT(*) FROM matchmaking_queue;"
+        query = "SELECT COUNT(*) FROM matchmaking_queue WHERE server_id=$1;"
         try:
-            return await database.fetchval(query) or 0
+            return await database.fetchval(query, server_id) or 0
         except Exception as e:
             logger.error(f"Erreur count_total_members_in_queue: {e}")
             return 0
 
     @staticmethod
-    async def get_roles_for_discord_member(discord_id: int) -> Optional[List[str]]:
+    async def get_roles_for_discord_member(server_id: int, discord_id: int) -> Optional[List[str]]:
         """
         Récupère la liste des rôles (ex: ["duelist", "controller"])
         depuis la table matchmaking_queue pour un discord_member_id donné.
@@ -662,11 +686,11 @@ class MatchmakingService:
         query = """
         SELECT roles 
         FROM matchmaking_queue
-        WHERE discord_member_id=$1
+        WHERE discord_member_id=$1 AND server_id=$2
         LIMIT 1;
         """
         try:
-            row = await database.fetchrow(query, discord_id)
+            row = await database.fetchrow(query, discord_id, server_id)
             if row:
                 return row["roles"]  # c'est un tableau / liste
             return None
@@ -675,7 +699,7 @@ class MatchmakingService:
             return None
         
     @classmethod
-    async def update_team_leader(cls, code: str, new_leader_id: int) -> bool:
+    async def update_team_leader(cls, code: str, new_leader_id: int, server_id: int) -> bool:
         """
         Met à jour le leader de l'équipe (table 'teams').
         Retourne True si une ligne a été mise à jour, False sinon.
@@ -683,10 +707,10 @@ class MatchmakingService:
         query = """
             UPDATE teams
             SET leader_id=$1
-            WHERE code=$2
+            WHERE code=$2 AND server_id=$3
         """
         try:
-            result = await database.execute(query, new_leader_id, code)
+            result = await database.execute(query, new_leader_id, code, server_id)
             # Souvent, asyncpg renvoie un string style "UPDATE 1" si 1 ligne mise à jour.
             if result == "UPDATE 1":
                 logger.info(f"Leader mis à jour: {new_leader_id} pour équipe '{code}'.")
@@ -699,7 +723,7 @@ class MatchmakingService:
             return False
 
     @staticmethod
-    async def count_total_players_in_queue() -> int:
+    async def count_total_players_in_queue(server_id: int) -> int:
         """
         Compte le nombre total de joueurs en file :
         - Si entry_type=1, on compte 1
@@ -711,39 +735,40 @@ class MatchmakingService:
                  ELSE cardinality(team_member_ids)
             END
         ), 0)
-        FROM matchmaking_queue;
+        FROM matchmaking_queue
+        WHERE server_id=$1;
         """
         try:
-            return await database.fetchval(query) or 0
+            return await database.fetchval(query, server_id) or 0
         except Exception as e:
             logger.error(f"Erreur count_total_players_in_queue: {e}")
             return 0
 
     @staticmethod
-    async def update_entry_team_size_any(entry_id: int) -> bool:
+    async def update_entry_team_size_any(entry_id: int, server_id: int) -> bool:
         """
         Passe team_size à 0 (any) pour une entrée donnée.
         """
         query = """
         UPDATE matchmaking_queue
         SET team_size = 0
-        WHERE id = $1;
+        WHERE id = $1 AND server_id = $2;
         """
         try:
-            result = await database.execute(query, entry_id)
+            result = await database.execute(query, entry_id, server_id)
             return result == "UPDATE 1"
         except Exception as e:
             logger.error(f"Erreur update_entry_team_size_any {entry_id}: {e}")
             return False
 
     @staticmethod
-    async def remove_entry(entry_id: int) -> bool:
+    async def remove_entry(entry_id: int, server_id: int) -> bool:
         """
         Supprime l'entrée de matchmaking_queue par son ID.
         """
-        query = "DELETE FROM matchmaking_queue WHERE id = $1;"
+        query = "DELETE FROM matchmaking_queue WHERE id = $1 AND server_id = $2;"
         try:
-            result = await database.execute(query, entry_id)
+            result = await database.execute(query, entry_id, server_id)
             return result.startswith("DELETE")
         except Exception as e:
             logger.error(f"Erreur remove_entry {entry_id}: {e}")

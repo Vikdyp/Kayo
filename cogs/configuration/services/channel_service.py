@@ -1,6 +1,7 @@
 # cogs/configuration/services/channel_service.py
 
 import logging
+from typing import Optional
 from utils.database import database
 from utils.base import get_or_create_server_record
 
@@ -35,6 +36,36 @@ class ServerChannelService:
         except Exception as e:
             logger.error(f"[ServerChannelService] Erreur get_channels_config: {e}")
             return {}
+
+    @staticmethod
+    async def get_channel_id(guild_id: int, guild_name: str, action: str) -> Optional[int]:
+        """
+        Retourne l'ID du salon configuré pour une action donnée.
+        """
+        try:
+            server_db_id = await ServerChannelService.get_or_create_server_record(guild_id, guild_name)
+            if not server_db_id:
+                return None
+
+            query = """
+            SELECT channel_id
+            FROM channel_configurations
+            WHERE server_id = $1 AND action = $2;
+            """
+            channel_id = await database.fetchval(query, server_db_id, action)
+            if channel_id:
+                logger.debug(
+                    f"[ServerChannelService] Salon trouvé pour action='{action}' (server_id={server_db_id}): {channel_id}"
+                )
+            else:
+                logger.warning(
+                    f"[ServerChannelService] Aucun salon configuré pour action='{action}' (server_id={server_db_id})."
+                )
+            return channel_id
+
+        except Exception as e:
+            logger.error(f"[ServerChannelService] Erreur get_channel_id pour action='{action}': {e}")
+            return None
 
     @staticmethod
     async def set_channel_for_action(guild_id: int, guild_name: str, action: str, channel_id: int) -> bool:

@@ -33,7 +33,7 @@ class TournamentCog(commands.Cog):
         action_lower = action.value.lower()
         if action_lower == "creat":
             # Vérifier qu'il n'existe pas déjà un tournoi actif
-            active = await get_active_tournament()
+            active = await get_active_tournament(interaction.guild.id)
             if active:
                 await interaction.response.send_message("Un tournoi est déjà actif. Veuillez le fermer avant d'en créer un nouveau.", ephemeral=True)
                 return
@@ -41,7 +41,7 @@ class TournamentCog(commands.Cog):
             modal = TournamentCreationModal(bot=self.bot)
             await interaction.response.send_modal(modal)
         elif action_lower == "close":
-            success = await close_tournament()
+            success = await close_tournament(interaction.guild.id)
             if success:
                 await interaction.response.send_message("Le tournoi actif a été fermé et toutes les inscriptions supprimées.", ephemeral=True)
             else:
@@ -77,6 +77,7 @@ class TournamentCreationModal(discord.ui.Modal, title="Création de Tournoi"):
 
         # Création du tournoi dans la BDD
         tournament_id = await create_tournament(
+            guild_id=interaction.guild.id,
             tournament_name=self.tournament_name.value,
             max_teams=max_teams_int,
             registration_start=start_date,
@@ -168,7 +169,7 @@ class TeamRegistrationModal(discord.ui.Modal, title="Inscription d'équipe"):
             "coach": coach
         }
         # Enregistrer l'équipe dans la BDD
-        team_id = await register_team(self.tournament_id, team_info)
+        team_id = await register_team(interaction.guild.id, self.tournament_id, team_info)
         if not team_id:
             await interaction.response.send_message("Erreur lors de l'inscription de l'équipe.", ephemeral=True)
             return
@@ -185,7 +186,7 @@ class TeamRegistrationModal(discord.ui.Modal, title="Inscription d'équipe"):
                 logger.error(f"Erreur lors de l'envoi du DM à {player_id}: {e}")
 
         # Créer un post dans le forum (ID: 1236736105106116668) avec les infos publiques de l'équipe
-        await create_forum_post(self.tournament_id, team_info)
+        await create_forum_post(interaction.guild, team_info)
         await interaction.response.send_message(
             "Inscription d'équipe enregistrée ! Vous recevrez prochainement un DM pour compléter votre inscription.",
             ephemeral=True

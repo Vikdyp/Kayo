@@ -12,9 +12,12 @@ import discord
 from discord.ext import commands, tasks
 
 from cogs.voice_management.services.five_stack_service import MatchmakingService
+from cogs.configuration.services.channel_service import ServerChannelService
 
 # Seuil pour la différence d'ELO autorisée entre les membres d'un groupe
 ELO_DIFF_THRESHOLD = 300
+MATCHMAKING_CATEGORY_ACTION = "matchmaking_voice_category"
+DEFAULT_MATCHMAKING_CATEGORY = "Matchmaking"
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +77,7 @@ class MatchmakingQueue(commands.Cog):
 
             if age >= mins_remove:
                 # Suppression définitive
-                if await MatchmakingService.remove_entry(eid):
+                if await MatchmakingService.remove_entry(eid, entry["server_id"]):
                     to_update.append(entry)
                     try:
                         user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
@@ -86,7 +89,7 @@ class MatchmakingQueue(commands.Cog):
 
             elif age >= mins_any and entry["team_size"] != 0:
                 # Passage en "any"
-                if await MatchmakingService.update_entry_team_size_any(eid):
+                if await MatchmakingService.update_entry_team_size_any(eid, entry["server_id"]):
                     to_update.append(entry)
                     try:
                         user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
@@ -105,6 +108,12 @@ class MatchmakingQueue(commands.Cog):
     @stale_task.before_loop
     async def before_stale(self):
         await self.bot.wait_until_ready()
+
+    async def _get_server_id(self, guild_id: int) -> Optional[int]:
+        server_id = await MatchmakingService.get_server_id_by_guild_id(guild_id)
+        if not server_id:
+            logger.warning(f"Serveur introuvable pour la guilde={guild_id}.")
+        return server_id
 
     # ------------------------------------------------
     # Listeners
@@ -191,14 +200,14 @@ class MatchmakingQueue(commands.Cog):
 
             for desired_size in team_size_priority:
                 for group_key, group_entries in list(grouped.items()):
-                    lang, region, platf, tsize = group_key
+                    server_id, lang, region, platf, tsize = group_key
 
                     if tsize == -1:
                         # Pour les entrées génériques, essayer différentes tailles
                         for size in [5, 3, 2]:
-                            await self.form_groups_greedy(group_entries, size, group_key)
+                            await self.form_groups_greedy(group_entries, size, server_id)
                     elif tsize == desired_size:
-                        await self.form_groups_greedy(group_entries, desired_size, group_key)
+                        await self.form_groups_greedy(group_entries, desired_size, server_id)
 
                     # Mise à jour de la liste des entrées après modification
                     entries = await MatchmakingService.get_queue_entries()
@@ -213,13 +222,13 @@ class MatchmakingQueue(commands.Cog):
     # Regroupement des entrées
     # ------------------------------------------------
 
-    def group_entries(self, entries: List[Dict]) -> Dict[Tuple[str, str, str, int], List[Dict]]:
+    def group_entries(self, entries: List[Dict]) -> Dict[Tuple[int, str, str, str, int], List[Dict]]:
         """
         Regroupe les entrées selon (langue, region, platform, team_size).
         """
-        grouped: Dict[Tuple[str, str, str, int], List[Dict]] = {}
+        grouped: Dict[Tuple[int, str, str, str, int], List[Dict]] = {}
         for e in entries:
-            key = (e["langue"], e["region"], e["platform"], e["team_size"])
+            key = (e["server_id"], e["langue"], e["region"], e["platform"], e["team_size"])
             grouped.setdefault(key, []).append(e)
         return grouped
 
@@ -228,7 +237,7 @@ class MatchmakingQueue(commands.Cog):
     # ------------------------------------------------
 
     async def form_groups_greedy(
-        self, blocks: List[Dict], desired_size: int, group_key: Tuple[str, str, str, int]
+        self, blocks: List[Dict], desired_size: int, server_id: int
     ) -> None:
         """
         Tente de former un groupe en combinant les blocs pour atteindre une somme d'entry_type égale à desired_size.
@@ -268,10 +277,10 @@ class MatchmakingQueue(commands.Cog):
                     unique_roles = set(combined_roles)
                     if len(unique_roles) < desired_size:
                         logger.debug("Rôles insuffisamment diversifiés, mais le groupe sera formé.")
-                    await self.build_final_group(used_blocks, desired_size)
+                    await self.build_final_group(used_blocks, desired_size, server_id)
                     return
 
-    async def build_final_group(self, blocks: List[Dict], desired_size: int) -> None:
+    async def build_final_group(self, blocks: List[Dict], desired_size: int, server_id: int) -> None:
         """
         Finalise la formation du groupe :
         - Récupère les membres
@@ -296,7 +305,7 @@ class MatchmakingQueue(commands.Cog):
             logger.warning("Incohérence dans le nombre de membres récupérés.")
             return
 
-        await self.create_voice_channel(group_members)
+        await self.create_voice_channel(group_members, server_id)
 
         # 3. Pour chaque bloc : décrémenter les compteurs de rôles puis retirer du queue
         for b in blocks:
@@ -308,9 +317,9 @@ class MatchmakingQueue(commands.Cog):
             # b) Suppression du bloc dans la DB
             tmids = b.get("team_member_ids")
             if tmids:
-                await MatchmakingService.remove_players_from_queue(tmids)
+                await MatchmakingService.remove_players_from_queue(server_id, tmids)
             else:
-                await MatchmakingService.remove_players_from_queue([b["discord_member_id"]])
+                await MatchmakingService.remove_players_from_queue(server_id, [b["discord_member_id"]])
 
         # 4. Mise à jour de l'embed de statut
         guild_id = group_members[0].guild.id
@@ -344,7 +353,7 @@ class MatchmakingQueue(commands.Cog):
     # Création du salon vocal
     # ------------------------------------------------
 
-    async def create_voice_channel(self, group: List[discord.Member]) -> Optional[discord.VoiceChannel]:
+    async def create_voice_channel(self, group: List[discord.Member], server_id: int) -> Optional[discord.VoiceChannel]:
         """
         Crée un salon vocal pour le groupe et envoie à chaque membre un embed
         avec un gros bouton vert “Rejoindre le canal vocal” et un listing clair des rôles.
@@ -354,9 +363,24 @@ class MatchmakingQueue(commands.Cog):
 
         guild = group[0].guild
         # --- Création / récupération de la catégorie ---
-        category = discord.utils.get(guild.categories, name="Matchmaking")
+        category = None
+        category_id = await ServerChannelService.get_channel_id(
+            guild.id,
+            guild.name,
+            MATCHMAKING_CATEGORY_ACTION,
+        )
+        if category_id:
+            configured = guild.get_channel(category_id)
+            if isinstance(configured, discord.CategoryChannel):
+                category = configured
+            else:
+                logger.warning(
+                    f"Matchmaking category config is not a CategoryChannel: {category_id}"
+                )
         if not category:
-            category = await guild.create_category("Matchmaking")
+            category = discord.utils.get(guild.categories, name=DEFAULT_MATCHMAKING_CATEGORY)
+        if not category:
+            category = await guild.create_category(DEFAULT_MATCHMAKING_CATEGORY)
 
         # --- Permissions du canal ---
         overwrites = {guild.default_role: discord.PermissionOverwrite(view_channel=False)}
@@ -381,7 +405,7 @@ class MatchmakingQueue(commands.Cog):
             # 3) Récupération des rôles et construction de la valeur du champ
             lines = []
             for m in group:
-                roles_list = await MatchmakingService.get_roles_for_discord_member(m.id) or []
+                roles_list = await MatchmakingService.get_roles_for_discord_member(server_id, m.id) or []
                 # Capitalize chaque rôle et joindre, ou indiquer "Aucun rôle"
                 roles_display = ", ".join(r.capitalize() for r in roles_list) or "Aucun rôle"
                 lines.append(f"**{m.display_name}** — {roles_display}")
@@ -435,9 +459,15 @@ class MatchmakingQueue(commands.Cog):
         - Total d'entrées dans la queue
         - Rôle prioritaire (celui avec le plus faible compteur)
         """
-        total_solo = await MatchmakingService.count_solos_in_queue()
-        total_team = await MatchmakingService.count_teams_in_queue()
-        total_entries = await MatchmakingService.count_total_players_in_queue()
+        server_id = await self._get_server_id(guild_id)
+        if not server_id:
+            total_solo = 0
+            total_team = 0
+            total_entries = 0
+        else:
+            total_solo = await MatchmakingService.count_solos_in_queue(server_id)
+            total_team = await MatchmakingService.count_teams_in_queue(server_id)
+            total_entries = await MatchmakingService.count_total_players_in_queue(server_id)
 
         embed = discord.Embed(
             title="Rejoignez la Queue Valorant",
@@ -483,9 +513,9 @@ class MatchmakingQueue(commands.Cog):
     async def remove_from_queue(self, user: discord.Member) -> None:
         async with self.queue_lock():
             # Récupérer les rôles avant suppression
-            roles = await MatchmakingService.get_roles_for_discord_member(user.id) or []
+            roles = await MatchmakingService.get_roles_for_discord_member(server_id, user.id) or []
 
-            removed = await MatchmakingService.remove_player_from_queue(user.id)
+            removed = await MatchmakingService.remove_player_from_queue(server_id, user.id)
             if not removed:
                 raise ValueError("Vous n'êtes pas dans la queue.")
 
@@ -502,10 +532,13 @@ class MatchmakingQueue(commands.Cog):
         Si le membre est leader d'une équipe, retire l'équipe entière.
         """
         async with self.queue_lock():
-            team_code = await MatchmakingService.is_user_leader_of_team(member.id)
+            server_id = await self._get_server_id(member.guild.id)
+            if not server_id:
+                return
+            team_code = await MatchmakingService.is_user_leader_of_team(member.id, server_id)
             if team_code:
-                team_members = await MatchmakingService.get_team_members(team_code)
-                await MatchmakingService.remove_players_from_queue(team_members)
+                team_members = await MatchmakingService.get_team_members(team_code, server_id)
+                await MatchmakingService.remove_players_from_queue(server_id, team_members)
                 await self.update_queue_status_embed(member.guild.id)
                 logger.info(f"Équipe {team_code} retirée suite au départ de {member.display_name}.")
 
@@ -525,10 +558,14 @@ class MatchmakingQueue(commands.Cog):
         roles: List[str]
     ) -> None:
         async with self.queue_lock():
-            if await MatchmakingService.is_user_leader_of_team(user.id):
+            server_id = await self._get_server_id(user.guild.id)
+            if not server_id:
+                raise ValueError("Serveur introuvable.")
+            if await MatchmakingService.is_user_leader_of_team(user.id, server_id):
                 raise ValueError("Déjà leader d'une équipe, impossible de rejoindre en solo.")
 
             await MatchmakingService.add_entry_to_queue(
+                server_id=server_id,
                 entry_type=1,
                 discord_member_id=user.id,
                 team_member_ids=None,
@@ -568,8 +605,11 @@ class MatchmakingQueue(commands.Cog):
         Ajoute une équipe partielle (duo, trio ou quatuor) dans la queue.
         """
         async with self.queue_lock():
+            server_id = await self._get_server_id(leader.guild.id)
+            if not server_id:
+                raise ValueError("Serveur introuvable.")
             for m in members:
-                if await MatchmakingService.is_user_leader_of_team(m.id):
+                if await MatchmakingService.is_user_leader_of_team(m.id, server_id):
                     raise ValueError(f"{m.display_name} est déjà leader d'une autre équipe.")
 
             entry_type = len(members)
@@ -579,6 +619,7 @@ class MatchmakingQueue(commands.Cog):
             all_ids = [m.id for m in members]
 
             await MatchmakingService.add_entry_to_queue(
+                server_id=server_id,
                 entry_type=entry_type,
                 discord_member_id=leader.id,
                 team_member_ids=all_ids,
@@ -609,11 +650,14 @@ class MatchmakingQueue(commands.Cog):
         """
         Ajoute une équipe préformée dans la queue après vérification du leadership.
         """
-        code = await MatchmakingService.is_user_leader_of_team(leader.id)
+        server_id = await self._get_server_id(leader.guild.id)
+        if not server_id:
+            raise ValueError("Serveur introuvable.")
+        code = await MatchmakingService.is_user_leader_of_team(leader.id, server_id)
         if not code:
             raise ValueError("Vous n'êtes pas le leader d'une équipe.")
 
-        member_ids = await MatchmakingService.get_team_members(code)
+        member_ids = await MatchmakingService.get_team_members(code, server_id)
         if not member_ids:
             raise ValueError("Votre équipe est vide. Impossible de rejoindre la queue.")
 
@@ -640,6 +684,7 @@ class MatchmakingQueue(commands.Cog):
 
         entry_type = len(valid_members)
         await MatchmakingService.add_entry_to_queue(
+            server_id=server_id,
             entry_type=entry_type,
             discord_member_id=leader.id,
             team_member_ids=valid_members,
