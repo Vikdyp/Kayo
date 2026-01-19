@@ -5,9 +5,13 @@ import logging
 import asyncio
 from datetime import datetime, timedelta
 
-from cogs.other.service.rank_service import RankService
+from cogs.configuration.services.role_service import ServerRoleService
+from cogs.configuration.services.channel_service import ServerChannelService
 
 logger = logging.getLogger("rank_updater")
+
+# Noms des rangs Valorant
+RANK_NAMES = {"fer", "bronze", "argent", "or", "platine", "diamant", "ascendant", "immortel", "radiant"}
 
 # Dictionnaire de correspondance pour la police spéciale
 ALPHABET_STYLE = {
@@ -44,13 +48,23 @@ def stylize(text: str) -> str:
 class RankUpdater:
     def __init__(self, bot: discord.Client):
         self.bot = bot
-        self.rank_service = RankService()
         # Pour le rate-limit : stocke pour chaque salon la liste des timestamps d'édition
         self._edit_timestamps: dict[int, list[datetime]] = {}
         # Periodic refresh to avoid stale names after restarts.
         self._refresh_task = None
         self._refresh_interval = 600
         self._listener_added = False
+
+    async def _get_config(self, guild_id: int, guild_name: str) -> dict:
+        """Récupère la config des rôles et channels depuis les services."""
+        roles_config = await ServerRoleService.get_roles_config(guild_id, guild_name)
+        channels_config = await ServerChannelService.get_channels_config(guild_id, guild_name)
+
+        # Filtrer uniquement les rôles et channels de rang
+        return {
+            "roles": {k: v for k, v in roles_config.items() if k in RANK_NAMES},
+            "channels": {k: v for k, v in channels_config.items() if k in RANK_NAMES}
+        }
 
     async def on_presence_update(self, before: discord.Member, after: discord.Member):
         # Ne rien faire si le status n'a pas changé offline ↔ online
@@ -61,7 +75,7 @@ class RankUpdater:
             guild_id = guild.id
             guild_name = guild.name
 
-            config = await self.rank_service.get_config(guild_id, guild_name)
+            config = await self._get_config(guild_id, guild_name)
             roles_cfg = config.get("roles", {})
             if not roles_cfg:
                 return
@@ -75,7 +89,7 @@ class RankUpdater:
 
     async def refresh_guild(self, guild, config=None, only_ranks=None):
         if config is None:
-            config = await self.rank_service.get_config(guild.id, guild.name)
+            config = await self._get_config(guild.id, guild.name)
 
         roles_cfg = config.get("roles", {})
         channels_cfg = config.get("channels", {})
@@ -159,7 +173,6 @@ rank_updater = RankUpdater(None)
 def setup_rank_updater(bot: discord.Client):
     """Initialise et configure le RankUpdater avec le bot."""
     rank_updater.bot = bot
-    rank_updater.rank_service = RankService()
     # Écoute les mises à jour de présence
     if not rank_updater._listener_added:
         bot.add_listener(rank_updater.on_presence_update, 'on_presence_update')

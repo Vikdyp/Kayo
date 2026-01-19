@@ -2,8 +2,15 @@ import discord
 from discord.ext import commands
 import asyncio
 import time
+import logging
 
-ROLE_RANK = {
+from cogs.configuration.services.role_service import ServerRoleService
+from cogs.configuration.services.channel_service import ServerChannelService
+
+logger = logging.getLogger('cogs.rank_up')
+
+# Ordre des rangs (1 = meilleur, 9 = moins bon)
+RANK_ORDER = {
     "radiant": 1,
     "immortel": 2,
     "ascendant": 3,
@@ -15,135 +22,176 @@ ROLE_RANK = {
     "fer": 9
 }
 
+RANK_NAMES = set(RANK_ORDER.keys())
+
+
 class RoleChangeCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # Remplace par l'ID du salon de logs
-        self.log_channel_id = 1236733103687340144
+
+        # Cache pour la config (évite les appels DB à chaque événement)
+        # Structure: {guild_id: {"roles": {}, "log_channel_id": int, "expires": timestamp}}
+        self._config_cache = {}
+        self._cache_ttl = 300  # 5 minutes
 
         # Mémorise temporairement les rôles retirés en attendant
         # de voir si un nouveau rôle arrive pour ce membre
-        #
-        # Structure : pending_removal[user_id] = {
+        # Structure : pending_removal[(guild_id, user_id)] = {
         #    "removed": set(["or", "argent", ...]),
         #    "timestamp": time.time()
         # }
-        #
         self.pending_removal = {}
 
-    def get_log_channel(self):
-        return self.bot.get_channel(self.log_channel_id)
+    async def _get_config(self, guild: discord.Guild) -> dict:
+        """Récupère la config depuis le cache ou la base de données."""
+        now = time.time()
+        cached = self._config_cache.get(guild.id)
+
+        if cached and cached["expires"] > now:
+            return cached
+
+        # Récupérer depuis la DB
+        roles_config = await ServerRoleService.get_roles_config(guild.id, guild.name)
+        log_channel_id = await ServerChannelService.get_channel_id(guild.id, guild.name, "rank_up")
+
+        # Filtrer uniquement les rôles de rang
+        rank_roles = {k: v for k, v in roles_config.items() if k in RANK_NAMES}
+
+        config = {
+            "roles": rank_roles,
+            "log_channel_id": log_channel_id,
+            "expires": now + self._cache_ttl
+        }
+        self._config_cache[guild.id] = config
+        return config
+
+    async def _get_log_channel(self, guild: discord.Guild) -> discord.TextChannel | None:
+        """Récupère le channel de log depuis la config."""
+        config = await self._get_config(guild)
+        channel_id = config.get("log_channel_id")
+        if not channel_id:
+            return None
+        return self.bot.get_channel(channel_id)
+
+    def _get_rank_role_ids(self, config: dict) -> set[int]:
+        """Retourne les IDs des rôles de rang configurés."""
+        return set(config.get("roles", {}).values())
+
+    def _get_rank_name_by_id(self, config: dict, role_id: int) -> str | None:
+        """Retourne le nom du rang à partir de l'ID du rôle."""
+        for name, rid in config.get("roles", {}).items():
+            if rid == role_id:
+                return name
+        return None
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
-        # On identifie les rôles avant/après qui font partie des rangs Valorant
-        old_ranks = {r.name.lower() for r in before.roles if r.name != "@everyone" and r.name.lower() in ROLE_RANK}
-        new_ranks = {r.name.lower() for r in after.roles if r.name != "@everyone" and r.name.lower() in ROLE_RANK}
+        config = await self._get_config(after.guild)
+        rank_role_ids = self._get_rank_role_ids(config)
 
-        # Les rôles supprimés (ex: {"or"})
-        removed = old_ranks - new_ranks
-        # Les rôles ajoutés (ex: {"platine"})
-        added = new_ranks - old_ranks
+        if not rank_role_ids:
+            return  # Pas de config pour ce serveur
 
-        # Cas 1 : il y a un retrait d'un ou plusieurs rôles
+        # Identifier les rôles de rang avant/après
+        old_rank_ids = {r.id for r in before.roles if r.id in rank_role_ids}
+        new_rank_ids = {r.id for r in after.roles if r.id in rank_role_ids}
+
+        # Rôles supprimés / ajoutés
+        removed_ids = old_rank_ids - new_rank_ids
+        added_ids = new_rank_ids - old_rank_ids
+
+        # Convertir en noms de rang
+        removed = {self._get_rank_name_by_id(config, rid) for rid in removed_ids}
+        added = {self._get_rank_name_by_id(config, rid) for rid in added_ids}
+        removed.discard(None)
+        added.discard(None)
+
+        key = (after.guild.id, after.id)
+
+        # Cas 1 : retrait de rôle(s)
         if removed:
-            # On mémorise qu'on a retiré ces rôles pour ce user
-            self.pending_removal[after.id] = {
+            self.pending_removal[key] = {
                 "removed": removed,
                 "timestamp": time.time()
             }
-            # On déclenche la « finalisation » dans 2s
-            # (si entre-temps on reçoit un ajout pour ce même user, on l'interceptera)
-            asyncio.create_task(self._finalize_removal(after))
+            asyncio.create_task(self._finalize_removal(after, config))
 
-        # Cas 2 : il y a un ajout
+        # Cas 2 : ajout de rôle(s)
         if added:
-            # Voyons si on avait un retrait en attente pour ce user
-            if after.id in self.pending_removal:
-                data = self.pending_removal[after.id]
-                old_removed = data["removed"]  # set(...)
-                # On considère le cas simple : 1 rôle retiré et 1 rôle ajouté
-                # (si tu peux retirer plusieurs rangs ou en ajouter plusieurs, il faudra adapter)
+            if key in self.pending_removal:
+                data = self.pending_removal[key]
+                old_removed = data["removed"]
+
                 if len(old_removed) == 1 and len(added) == 1:
                     old_rank = list(old_removed)[0]
                     new_rank = list(added)[0]
+                    del self.pending_removal[key]
 
-                    # On efface le "pending removal", on ne veut pas le message "rôle perdu"
-                    del self.pending_removal[after.id]
-
-                    # On envoie un message de transition old_rank -> new_rank
                     await self._send_rank_change_message(
                         member=after,
                         old_rank=old_rank,
-                        new_rank=new_rank
+                        new_rank=new_rank,
+                        config=config
                     )
                     return
-                # Sinon, cas plus complexe (plusieurs rôles) => on peut l'ignorer ou gérer autrement
 
-            # Si pas de pending_removal pour ce user, c'est qu'il vient d'obtenir un nouveau rôle
-            # sans qu'on en ait retiré un juste avant. Tu peux décider de logguer ou non.
-            # Ex. "Le membre vient d'obtenir le rôle 'Platine'"
-            # (Code facultatif)
-            # log_channel = self.get_log_channel()
-            # if log_channel:
-            #     for rank_added in added:
-            #         await log_channel.send(
-            #             f"{after.mention} a reçu un nouveau rang **{rank_added.capitalize()}**."
-            #         )
-
-    async def _finalize_removal(self, member: discord.Member, delay: float = 2.0):
-        """Attend quelques secondes pour voir si un nouveau rôle arrive.
-           Si rien n'arrive, on finalise le retrait."""
+    async def _finalize_removal(self, member: discord.Member, config: dict, delay: float = 2.0):
+        """Attend quelques secondes pour voir si un nouveau rôle arrive."""
         await asyncio.sleep(delay)
 
-        # Vérifie si le retrait est toujours en attente (et pas 'annulé' par un ajout)
-        if member.id in self.pending_removal:
-            data = self.pending_removal[member.id]
-            # Vérifie qu'on est bien assez "vieux" (pas une màj plus récente)
+        key = (member.guild.id, member.id)
+        if key in self.pending_removal:
+            data = self.pending_removal[key]
             if time.time() - data["timestamp"] >= delay:
-                # Personne n'a ajouté de nouveau rôle => on logge la perte
-                removed_ranks = data["removed"]
-                del self.pending_removal[member.id]
+                del self.pending_removal[key]
+                # Le membre a juste perdu son rang sans en recevoir un nouveau
+                # (pas de message envoyé par défaut)
 
-                # Exemple de message "User a perdu le rôle X" 
-                #log_channel = self.get_log_channel()
-                #if log_channel:
-                   # for r in removed_ranks:
-                        #await log_channel.send(
-                       #     f"{member.mention} a perdu son rang **{r.capitalize()}**."
-                       # )
-
-    async def _send_rank_change_message(self, member: discord.Member, old_rank: str, new_rank: str):
-        """Envoie un message de promotion/rétrogradation unique avec une stat indiquant la position relative."""
-        log_channel = self.get_log_channel()
+    async def _send_rank_change_message(
+        self,
+        member: discord.Member,
+        old_rank: str,
+        new_rank: str,
+        config: dict
+    ):
+        """Envoie un message de promotion/rétrogradation avec la stat de position."""
+        log_channel = await self._get_log_channel(member.guild)
         if not log_channel:
+            logger.warning(f"[RoleChangeCog] Pas de channel rank_up configuré pour {member.guild.name}")
             return
 
-        old_val = ROLE_RANK[old_rank]
-        new_val = ROLE_RANK[new_rank]
+        old_val = RANK_ORDER.get(old_rank, 99)
+        new_val = RANK_ORDER.get(new_rank, 99)
 
-        # Calcul de la stat relative : compter le nombre de membres ayant un rang et ceux qui ont un rang inférieur au nouveau
+        # Calcul du percentile
+        rank_role_ids = self._get_rank_role_ids(config)
         total_ranked = 0
-        worse_count = 0  # Membres ayant un rang moins bon (supérieur en valeur) que le nouveau rang
+        worse_count = 0
 
         for m in member.guild.members:
-            member_ranks = [ROLE_RANK[r.name.lower()] for r in m.roles if r.name.lower() in ROLE_RANK]
-            if not member_ranks:
+            member_rank_ids = [r.id for r in m.roles if r.id in rank_role_ids]
+            if not member_rank_ids:
                 continue
+
             total_ranked += 1
-            best_member_rank = min(member_ranks)
-            if best_member_rank > new_val:
-                worse_count += 1
+            # Trouver le meilleur rang du membre
+            member_rank_values = []
+            for rid in member_rank_ids:
+                rank_name = self._get_rank_name_by_id(config, rid)
+                if rank_name:
+                    member_rank_values.append(RANK_ORDER.get(rank_name, 99))
+
+            if member_rank_values:
+                best_rank = min(member_rank_values)
+                if best_rank > new_val:
+                    worse_count += 1
 
         if total_ranked > 0:
-            percentage_worse = (worse_count / total_ranked) * 100
+            top_percentile = 100 - (worse_count / total_ranked) * 100
         else:
-            percentage_worse = 0
+            top_percentile = 100
 
-        # Calcul du top percentile (par exemple, si 20% ont un rang inférieur, alors tu fais partie du top 80%)
-        top_percentile = 100 - percentage_worse
-        
-        # Formatage du pourcentage : si le top percentile est inférieur à 1%, on affiche deux décimales avec une virgule
+        # Formatage du pourcentage
         if top_percentile < 1:
             top_percentile_str = f"{top_percentile:.2f}".replace('.', ',')
         else:
@@ -151,9 +199,9 @@ class RoleChangeCog(commands.Cog):
 
         stat_msg = f" Tu fais partie du top {top_percentile_str}% des membres !"
 
-        # Recherche de l'emoji personnalisé dans le serveur via son nom
+        # Emoji personnalisé
         emoji_obj = discord.utils.get(member.guild.emojis, name=new_rank)
-        emoji = str(emoji_obj) if emoji_obj is not None else ""
+        emoji = str(emoji_obj) if emoji_obj else ""
 
         if new_val < old_val:
             # Promotion
@@ -163,6 +211,7 @@ class RoleChangeCog(commands.Cog):
             msg = f"{member.mention} a derank **{new_rank.capitalize()}** {emoji}. Force à toi !"
 
         await log_channel.send(msg)
+
 
 async def setup(bot):
     await bot.add_cog(RoleChangeCog(bot))
