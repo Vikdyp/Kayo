@@ -202,15 +202,15 @@ async def get_member_evolution(guild_id: int, days: Optional[int] = 30) -> List[
         """
         records = await database.fetch(query, server_id)
     else:
-        # Sur X jours
+        # Sur X jours (harmonisé avec get_period_stats)
         query = """
-        SELECT date, join_count, leave_count
-        FROM member_daily_stats
-        WHERE guild_id = $1
-        AND date >= (CURRENT_DATE - ($2::integer - 1))
-        ORDER BY date ASC;
-    """
-    records = await database.fetch(query, server_id, days)
+            SELECT date, join_count, leave_count
+            FROM member_daily_stats
+            WHERE guild_id = $1
+            AND date >= (CURRENT_DATE - $2::integer)
+            ORDER BY date ASC;
+        """
+        records = await database.fetch(query, server_id, days)
 
     return [dict(record) for record in records]
 
@@ -279,8 +279,11 @@ async def get_period_stats(guild_id: int, days: Optional[int]) -> dict:
 
     join_count = record["join_count"]
     leave_count = record["leave_count"]
-    # Pour éviter la division par zéro
-    join_leave_ratio = float(join_count) if leave_count == 0 else round(join_count / leave_count, 2)
+    # Ratio avec affichage intuitif
+    if leave_count == 0:
+        join_leave_ratio = "∞" if join_count > 0 else "N/A"
+    else:
+        join_leave_ratio = round(join_count / leave_count, 2)
 
     return {
         "join_count": join_count,
