@@ -2,7 +2,7 @@ name: Discord notify
 
 on:
   push:
-    branches: [ "master", "main" ]
+    branches: ["dev"]
   pull_request:
 
 jobs:
