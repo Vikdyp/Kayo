@@ -137,26 +137,26 @@ class ScrimService:
         channel_id: int,
         message_id: int,
         message_type: str,
-        guild_id: int
+        server_id: int
     ) -> None:
         query = """
-        INSERT INTO persistent_messages (channel_id, message_id, message_type, guild_id, requester_id)
+        INSERT INTO persistent_messages (channel_id, message_id, message_type, server_id, requester_id)
         VALUES ($1, $2, $3, $4, NULL)
-        ON CONFLICT (guild_id, message_type)
+        ON CONFLICT (server_id, message_type)
         DO UPDATE SET channel_id = $1, message_id = $2, requester_id = NULL, created_at = NOW();
         """
         try:
-            await database.execute(query, channel_id, message_id, message_type, guild_id)
+            await database.execute(query, channel_id, message_id, message_type, server_id)
         except Exception as e:
             logger.error("Erreur lors de la persistance du message : %s", e)
 
-    async def get_persistent_messages(self, message_type: str, guild_id: int) -> List[Dict[str, Any]]:
+    async def get_persistent_messages(self, message_type: str, server_id: int) -> List[Dict[str, Any]]:
         query = """
-        SELECT channel_id, message_id, message_type, guild_id, created_at
+        SELECT channel_id, message_id, message_type, server_id, created_at
         FROM persistent_messages
-        WHERE guild_id = $1 AND message_type = $2;
+        WHERE server_id = $1 AND message_type = $2;
         """
-        records = await database.fetch(query, guild_id, message_type)
+        records = await database.fetch(query, server_id, message_type)
         return [dict(record) for record in records] if records else []
 
     async def get_discord_id(self, internal_id: int) -> Optional[int]:

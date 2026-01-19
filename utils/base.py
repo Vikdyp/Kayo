@@ -46,9 +46,9 @@ async def store_persistent_message(
             return False
 
         query = """
-            INSERT INTO persistent_messages (guild_id, channel_id, message_id, message_type)
+            INSERT INTO persistent_messages (server_id, channel_id, message_id, message_type)
             VALUES ($1, $2, $3, $4)
-            ON CONFLICT (guild_id, message_type) DO UPDATE
+            ON CONFLICT (server_id, message_type) DO UPDATE
             SET channel_id = EXCLUDED.channel_id,
                 message_id = EXCLUDED.message_id,
                 created_at = now();
@@ -75,7 +75,7 @@ async def get_persistent_message(
         query = """
             SELECT channel_id, message_id
               FROM persistent_messages
-             WHERE guild_id = $1
+             WHERE server_id = $1
                AND message_type = $2
         """
         record = await database.fetchrow(query, server_db_id, message_type)
@@ -105,7 +105,7 @@ async def delete_persistent_message(
 
         query = """
             DELETE FROM persistent_messages
-             WHERE guild_id = $1
+             WHERE server_id = $1
                AND message_type = $2;
         """
         await database.execute(query, server_db_id, message_type)

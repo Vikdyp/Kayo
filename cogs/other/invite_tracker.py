@@ -15,13 +15,8 @@ class InviteTrackerCog(commands.Cog):
         self.log_channel_id = 1330360063566807132
 
     async def get_internal_server_id(self, guild: discord.Guild) -> int:
+        """Récupère l'ID interne du serveur depuis la table serveur_id."""
         await database.ensure_connected()
-        internal_server_id = await self.get_internal_server_id(guild)
-        if not internal_server_id:
-            return
-        internal_server_id = await self.get_internal_server_id(guild)
-        if not internal_server_id:
-            return
         query = "SELECT id FROM serveur_id WHERE guild_id = $1;"
         internal_id = await database.fetchval(query, guild.id)
         if not internal_id:
@@ -175,6 +170,9 @@ class InviteTrackerCog(commands.Cog):
     async def increment_invite_count(self, guild: discord.Guild, inviter_id: int):
         """Incrémente le compteur d'invitations pour l'inviteur."""
         await database.ensure_connected()
+        internal_server_id = await self.get_internal_server_id(guild)
+        if not internal_server_id:
+            return
         query = """
         INSERT INTO invite_tracker (inviter_id, count, server_id)
         VALUES ($1, 1, $2)
@@ -187,6 +185,9 @@ class InviteTrackerCog(commands.Cog):
     async def decrement_invite_count(self, guild: discord.Guild, inviter_id: int):
         """Décrémente le compteur d'invitations pour l'inviteur, sans descendre en dessous de 0."""
         await database.ensure_connected()
+        internal_server_id = await self.get_internal_server_id(guild)
+        if not internal_server_id:
+            return
         query = """
         UPDATE invite_tracker
         SET count = GREATEST(count - 1, 0)

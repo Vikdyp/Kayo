@@ -89,9 +89,9 @@ class EventCog(commands.Cog):
 
         await database.ensure_connected()
         query = """
-        INSERT INTO persistent_messages (channel_id, message_id, message_type, guild_id)
+        INSERT INTO persistent_messages (channel_id, message_id, message_type, server_id)
         VALUES ($1, $2, $3, $4)
-        ON CONFLICT (guild_id, message_type) DO UPDATE
+        ON CONFLICT (server_id, message_type) DO UPDATE
             SET channel_id = EXCLUDED.channel_id,
                 message_id = EXCLUDED.message_id;
         """

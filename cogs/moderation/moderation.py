@@ -154,7 +154,7 @@ class Moderation(commands.Cog):
                     return
 
                 # Détails du bannissement
-                ban_type = ban_info.get("type_name", "Inconnu")
+                ban_type_str = ban_info.get("ban_type", "Inconnu")
                 ban_reason = ban_info.get("ban_reason", "Aucune raison fournie")
                 ban_end = ban_info.get("ban_end", "Permanent")
                 banned_at = ban_info.get("banned_at", "Inconnu")
@@ -178,7 +178,7 @@ class Moderation(commands.Cog):
 
                 await interaction.followup.send(
                     f"**Statut de {banned_user_mention}** :\n"  # Mention cliquable pour le banni
-                    f"Type : {ban_type}\n"
+                    f"Type : {ban_type_str}\n"
                     f"Raison : {ban_reason}\n"
                     f"Banni(e) le : {banned_at}\n"
                     f"Fin de ban : {ban_end}\n"
@@ -204,64 +204,41 @@ class Moderation(commands.Cog):
             banned_by: discord.User,
             duration_minutes: Optional[int] = None
         ) -> bool:
-            """Bannit un membre avec sauvegarde des rôles et ajout du rôle 'ban'."""
+            """Bannit un membre avec sauvegarde des rôles et ajout du rôle 'ban' sur tous les serveurs."""
             logger.debug(f"Début du bannissement de {member.display_name} (ID: {member.id}) dans {guild.name}.")
-
-            # Sauvegarder les rôles
-            await self.backup_roles(member)
-
-            # Retirer tous les rôles (sauf le rôle par défaut)
-            roles_to_remove = [role for role in member.roles if role != guild.default_role]
-            try:
-                if roles_to_remove:
-                    await member.remove_roles(*roles_to_remove, reason=reason)
-                    logger.info(f"Rôles supprimés pour {member.display_name}: {[role.name for role in roles_to_remove]}")
-            except discord.Forbidden:
-                logger.error(f"Impossible de supprimer les rôles de {member.display_name}. Permissions manquantes.")
-                return False
-            except discord.HTTPException as e:
-                logger.error(f"Erreur HTTP lors de la suppression des rôles de {member.display_name}: {e}")
-                return False
-
-            # Ajouter le rôle 'ban'
-            ban_role_id = await ModerationService.get_ban_role_id(guild.id)
-            if not ban_role_id:
-                logger.error("Le rôle 'ban' n'est pas configuré.")
-                return False
-
-            ban_role = guild.get_role(ban_role_id)
-            if not ban_role:
-                logger.error(f"Rôle 'ban' avec l'ID {ban_role_id} introuvable dans le serveur {guild.name}.")
-                return False
-
-            try:
-                await member.add_roles(ban_role, reason=reason)
-                logger.info(f"Rôle 'ban' appliqué à {member.display_name}.")
-            except discord.Forbidden:
-                logger.error(f"Impossible d'appliquer le rôle 'ban' à {member.display_name}. Permissions manquantes.")
-                return False
-            except discord.HTTPException as e:
-                logger.error(f"Erreur HTTP lors de l'application du rôle 'ban' à {member.display_name}: {e}")
-                return False
 
             # Définir la durée du bannissement si temporaire
             ban_end = None
             if ban_type == "temp" and duration_minutes:
                 ban_end = datetime.utcnow() + timedelta(minutes=duration_minutes)
 
-            logger.debug(
-                f"Ajout du bannissement : user_id={member.id}, ban_type_id={1 if ban_type == 'temp' else 2}, "
-                f"reason={reason}, banned_by={banned_by.id}, ban_end={ban_end}"
-            )
+            # Collecter les rôles de l'utilisateur pour le backup
+            roles_to_backup = [
+                role.id for role in member.roles
+                if role != guild.default_role and role.name.lower() != "ban"
+            ]
 
-            # Ajouter les informations de bannissement dans la table 'bans'
+            # Récupérer l'ID interne du serveur pour le contexte
+            internal_server_id = await ModerationService.get_internal_server_id(guild.id)
+
+            # Ajouter les informations de bannissement dans la table 'bans' (global)
             await ModerationService.add_ban(
                 user_id=member.id,
-                ban_type_id=1 if ban_type == "temp" else 2,
+                ban_type=ban_type,
                 reason=reason,
                 banned_by=banned_by.id,
-                ban_end=ban_end
+                ban_end=ban_end,
+                roles_backup=roles_to_backup if roles_to_backup else None,
+                server_id=internal_server_id
             )
+
+            logger.debug(
+                f"Ajout du bannissement : user_id={member.id}, ban_type={ban_type}, "
+                f"reason={reason}, banned_by={banned_by.id}, ban_end={ban_end}, roles_backup={roles_to_backup}"
+            )
+
+            # Appliquer le ban sur TOUS les serveurs où le bot et l'utilisateur sont présents
+            await self.apply_ban_all_guilds(member.id, reason)
 
             # Récupérer l'ID interne du serveur
             internal_server_id = await ModerationService.get_internal_server_id(guild.id)
@@ -313,8 +290,8 @@ class Moderation(commands.Cog):
             return True
 
     async def unban_member(self, guild: discord.Guild, user_id: int, reason: Optional[str] = None) -> None:
-        """Débanni un membre et restaure ses rôles."""
-        logger.debug(f"Tentative de débannissement de l'utilisateur ID: {user_id} dans {guild.name}. Raison: {reason}")
+        """Débanni un membre et restaure ses rôles sur tous les serveurs."""
+        logger.debug(f"Tentative de débannissement de l'utilisateur ID: {user_id}. Raison: {reason}")
 
         # Convertir l'ID Discord en ID interne
         internal_id = await ModerationService.get_or_create_user_id(user_id)
@@ -322,28 +299,49 @@ class Moderation(commands.Cog):
             logger.error(f"Impossible de convertir l'ID Discord {user_id} en ID interne pour le débannissement.")
             return
 
-        # Récupérer les informations de bannissement
+        # Récupérer les informations de bannissement (et les rôles sauvegardés)
         ban_info = await ModerationService.get_ban_info(user_id)
         if not ban_info:
             logger.warning(f"Aucune donnée de bannissement trouvée pour l'utilisateur Discord ID {user_id}.")
             return
 
-        member = guild.get_member(user_id)
-        if member:
-            # Restauration des rôles
-            await self.restore_roles(member)
-            # Retirer le rôle ban s'il est encore appliqué
-            ban_role_id = await ModerationService.get_ban_role_id(guild.id)
+        # Récupérer les rôles sauvegardés AVANT de supprimer le ban
+        saved_roles = await ModerationService.get_roles_backup(user_id)
+
+        # Appliquer le unban sur TOUS les serveurs où le bot et l'utilisateur sont présents
+        for g in self.bot.guilds:
+            member = g.get_member(user_id)
+            if not member:
+                continue
+
+            # Retirer le rôle ban
+            ban_role_id = await ModerationService.get_ban_role_id(g.id)
             if ban_role_id:
-                ban_role = guild.get_role(ban_role_id)
-                if ban_role in member.roles:
+                ban_role = g.get_role(ban_role_id)
+                if ban_role and ban_role in member.roles:
                     try:
-                        await member.remove_roles(ban_role, reason="Fin de ban")
-                        logger.info(f"Rôle 'ban' retiré de {member.display_name}.")
+                        await member.remove_roles(ban_role, reason=f"Fin de ban: {reason or 'Débannissement'}")
+                        logger.info(f"Rôle 'ban' retiré de {member.display_name} dans {g.name}.")
                     except discord.Forbidden:
-                        logger.error(f"Impossible de retirer le rôle 'ban' de {member.display_name}. Permissions manquantes.")
+                        logger.error(f"Impossible de retirer le rôle 'ban' de {member.display_name} dans {g.name}.")
                     except discord.HTTPException as e:
-                        logger.error(f"Erreur HTTP lors du retrait du rôle 'ban' de {member.display_name}: {e}")
+                        logger.error(f"Erreur HTTP lors du retrait du rôle 'ban' de {member.display_name} dans {g.name}: {e}")
+
+            # Restaurer les rôles (uniquement dans le serveur d'origine où les rôles ont été sauvegardés)
+            if g.id == guild.id and saved_roles:
+                roles_to_add = [
+                    discord.utils.get(g.roles, id=role_id)
+                    for role_id in saved_roles
+                ]
+                roles_to_add = [role for role in roles_to_add if role is not None]
+                if roles_to_add:
+                    try:
+                        await member.add_roles(*roles_to_add, reason="Restauration des rôles après débannissement.")
+                        logger.info(f"Rôles restaurés pour {member.display_name} dans {g.name}: {[role.name for role in roles_to_add]}")
+                    except discord.Forbidden:
+                        logger.error(f"Permission refusée pour restaurer les rôles de {member.display_name} dans {g.name}.")
+                    except discord.HTTPException as e:
+                        logger.exception(f"Erreur lors de la restauration des rôles de {member.display_name} dans {g.name}: {e}")
 
         # Supprimer les informations de bannissement
         await ModerationService.remove_ban(internal_id)
@@ -396,68 +394,48 @@ class Moderation(commands.Cog):
         except discord.HTTPException as e:
             logger.error(f"Erreur HTTP lors de l'envoi de l'embed de débannissement à l'utilisateur Discord ID {user_id}: {e}")
 
-    async def backup_roles(self, member: discord.Member) -> None:
-        """Sauvegarde les rôles actuels d'un membre dans 'role_backups'."""
-        roles_to_backup = [
-            role.id for role in member.roles
-            if role != member.guild.default_role and role.name.lower() != "ban"
-        ]
+    async def apply_ban_all_guilds(self, user_id: int, reason: str) -> None:
+        """
+        Applique le rôle 'ban' à un utilisateur sur TOUS les serveurs où le bot est présent.
+        Retire les rôles avant d'ajouter le rôle ban.
+        Note: Les rôles sont sauvegardés dans la table bans lors de l'appel à add_ban().
+        """
+        for guild in self.bot.guilds:
+            member = guild.get_member(user_id)
+            if not member:
+                continue
 
-        if roles_to_backup:
-            # Convertir l'ID Discord en ID interne
-            internal_id = await ModerationService.get_or_create_user_id(member.id)
-            if internal_id:
-                server_id = await ModerationService.get_internal_server_id(member.guild.id)
-                if not server_id:
-                    logger.error("Serveur introuvable pour la sauvegarde des roles.")
-                    return
-                success = await ModerationService.save_roles_backup(internal_id, roles_to_backup, server_id)
-                if success:
-                    logger.info(f"Rôles de {member.display_name} sauvegardés: {roles_to_backup}")
-                else:
-                    logger.error(f"Échec de la sauvegarde des rôles pour {member.display_name}.")
-            else:
-                logger.error(f"Échec de la conversion de l'ID Discord {member.id} en ID interne pour la sauvegarde des rôles.")
-        else:
-            logger.warning(f"Aucun rôle à sauvegarder pour {member.display_name}.")
+            # Récupérer le rôle ban pour ce serveur
+            ban_role_id = await ModerationService.get_ban_role_id(guild.id)
+            if not ban_role_id:
+                logger.debug(f"Rôle 'ban' non configuré pour le serveur {guild.name}.")
+                continue
 
-    async def restore_roles(self, member: discord.Member) -> None:
-        """Restaure les rôles sauvegardés d'un membre."""
-        # Convertir l'ID Discord en ID interne
-        internal_id = await ModerationService.get_or_create_user_id(member.id)
-        if not internal_id:
-            logger.error(f"Impossible de convertir l'ID Discord {member.id} en ID interne pour la restauration des rôles.")
-            return
+            ban_role = guild.get_role(ban_role_id)
+            if not ban_role:
+                logger.warning(f"Rôle 'ban' avec ID {ban_role_id} introuvable dans {guild.name}.")
+                continue
 
-        server_id = await ModerationService.get_internal_server_id(member.guild.id)
-        if not server_id:
-            logger.error("Serveur introuvable pour la restauration des roles.")
-            return
+            # Vérifier si l'utilisateur a déjà le rôle ban
+            if ban_role in member.roles:
+                logger.debug(f"Utilisateur {member.display_name} a déjà le rôle ban dans {guild.name}.")
+                continue
 
-        roles = await ModerationService.get_roles_backup(internal_id, server_id)
+            try:
+                # Retirer tous les rôles (sauf le rôle par défaut)
+                roles_to_remove = [role for role in member.roles if role != guild.default_role]
+                if roles_to_remove:
+                    await member.remove_roles(*roles_to_remove, reason=f"Ban global: {reason}")
+                    logger.info(f"Rôles supprimés pour {member.display_name} dans {guild.name}.")
 
-        if not roles:
-            logger.warning(f"Aucune sauvegarde de rôles trouvée pour {member.display_name}.")
-        else:
-            roles_to_add = [
-                discord.utils.get(member.guild.roles, id=role_id)
-                for role_id in roles
-            ]
-            roles_to_add = [role for role in roles_to_add if role is not None]
+                # Ajouter le rôle ban
+                await member.add_roles(ban_role, reason=f"Ban global: {reason}")
+                logger.info(f"Rôle 'ban' appliqué à {member.display_name} dans {guild.name}.")
 
-            if roles_to_add:
-                try:
-                    await member.add_roles(*roles_to_add, reason="Restauration des rôles après débannissement.")
-                    logger.info(f"Rôles restaurés pour {member.display_name}: {[role.name for role in roles_to_add]}")
-                except discord.Forbidden:
-                    logger.error(f"Permission refusée pour restaurer les rôles de {member.display_name}.")
-                except discord.HTTPException as e:
-                    logger.exception(f"Erreur lors de la restauration des rôles de {member.display_name}: {e}")
-            else:
-                logger.warning(f"Aucun rôle valide à restaurer pour {member.display_name}.")
-
-        await ModerationService.delete_roles_backup(internal_id, server_id)
-        logger.debug(f"Données de rôles supprimées pour {member.display_name} après restauration.")
+            except discord.Forbidden:
+                logger.error(f"Permissions insuffisantes pour bannir {member.display_name} dans {guild.name}.")
+            except discord.HTTPException as e:
+                logger.error(f"Erreur HTTP lors du ban de {member.display_name} dans {guild.name}: {e}")
 
     @tasks.loop(minutes=1)
     async def check_bans_expired(self):
@@ -474,10 +452,14 @@ class Moderation(commands.Cog):
                 logger.error(f"Impossible de récupérer l'ID Discord pour l'ID interne {internal_user_id}.")
                 continue
 
+            # Utiliser le premier serveur où l'utilisateur est présent comme référence
+            # (unban_member s'applique maintenant sur tous les serveurs automatiquement)
             for guild in self.bot.guilds:
-                # Tenter de débannir dans chaque guilde où l'utilisateur est banni
-                await self.unban_member(guild, discord_id, reason="Expiration du bannissement temporaire")
-                count += 1
+                member = guild.get_member(discord_id)
+                if member:
+                    await self.unban_member(guild, discord_id, reason="Expiration du bannissement temporaire")
+                    count += 1
+                    break  # Le unban est global, pas besoin de continuer
 
         if count > 0:
             logger.info(f"{count} bannissement(s) expiré(s) traité(s) avec succès.")
