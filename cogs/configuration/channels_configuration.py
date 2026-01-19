@@ -48,7 +48,8 @@ class ChannelsConfiguration(commands.Cog):
         ("voice_cleaner_category", "Categorie nettoyee (voice cleaner)"),
         ("voice_cleaner_afk", "Salon AFK a exclure (voice cleaner)"),
         ("matchmaking_voice_category", "Categorie vocale matchmaking"),
-        ("deban_category", "Categorie des demande de deban")
+        ("deban_category", "Categorie des demande de deban"),
+        ("rank_up", "Salon de notif de rang"),
     ]
 
     ACTION_CHOICES = [
