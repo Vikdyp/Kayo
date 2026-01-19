@@ -12,18 +12,17 @@ def _env_bool(name: str, default: bool = False) -> bool:
         return default
     return value.strip().lower() in ["true", "1", "t", "yes", "y", "on"]
 
+# Activer le mode test (défini avant DATABASE pour pouvoir l'utiliser)
+TEST_MODE = _env_bool("TEST_MODE", False)
+
 DATABASE = {
     'user': os.getenv('DATABASE_USER'),
     'password': os.getenv('DATABASE_PASSWORD'),
-    'database': os.getenv('DATABASE_NAME'),
+    'database': os.getenv('DATABASE_TEST_NAME' if TEST_MODE else 'DATABASE_NAME'),
     'host': os.getenv('DATABASE_HOST'),
     'port': int(os.getenv('DATABASE_PORT', 5432)),
     'ssl': os.getenv('DATABASE_SSL', 'false').lower() in ['true', '1', 't']
-
 }
-
-# Activer le mode test
-TEST_MODE = _env_bool("TEST_MODE", False)
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN_TEST" if TEST_MODE else "DISCORD_TOKEN")
 TEST_GUILD_ID = os.getenv('TEST_GUILD_ID')
 

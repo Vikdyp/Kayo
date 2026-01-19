@@ -4,12 +4,12 @@ import discord
 from discord.ext import commands
 import logging
 
-from cogs.role_management.services.auto_role_service import AutoRoleService
+from cogs.moderation.services.moderation_service import ModerationService
 
 logger = logging.getLogger('auto_role_assign')
 
 class AutoRoleAssign(commands.Cog):
-    """Cog pour attribuer automatiquement le rôle 'tester' aux nouveaux membres."""
+    """Cog pour appliquer automatiquement le rôle 'ban' aux membres bannis globalement."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -19,33 +19,29 @@ class AutoRoleAssign(commands.Cog):
     async def on_member_join(self, member: discord.Member):
         """
         Événement déclenché lorsqu'un nouveau membre rejoint le serveur.
-        Attribue le rôle 'tester' si configuré.
+        Vérifie si l'utilisateur est banni globalement et lui applique le rôle 'ban' si c'est le cas.
         """
         guild = member.guild
-        guild_id = guild.id
-        role_name = "tester"
 
-        logger.info(f"Nouveau membre rejoint: {member} (ID: {member.id}) dans le serveur '{guild.name}' (ID: {guild_id})")
-
-        # Récupérer l'ID du rôle 'tester' via le service
-        role_id = await AutoRoleService.get_tester_role_id(guild_id)
-
-        if not role_id:
-            logger.warning(f"Rôle '{role_name}' non configuré pour le serveur '{guild.name}' (ID: {guild_id}).")
-            return
-
-        role = guild.get_role(role_id)
-        if not role:
-            logger.error(f"Rôle avec ID {role_id} introuvable dans le serveur '{guild.name}' (ID: {guild_id}).")
-            return
-
-        try:
-            await member.add_roles(role, reason="Attribution automatique du rôle 'tester' lors de la jonction.")
-            logger.info(f"Rôle '{role.name}' attribué à {member}.")
-        except discord.Forbidden:
-            logger.error(f"Permission refusée pour attribuer le rôle '{role.name}' à {member}.")
-        except discord.HTTPException as e:
-            logger.error(f"Erreur HTTP lors de l'attribution du rôle '{role.name}' à {member}: {e}")
+        # Vérifier si l'utilisateur est banni globalement
+        ban_info = await ModerationService.get_ban_info(member.id)
+        if ban_info:
+            # Récupérer le rôle ban du serveur
+            ban_role_id = await ModerationService.get_ban_role_id(guild.id)
+            if ban_role_id:
+                ban_role = guild.get_role(ban_role_id)
+                if ban_role:
+                    try:
+                        await member.add_roles(ban_role, reason="Ban global appliqué automatiquement")
+                        logger.info(f"Rôle 'ban' appliqué à {member} (ID: {member.id}) - ban global")
+                    except discord.Forbidden:
+                        logger.error(f"Permission refusée pour attribuer le rôle 'ban' à {member}.")
+                    except discord.HTTPException as e:
+                        logger.error(f"Erreur HTTP lors de l'attribution du rôle 'ban' à {member}: {e}")
+                else:
+                    logger.warning(f"Rôle 'ban' avec ID {ban_role_id} introuvable dans le serveur '{guild.name}'.")
+            else:
+                logger.warning(f"Aucun rôle 'ban' configuré pour le serveur '{guild.name}' (ID: {guild.id}).")
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AutoRoleAssign(bot))

@@ -10,17 +10,9 @@ from cogs.configuration.services.channel_service import ServerChannelService
 logger = logging.getLogger("tournament.service")
 
 async def get_server_id(guild_id: int) -> Optional[int]:
+    """Récupère l'ID interne du serveur depuis la table serveur_id."""
     query = "SELECT id FROM serveur_id WHERE guild_id = $1;"
     try:
-        if isinstance(channel, discord.ForumChannel):
-            await channel.create_thread(
-                name=f"Equipe {team_info['team_name']}",
-                content=content,
-            )
-        else:
-            await channel.send(content)
-        logger.info("Post cree dans le forum.")
-        return
         server_id = await database.fetchval(query, guild_id)
         if not server_id:
             logger.warning(f"Aucun serveur pour guild_id {guild_id}.")
@@ -99,10 +91,14 @@ async def persist_registration_message(channel_id: int, message_id: int, tournam
     """
     Stocke le message contenant le bouton d'inscription dans la table persistent_messages.
     """
+    server_id = await get_server_id(guild_id)
+    if not server_id:
+        logger.error(f"Impossible de persist_registration_message: server_id introuvable pour guild_id {guild_id}.")
+        return
     query = """
-    INSERT INTO persistent_messages (channel_id, message_id, message_type, guild_id, requester_id)
+    INSERT INTO persistent_messages (channel_id, message_id, message_type, server_id, requester_id)
     VALUES ($1, $2, 'tournament_registration', $3, NULL)
-    ON CONFLICT (guild_id, message_type)
+    ON CONFLICT (server_id, message_type)
     DO UPDATE SET channel_id = $1, message_id = $2, requester_id = NULL, created_at = NOW();
     """
     try:

@@ -12,10 +12,6 @@ from utils.database import database
 
 logger = logging.getLogger("deban_manager")
 
-# IDs requis
-CATEGORY_ID = 1136367092870942842
-SPECIFIC_ROLE_ID = 1236375048252817418
-
 # Vue pour l'embed principal de demande de débannissement
 class DebanManagerView(View):
     def __init__(self, cog):
@@ -144,7 +140,7 @@ class DebanManager(commands.Cog):
 
         # Enregistrer l'embed principal dans la table `persistent_messages`
         insert_query = """
-        INSERT INTO persistent_messages (channel_id, message_id, message_type, created_at, guild_id)
+        INSERT INTO persistent_messages (channel_id, message_id, message_type, created_at, server_id)
         VALUES ($1, $2, 'demande_deban', NOW(), $3)
         """
         try:
@@ -184,23 +180,39 @@ class DebanManager(commands.Cog):
             await interaction.followup.send("Erreur interne. Veuillez contacter un administrateur.", ephemeral=True)
             return
 
-        # Créer un nom de salon unique basé sur le nom de l'utilisateur et un timestamp pour éviter les conflits
-        timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-        sanitized_username = discord.utils.escape_markdown(user.name).replace(" ", "-").lower()
-        channel_name = f"demande-deban-{sanitized_username}-{timestamp}"
+        # Créer un nom de salon basé sur le nom de l'utilisateur
+        sanitized_username = discord.utils.escape_markdown(user.name).replace(" ", "-").lower()[:20]
+        channel_name = f"deban-{sanitized_username}"
+
+        # Récupérer la catégorie de déban depuis la configuration
+        category_id = await ModerationService.get_deban_category_id(internal_server_id)
+        if not category_id:
+            await interaction.followup.send("La catégorie de déban n'est pas configurée. Veuillez contacter un administrateur.", ephemeral=True)
+            return
+
+        # Récupérer le rôle admin depuis la configuration
+        admin_role_id = await ModerationService.get_role_id_by_name(internal_server_id, "admin")
+        if not admin_role_id:
+            await interaction.followup.send("Le rôle admin n'est pas configuré. Veuillez contacter un administrateur.", ephemeral=True)
+            return
 
         # Créer le salon spécifique pour cette demande
         try:
-            category = guild.get_channel(CATEGORY_ID)
+            category = guild.get_channel(category_id)
             if not category or not isinstance(category, discord.CategoryChannel):
                 await interaction.followup.send("Catégorie spécifiée introuvable. Veuillez contacter un administrateur.", ephemeral=True)
+                return
+
+            admin_role = guild.get_role(admin_role_id)
+            if not admin_role:
+                await interaction.followup.send("Le rôle admin est introuvable. Veuillez contacter un administrateur.", ephemeral=True)
                 return
 
             # Définir les permissions spécifiques pour ce salon
             overwrites = {
                 guild.default_role: discord.PermissionOverwrite(read_messages=False),
                 guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True),
-                guild.get_role(SPECIFIC_ROLE_ID): discord.PermissionOverwrite(read_messages=True, send_messages=True),
+                admin_role: discord.PermissionOverwrite(read_messages=True, send_messages=True),
                 user: discord.PermissionOverwrite(read_messages=True, send_messages=True)  # Permission pour l'utilisateur demandeur
             }
 
@@ -258,7 +270,7 @@ class DebanManager(commands.Cog):
             return
 
         # Récupérer les détails du bannissement
-        ban_type = ban_info.get("type_name", "Inconnu")
+        ban_type = ban_info.get("ban_type", "Inconnu")
         ban_reason = ban_info.get("ban_reason", "Aucune raison fournie")
         banned_at = ban_info.get("banned_at", "Inconnu")
         ban_end = ban_info.get("ban_end", "Permanent")
@@ -307,7 +319,7 @@ class DebanManager(commands.Cog):
 
         # Enregistrer la demande individuelle dans la table `persistent_messages` avec message_type = 'deban_request'
         insert_query = """
-        INSERT INTO persistent_messages (channel_id, message_id, message_type, created_at, guild_id, requester_id)
+        INSERT INTO persistent_messages (channel_id, message_id, message_type, created_at, server_id, requester_id)
         VALUES ($1, $2, 'deban_request', NOW(), $3, $4)
         """
         try:
@@ -369,15 +381,15 @@ class DebanManager(commands.Cog):
         except Exception as e:
             logger.error(f"Erreur lors de la suppression du message persistant de la demande individuelle: {e}")
 
-        # Supprimer le message d'origine dans le salon de modération
-        try:
-            await interaction.message.delete()
-            logger.info(f"Message de demande individuelle ID {interaction.message.id} supprimé du salon.")
-        except Exception as e:
-            logger.error(f"Erreur lors de la suppression du message de demande individuelle: {e}")
-
-        # Envoyer une confirmation éphémère au modérateur
+        # Envoyer une confirmation éphémère au modérateur avant de supprimer le salon
         await interaction.followup.send("La demande de débannissement a été acceptée et l'utilisateur a été débanni.", ephemeral=True)
+
+        # Supprimer le salon de la demande
+        try:
+            await interaction.channel.delete(reason=f"Demande de débannissement acceptée par {interaction.user}")
+            logger.info(f"Salon de demande de débannissement supprimé après acceptation.")
+        except Exception as e:
+            logger.error(f"Erreur lors de la suppression du salon de demande: {e}")
 
     async def process_reject(self, interaction: discord.Interaction, user_id: int, requester_internal_id: int):
         """Processus de refus de la demande de débannissement."""
@@ -413,15 +425,15 @@ class DebanManager(commands.Cog):
         except Exception as e:
             logger.error(f"Erreur lors de la suppression du message persistant de la demande individuelle: {e}")
 
-        # Supprimer le message d'origine dans le salon de modération
-        try:
-            await interaction.message.delete()
-            logger.info(f"Message de demande individuelle ID {interaction.message.id} supprimé du salon.")
-        except Exception as e:
-            logger.error(f"Erreur lors de la suppression du message de demande individuelle: {e}")
-
-        # Envoyer une confirmation éphémère au modérateur
+        # Envoyer une confirmation éphémère au modérateur avant de supprimer le salon
         await interaction.followup.send("La demande de débannissement a été refusée.", ephemeral=True)
+
+        # Supprimer le salon de la demande
+        try:
+            await interaction.channel.delete(reason=f"Demande de débannissement refusée par {interaction.user}")
+            logger.info(f"Salon de demande de débannissement supprimé après refus.")
+        except Exception as e:
+            logger.error(f"Erreur lors de la suppression du salon de demande: {e}")
 
     async def reload_persistent_views(self):
         """

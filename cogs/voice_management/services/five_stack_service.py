@@ -234,7 +234,7 @@ class MatchmakingService:
         query = """
         SELECT channel_id, message_id
         FROM persistent_messages
-        WHERE guild_id = $1 AND message_type = $2;
+        WHERE server_id = $1 AND message_type = $2;
         """
         try:
             row = await database.fetchrow(query, server_id, message_type)
@@ -257,9 +257,9 @@ class MatchmakingService:
             logger.error(f"Impossible de save_persistent_message: server_id introuvable pour {discord_guild_id}.")
             return
         query = """
-        INSERT INTO persistent_messages (guild_id, message_type, channel_id, message_id, requester_id)
+        INSERT INTO persistent_messages (server_id, message_type, channel_id, message_id, requester_id)
         VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (guild_id, message_type)
+        ON CONFLICT (server_id, message_type)
         DO UPDATE SET channel_id=EXCLUDED.channel_id, message_id=EXCLUDED.message_id, requester_id=EXCLUDED.requester_id;
         """
         try:
