@@ -68,6 +68,7 @@ cog_paths = [
     'cogs.moderation.clean',
     'cogs.admin.admin',
     'cogs.moderation.moderation',
+    'cogs.moderation.automod',
     #'cogs.file_counter.file_counter',
     'cogs.accueil.accueil',
     'cogs.role_management.game_role',

@@ -45,7 +45,9 @@ class Moderation(commands.Cog):
         action="Action à effectuer",
         user="Utilisateur cible",
         reason="Raison de l'action (si applicable)",
-        duration_minutes="Durée en minutes (pour un bannissement temporaire)"
+        duration_minutes="Durée en minutes (pour un bannissement temporaire)",
+        delete_messages="Supprimer les messages de l'utilisateur (pour le ban)",
+        delete_scope="Portée de la suppression des messages"
     )
     @app_commands.choices(
         action=[
@@ -53,6 +55,18 @@ class Moderation(commands.Cog):
             app_commands.Choice(name="Débannir", value="unban"),
             app_commands.Choice(name="Avertir", value="warn"),
             app_commands.Choice(name="Vérifier le statut", value="check_status")
+        ],
+        delete_messages=[
+            app_commands.Choice(name="Ne pas supprimer", value="none"),
+            app_commands.Choice(name="Dernière heure", value="1h"),
+            app_commands.Choice(name="6 dernières heures", value="6h"),
+            app_commands.Choice(name="12 dernières heures", value="12h"),
+            app_commands.Choice(name="24 dernières heures", value="24h"),
+            app_commands.Choice(name="7 derniers jours", value="7d"),
+        ],
+        delete_scope=[
+            app_commands.Choice(name="Serveur actuel", value="current"),
+            app_commands.Choice(name="Tous les serveurs", value="all"),
         ]
     )
 
@@ -63,7 +77,9 @@ class Moderation(commands.Cog):
         action: app_commands.Choice[str],
         user: Optional[discord.Member] = None,
         reason: Optional[str] = None,
-        duration_minutes: Optional[int] = None
+        duration_minutes: Optional[int] = None,
+        delete_messages: Optional[app_commands.Choice[str]] = None,
+        delete_scope: Optional[app_commands.Choice[str]] = None
     ):
         """Exécute une action de modération en fonction de l'option spécifiée."""
         
@@ -83,6 +99,11 @@ class Moderation(commands.Cog):
                     return
 
                 ban_type = "temp" if duration_minutes else "perma"
+
+                # Déterminer les paramètres de suppression
+                delete_period = delete_messages.value if delete_messages else "none"
+                scope = delete_scope.value if delete_scope else "current"
+
                 success = await self.ban_member(
                     guild=interaction.guild,
                     member=user,
@@ -91,11 +112,22 @@ class Moderation(commands.Cog):
                     banned_by=interaction.user,
                     duration_minutes=duration_minutes
                 )
-                if success:
-                    await interaction.followup.send(
-                        f"{user.display_name} a été banni(e) {'temporairement' if ban_type == 'temp' else 'définitivement'}.",
-                        ephemeral=True
+
+                # Supprimer les messages si demandé
+                deleted_count = 0
+                if success and delete_period != "none":
+                    deleted_count = await self.delete_user_messages(
+                        user_id=user.id,
+                        period=delete_period,
+                        scope=scope,
+                        current_guild=interaction.guild
                     )
+
+                if success:
+                    msg = f"{user.display_name} a été banni(e) {'temporairement' if ban_type == 'temp' else 'définitivement'}."
+                    if deleted_count > 0:
+                        msg += f"\n{deleted_count} message(s) supprimé(s)."
+                    await interaction.followup.send(msg, ephemeral=True)
                 else:
                     await interaction.followup.send(
                         "Une erreur est survenue lors du bannissement. Veuillez vérifier les rôles et permissions du bot.",
@@ -436,6 +468,76 @@ class Moderation(commands.Cog):
                 logger.error(f"Permissions insuffisantes pour bannir {member.display_name} dans {guild.name}.")
             except discord.HTTPException as e:
                 logger.error(f"Erreur HTTP lors du ban de {member.display_name} dans {guild.name}: {e}")
+
+    async def delete_user_messages(
+        self,
+        user_id: int,
+        period: str,
+        scope: str,
+        current_guild: discord.Guild
+    ) -> int:
+        """
+        Supprime les messages d'un utilisateur dans une période donnée.
+
+        Args:
+            user_id: ID Discord de l'utilisateur
+            period: Période de suppression ("1h", "6h", "12h", "24h", "7d")
+            scope: Portée ("current" pour le serveur actuel, "all" pour tous les serveurs)
+            current_guild: Le serveur où la commande a été exécutée
+
+        Returns:
+            Le nombre total de messages supprimés
+        """
+        # Calculer la date limite
+        period_mapping = {
+            "1h": timedelta(hours=1),
+            "6h": timedelta(hours=6),
+            "12h": timedelta(hours=12),
+            "24h": timedelta(hours=24),
+            "7d": timedelta(days=7),
+        }
+
+        delta = period_mapping.get(period)
+        if not delta:
+            return 0
+
+        after_date = datetime.utcnow() - delta
+        total_deleted = 0
+
+        # Déterminer les serveurs à parcourir
+        guilds_to_process = [current_guild] if scope == "current" else self.bot.guilds
+
+        for guild in guilds_to_process:
+            # Parcourir tous les salons textuels
+            for channel in guild.text_channels:
+                try:
+                    # Vérifier que le bot a les permissions
+                    if not channel.permissions_for(guild.me).manage_messages:
+                        continue
+                    if not channel.permissions_for(guild.me).read_message_history:
+                        continue
+
+                    # Utiliser purge avec un check sur l'auteur
+                    def check(msg):
+                        return msg.author.id == user_id
+
+                    deleted = await channel.purge(
+                        limit=None,
+                        check=check,
+                        after=after_date,
+                        reason=f"Suppression des messages suite à un ban"
+                    )
+                    total_deleted += len(deleted)
+
+                except discord.Forbidden:
+                    logger.debug(f"Pas de permission pour purger dans {channel.name} ({guild.name})")
+                except discord.HTTPException as e:
+                    logger.error(f"Erreur lors de la purge dans {channel.name} ({guild.name}): {e}")
+                except Exception as e:
+                    logger.error(f"Erreur inattendue lors de la purge dans {channel.name} ({guild.name}): {e}")
+
+        logger.info(f"Suppression terminée: {total_deleted} messages de l'utilisateur {user_id} supprimés.")
+        return total_deleted
 
     @tasks.loop(minutes=1)
     async def check_bans_expired(self):
