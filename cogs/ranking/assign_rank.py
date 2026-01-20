@@ -486,7 +486,7 @@ class EmbedCog(commands.Cog):
                         logger.warning(f"[update_roles_task] Impossible de récupérer le PUUID pour {pseudo}#{tag}.")
                         now = datetime.utcnow()
                         last_notif = await get_last_notification(discord_id)
-                        if (last_notif is None) or ((now - last_notif) > timedelta(hours=24)):
+                        if (last_notif is None) or ((now - last_notif) > timedelta(days=7)):
                             try:
                                 await primary_member.send(
                                     f"La récupération de vos informations Valorant a échoué pour le pseudo et tag **{pseudo}#{tag}**.\n"
@@ -519,18 +519,14 @@ class EmbedCog(commands.Cog):
             if rank_result:
                 new_rank, new_elo = rank_result
             else:
-                new_rank, new_elo = None, None
-                logger.info(f"[update_roles_task] {pseudo}#{tag} n'a pas de rang compétitif ou API échec.")
+                # Pas de rang compétitif - attribuer le rôle "no_rank" (Unranked)
+                new_rank, new_elo = "Unrated", 0
+                logger.info(f"[update_roles_task] {pseudo}#{tag} n'a pas de rang compétitif - attribution de no_rank.")
 
             if (new_rank != current_rank) or (new_elo != current_elo):
-                if new_rank and new_elo:
-                    updated = await set_valorant_details(discord_id, puuid, region, new_rank, new_elo)
-                    if updated:
-                        logger.info(f"[update_roles_task] Rang/Elo mis à jour pour {discord_id}: {new_rank} / {new_elo}")
-
-            if not new_rank:
-                await mark_user_update_flag_true(discord_id)
-                continue
+                updated = await set_valorant_details(discord_id, puuid, region, new_rank, new_elo)
+                if updated:
+                    logger.info(f"[update_roles_task] Rang/Elo mis à jour pour {discord_id}: {new_rank} / {new_elo}")
 
             role_key = VALORANT_RANK_TO_ROLE_KEY.get(new_rank)
             if not role_key:

@@ -102,11 +102,14 @@ async def update_user_valorant_info(discord_id: int, pseudo: str, tag: str) -> b
         return False
 
     query = """
-        INSERT INTO valorant_info (user_id, pseudo, tag)
-        VALUES ($1, $2, $3)
+        INSERT INTO valorant_info (user_id, pseudo, tag, last_notification)
+        VALUES ($1, $2, $3, NULL)
         ON CONFLICT (user_id)
         DO UPDATE SET pseudo = EXCLUDED.pseudo,
-                      tag    = EXCLUDED.tag;
+                      tag    = EXCLUDED.tag,
+                      puuid  = NULL,
+                      region = NULL,
+                      last_notification = NULL;
     """
     try:
         await database.execute(query, user_pk, pseudo, tag)
