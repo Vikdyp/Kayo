@@ -344,8 +344,9 @@ async def refresh_role_mappings(guild_id: int, guild_name: str):
 # ------------------------------------------------
 async def get_users_with_update_flag_false() -> list:
     """
-    Récupère tous les utilisateurs (jointure valorant_info + user_id)
+    Récupère tous les utilisateurs actifs (jointure valorant_info + user_id)
     où needs_update = FALSE.
+    Les utilisateurs inactifs (qui ont quitté tous les serveurs) sont exclus.
     """
     query = """
         SELECT u.discord_id,
@@ -358,6 +359,7 @@ async def get_users_with_update_flag_false() -> list:
           FROM valorant_info v
           JOIN user_id u ON u.id = v.user_id
          WHERE v.needs_update = FALSE
+           AND v.is_active = TRUE
            AND v.pseudo IS NOT NULL
            AND v.tag    IS NOT NULL
     """
@@ -434,3 +436,234 @@ async def update_last_notification(discord_id: int, timestamp: datetime) -> bool
     except Exception as e:
         logger.error(f"Erreur lors de la mise à jour de last_notification pour discord_id {discord_id}: {e}")
         return False
+
+# ------------------------------------------------
+# GESTION DES UTILISATEURS INACTIFS
+# ------------------------------------------------
+async def mark_user_inactive(discord_id: int) -> bool:
+    """
+    Marque un utilisateur comme inactif quand il quitte tous les serveurs.
+    Préserve ses données mais l'exclut des cycles de mise à jour.
+    """
+    user_pk = await get_user_pk_by_discord_id(discord_id)
+    if not user_pk:
+        return False
+
+    query = """
+        UPDATE valorant_info
+           SET is_active = FALSE,
+               deactivated_at = NOW()
+         WHERE user_id = $1
+           AND is_active = TRUE
+    """
+    try:
+        await database.execute(query, user_pk)
+        logger.info(f"[mark_user_inactive] Discord ID {discord_id} marqué comme inactif.")
+        return True
+    except Exception as e:
+        logger.error(f"[mark_user_inactive] Erreur pour discord_id={discord_id}: {e}")
+        return False
+
+
+async def reactivate_user(discord_id: int) -> bool:
+    """
+    Réactive un utilisateur précédemment inactif quand il rejoint un serveur.
+    """
+    user_pk = await get_user_pk_by_discord_id(discord_id)
+    if not user_pk:
+        return False
+
+    query = """
+        UPDATE valorant_info
+           SET is_active = TRUE,
+               deactivated_at = NULL,
+               needs_update = FALSE
+         WHERE user_id = $1
+           AND is_active = FALSE
+    """
+    try:
+        result = await database.execute(query, user_pk)
+        # Vérifie si une ligne a été modifiée
+        if "UPDATE 0" not in str(result):
+            logger.info(f"[reactivate_user] Discord ID {discord_id} réactivé.")
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"[reactivate_user] Erreur pour discord_id={discord_id}: {e}")
+        return False
+
+
+async def is_user_active(discord_id: int) -> bool:
+    """
+    Vérifie si un utilisateur est actif (présent dans au moins un serveur).
+    """
+    user_pk = await get_user_pk_by_discord_id(discord_id)
+    if not user_pk:
+        return False
+
+    query = """
+        SELECT is_active
+          FROM valorant_info
+         WHERE user_id = $1
+         LIMIT 1
+    """
+    record = await database.fetchrow(query, user_pk)
+    if record:
+        return record.get("is_active", True)
+    return False
+
+
+async def get_inactive_users_count() -> int:
+    """
+    Retourne le nombre d'utilisateurs inactifs pour le monitoring.
+    """
+    query = "SELECT COUNT(*) FROM valorant_info WHERE is_active = FALSE"
+    try:
+        return await database.fetchval(query) or 0
+    except Exception as e:
+        logger.error(f"[get_inactive_users_count] Erreur: {e}")
+        return 0
+
+
+async def get_user_stats() -> Dict[str, int]:
+    """
+    Retourne des statistiques sur les utilisateurs Valorant pour le monitoring.
+    """
+    query = """
+        SELECT
+            COUNT(*) AS total,
+            COUNT(*) FILTER (WHERE is_active = TRUE) AS active,
+            COUNT(*) FILTER (WHERE is_active = FALSE) AS inactive,
+            COUNT(*) FILTER (WHERE puuid IS NOT NULL) AS with_puuid,
+            COUNT(*) FILTER (WHERE tracking_enabled = TRUE) AS tracking_enabled
+        FROM valorant_info
+    """
+    try:
+        record = await database.fetchrow(query)
+        if record:
+            return {
+                "total": record["total"] or 0,
+                "active": record["active"] or 0,
+                "inactive": record["inactive"] or 0,
+                "with_puuid": record["with_puuid"] or 0,
+                "tracking_enabled": record["tracking_enabled"] or 0
+            }
+        return {"total": 0, "active": 0, "inactive": 0, "with_puuid": 0, "tracking_enabled": 0}
+    except Exception as e:
+        logger.error(f"[get_user_stats] Erreur: {e}")
+        return {"total": 0, "active": 0, "inactive": 0, "with_puuid": 0, "tracking_enabled": 0}
+
+
+async def validate_valorant_info_integrity() -> List[Dict]:
+    """
+    Vérifie l'intégrité des données Valorant et retourne les anomalies.
+    Utile pour le debugging et la maintenance.
+    """
+    anomalies = []
+
+    # Utilisateurs avec pseudo/tag mais sans puuid depuis plus de 24h
+    query_missing_puuid = """
+        SELECT u.discord_id, v.pseudo, v.tag
+        FROM valorant_info v
+        JOIN user_id u ON u.id = v.user_id
+        WHERE v.puuid IS NULL
+          AND v.pseudo IS NOT NULL
+          AND v.tag IS NOT NULL
+          AND v.is_active = TRUE
+    """
+    try:
+        records = await database.fetch(query_missing_puuid)
+        for r in records:
+            anomalies.append({
+                "type": "missing_puuid",
+                "discord_id": r["discord_id"],
+                "pseudo": r["pseudo"],
+                "tag": r["tag"]
+            })
+    except Exception as e:
+        logger.error(f"[validate_valorant_info_integrity] Erreur missing_puuid: {e}")
+
+    # Utilisateurs inactifs depuis plus de 30 jours
+    query_long_inactive = """
+        SELECT u.discord_id, v.deactivated_at
+        FROM valorant_info v
+        JOIN user_id u ON u.id = v.user_id
+        WHERE v.is_active = FALSE
+          AND v.deactivated_at < NOW() - INTERVAL '30 days'
+    """
+    try:
+        records = await database.fetch(query_long_inactive)
+        for r in records:
+            anomalies.append({
+                "type": "long_inactive",
+                "discord_id": r["discord_id"],
+                "deactivated_at": str(r["deactivated_at"])
+            })
+    except Exception as e:
+        logger.error(f"[validate_valorant_info_integrity] Erreur long_inactive: {e}")
+
+    return anomalies
+
+
+async def bulk_mark_inactive(discord_ids: List[int]) -> int:
+    """
+    Marque plusieurs utilisateurs comme inactifs en une seule opération.
+    Retourne le nombre d'utilisateurs marqués.
+    """
+    if not discord_ids:
+        return 0
+
+    query = """
+        UPDATE valorant_info v
+           SET is_active = FALSE,
+               deactivated_at = NOW()
+          FROM user_id u
+         WHERE u.id = v.user_id
+           AND u.discord_id = ANY($1)
+           AND v.is_active = TRUE
+    """
+    try:
+        result = await database.execute(query, discord_ids)
+        # Parse le résultat pour obtenir le nombre de lignes affectées
+        if result:
+            count = int(result.split()[-1]) if result.split()[-1].isdigit() else 0
+            logger.info(f"[bulk_mark_inactive] {count} utilisateurs marqués inactifs.")
+            return count
+        return 0
+    except Exception as e:
+        logger.error(f"[bulk_mark_inactive] Erreur: {e}")
+        return 0
+
+
+async def cleanup_old_inactive_users(days: int = 180) -> int:
+    """
+    Supprime les données des utilisateurs inactifs depuis plus de X jours.
+    ATTENTION: Cette opération est irréversible.
+
+    Args:
+        days: Nombre de jours d'inactivité avant suppression (défaut: 180)
+
+    Returns:
+        Nombre d'utilisateurs supprimés
+    """
+    if days < 30:
+        logger.warning(f"[cleanup_old_inactive_users] Refus de supprimer avec days={days} (minimum 30)")
+        return 0
+
+    query = """
+        DELETE FROM valorant_info v
+        USING user_id u
+        WHERE u.id = v.user_id
+          AND v.is_active = FALSE
+          AND v.deactivated_at < NOW() - INTERVAL '%s days'
+        RETURNING u.discord_id
+    """ % days  # Note: days est validé ci-dessus, pas d'injection possible
+    try:
+        records = await database.fetch(query)
+        count = len(records)
+        if count > 0:
+            logger.info(f"[cleanup_old_inactive_users] {count} utilisateurs supprimés (inactifs > {days} jours).")
+        return count
+    except Exception as e:
+        logger.error(f"[cleanup_old_inactive_users] Erreur: {e}")
+        return 0

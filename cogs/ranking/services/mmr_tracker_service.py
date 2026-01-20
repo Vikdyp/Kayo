@@ -353,32 +353,42 @@ class ValorantService:
         )
         if not row or not row["puuid"]:
             # fallback sur la dernière partition en base
-            row = await database.fetchrow("""
+            fallback_row = await database.fetchrow("""
                 SELECT season, act
                 FROM valorant_elo_history_parent
                 GROUP BY season, act
                 ORDER BY season DESC, act DESC
                 LIMIT 1
             """)
-            return row["season"], row["act"]
+            if not fallback_row:
+                raise ValueError(f"Aucune partition disponible pour user_id={user_id}")
+            return fallback_row["season"], fallback_row["act"]
 
         region, puuid = row["region"], row["puuid"]
 
-        # b) Appel API pour récupérer l’historique MMR
+        # b) Appel API pour récupérer l'historique MMR
         history = await get_mmr_history(region, puuid)
         if not history:
-            # fallback si l’API ne renvoie rien
-            row = await database.fetchrow("""
+            # fallback si l'API ne renvoie rien
+            fallback_row = await database.fetchrow("""
                 SELECT season, act
                 FROM valorant_elo_history_parent
                 GROUP BY season, act
                 ORDER BY season DESC, act DESC
                 LIMIT 1
             """)
-            return row["season"], row["act"]
+            if not fallback_row:
+                raise ValueError(f"Aucune partition disponible pour user_id={user_id}")
+            return fallback_row["season"], fallback_row["act"]
 
         # c) Parser "season.short" (ex. "e10a3")
-        short = history[0]["season"]["short"]
+        first_entry = history[0]
+        season_data = first_entry.get("season") if isinstance(first_entry, dict) else None
+        if not season_data:
+            raise ValueError(f"Données de saison manquantes dans l'historique pour user_id={user_id}")
+        short = season_data.get("short")
+        if not short:
+            raise ValueError(f"Champ 'short' manquant dans season pour user_id={user_id}")
         m = re.match(r"e(\d+)a(\d+)", short, re.I)
         if not m:
             raise ValueError(f"Impossible de parser season.short='{short}' pour user_id={user_id}")

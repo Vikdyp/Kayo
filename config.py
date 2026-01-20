@@ -54,8 +54,8 @@ LOGGING = {
     'valorant_service' : False,
     'assign_rank' : False,
     'rank_service' : False,
-    'valorant_mmr' : True,
-    'tracker_service' : True,
+    'valorant_mmr' : False,
+    'tracker_service' : False,
 
 
     # REPUTATION

@@ -1,7 +1,9 @@
 import aiohttp
+import asyncio
 import logging
 import os
-from typing import Dict, List, Optional, Tuple
+from functools import wraps
+from typing import Callable, Dict, List, Optional, Tuple, TypeVar
 from aiolimiter import AsyncLimiter
 from dotenv import load_dotenv
 
@@ -23,6 +25,50 @@ rate_limiter = AsyncLimiter(max_rate=90, time_period=60)
 class RateLimitException(Exception):
     pass
 
+
+# Type variable pour le décorateur
+T = TypeVar('T')
+
+
+def with_retry(
+    max_retries: int = 3,
+    base_delay: float = 1.0,
+    exponential: bool = True
+) -> Callable:
+    """
+    Décorateur ajoutant une logique de retry avec backoff exponentiel.
+    Ne réessaye PAS sur RateLimitException (429) - celles-ci doivent remonter.
+
+    Args:
+        max_retries: Nombre maximum de tentatives
+        base_delay: Délai de base entre les tentatives (en secondes)
+        exponential: Si True, utilise un backoff exponentiel
+    """
+    def decorator(func: Callable[..., T]) -> Callable[..., T]:
+        @wraps(func)
+        async def wrapper(*args, **kwargs) -> T:
+            last_exception = None
+            for attempt in range(max_retries):
+                try:
+                    return await func(*args, **kwargs)
+                except RateLimitException:
+                    # Ne pas réessayer les rate limits - les laisser remonter
+                    raise
+                except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                    last_exception = e
+                    if attempt < max_retries - 1:
+                        delay = base_delay * (2 ** attempt) if exponential else base_delay
+                        logger.warning(
+                            f"[{func.__name__}] Tentative {attempt + 1}/{max_retries} échouée: {e}. "
+                            f"Nouvelle tentative dans {delay:.1f}s..."
+                        )
+                        await asyncio.sleep(delay)
+                    else:
+                        logger.error(f"[{func.__name__}] Toutes les {max_retries} tentatives ont échoué.")
+            return None
+        return wrapper
+    return decorator
+
 _session: Optional[aiohttp.ClientSession] = None
 
 def get_session() -> aiohttp.ClientSession:
@@ -38,10 +84,12 @@ async def close_session():
         await _session.close()
         _session = None
 
+@with_retry(max_retries=3, base_delay=1.0)
 async def get_puuid(player_name: str, player_tag: str) -> Optional[Tuple[str, str, str]]:
     """
     Récupère le PUUID, la région et le nom complet (nom#tag) d'un joueur.
     Lève RateLimitException si code 429.
+    Réessaye automatiquement en cas d'erreur réseau (max 3 tentatives).
     """
     url = f"{BASE_URL}/account/{player_name}/{player_tag}"
     logger.info(f"Envoi de la requête à l'URL: {url}")
@@ -52,10 +100,17 @@ async def get_puuid(player_name: str, player_tag: str) -> Optional[Tuple[str, st
             async with session.get(url, headers=HEADERS) as response:
                 if response.status == 200:
                     data = await response.json()
-                    nom = data["data"]["name"]
-                    tag = data["data"]["tag"]
-                    region = data["data"]["region"]
-                    puuid = data["data"]["puuid"]
+                    player_data = data.get("data")
+                    if not player_data:
+                        logger.error(f"[get_puuid] Champ 'data' manquant pour {player_name}#{player_tag}")
+                        return None
+                    nom = player_data.get("name")
+                    tag = player_data.get("tag")
+                    region = player_data.get("region")
+                    puuid = player_data.get("puuid")
+                    if not all([nom, tag, region, puuid]):
+                        logger.error(f"[get_puuid] Données incomplètes pour {player_name}#{player_tag}: {player_data}")
+                        return None
                     nom_tag = f"{nom}#{tag}"
                     logger.info(f"PUUID récupéré pour {nom_tag}: {puuid}, Région: {region}")
                     return nom_tag, region, puuid
@@ -84,10 +139,12 @@ async def get_puuid(player_name: str, player_tag: str) -> Optional[Tuple[str, st
             logger.error(f"Exception lors de la récupération du PUUID pour {player_name}#{player_tag}: {e}")
             return None
 
+@with_retry(max_retries=3, base_delay=1.0)
 async def get_player_rank(region: str, puuid: str) -> Optional[Tuple[str, int]]:
     """
     Récupère le rang et l'Elo d'un joueur à partir de son PUUID et de sa région.
     Lève RateLimitException si code 429.
+    Réessaye automatiquement en cas d'erreur réseau (max 3 tentatives).
     """
     url = f"{BASE_URL}/by-puuid/mmr/{region}/{puuid}"
     logger.info(f"Envoi de la requête de rang à l'URL: {url}")
@@ -98,9 +155,19 @@ async def get_player_rank(region: str, puuid: str) -> Optional[Tuple[str, int]]:
             async with session.get(url, headers=HEADERS) as response:
                 if response.status == 200:
                     data = await response.json()
-                    current_data = data["data"]["current_data"]
-                    rank = current_data["currenttierpatched"]
-                    elo = current_data["elo"]
+                    player_data = data.get("data")
+                    if not player_data:
+                        logger.error(f"[get_player_rank] Champ 'data' manquant pour PUUID {puuid}")
+                        return None
+                    current_data = player_data.get("current_data")
+                    if not current_data:
+                        logger.warning(f"[get_player_rank] Pas de current_data pour PUUID {puuid} - peut-être non classé")
+                        return None
+                    rank = current_data.get("currenttierpatched")
+                    elo = current_data.get("elo")
+                    if rank is None or elo is None:
+                        logger.warning(f"[get_player_rank] Rang ou elo manquant pour PUUID {puuid}")
+                        return None
                     logger.info(f"Statistiques récupérées pour PUUID {puuid}: Rang={rank}, Elo={elo}")
                     return rank, elo
 
@@ -131,6 +198,7 @@ async def get_player_rank(region: str, puuid: str) -> Optional[Tuple[str, int]]:
             logger.error(f"Exception lors de la récupération des statistiques pour PUUID {puuid}: {e}")
             return None
 
+@with_retry(max_retries=3, base_delay=1.0)
 async def get_mmr_history(
     region: str,
     puuid: str,
@@ -140,6 +208,7 @@ async def get_mmr_history(
     Récupère l'historique complet de MMR pour un joueur donné.
     Utilise le endpoint v2 avec le paramètre platform.
     Lève RateLimitException si code 429.
+    Réessaye automatiquement en cas d'erreur réseau (max 3 tentatives).
     """
     url = f"{BASE_URL}/by-puuid/mmr-history/{region}/{platform}/{puuid}"
     logger.info(f"[get_mmr_history] Début pour region={region}, platform={platform}, puuid={puuid}")

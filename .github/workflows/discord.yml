@@ -2,7 +2,7 @@ name: Discord notify
 
 on:
   push:
-    branches: ["dev"]
+    branches: [ "master", "main", "dev" ]
   pull_request:
 
 jobs:
@@ -19,5 +19,5 @@ jobs:
           MSG: ${{ github.event.head_commit.message }}
         run: |
           curl -H "Content-Type: application/json" \
-               -d "{\"content\":\"📌 Push par **$ACTOR** sur **$REF**\n📝 $MSG\n🔗 $URL\"}" \
+               -d "{\"content\":\"📌 **$REPO** — push par **$ACTOR** sur **$REF**\n📝 $MSG\n🔗 $URL\"}" \
                "$WEBHOOK"

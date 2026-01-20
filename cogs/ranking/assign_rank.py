@@ -1,6 +1,6 @@
 #cogs\ranking\assign_rank.py
 import re
-from typing import Optional
+from typing import Dict, Optional
 import discord
 from discord.ext import commands, tasks
 from cogs.ranking.services.assign_rank_service import (
@@ -18,8 +18,11 @@ from cogs.ranking.services.assign_rank_service import (
     delete_valo_data,
     get_or_create_server_record,
     get_user_by_pseudo_tag,
-    get_last_notification,         # nouvel import
-    update_last_notification         # nouvel import
+    get_last_notification,
+    update_last_notification,
+    mark_user_inactive,
+    reactivate_user,
+    valorant_account_linked,
 )
 from cogs.ranking.services.valorant_service import (
     close_session, get_puuid, get_player_rank, RateLimitException
@@ -129,7 +132,7 @@ class PseudoTagModal(discord.ui.Modal, title="Renseignez votre Pseudo et Tag Val
                     "Ce pseudo et tag Valorant sont déjà utilisés par un autre utilisateur.",
                     ephemeral=True
                 )
-                await self.cog.notify_duplicate_pseudo_tag(existing_user, self.user, pseudo, tag)
+                await self.cog.notify_duplicate_pseudo_tag(existing_user, self.user, pseudo, tag, interaction.guild)
                 return
 
         if not await rules_interaction_check(interaction):
@@ -246,6 +249,17 @@ class EmbedCog(commands.Cog):
     async def on_ready(self):
         logger.info(f"Cog {self.__class__.__name__} prêt.")
 
+    @commands.Cog.listener()
+    async def on_member_join(self, member: discord.Member):
+        """
+        Réactive le tracking Valorant si un utilisateur revient dans un serveur
+        et avait un compte Valorant lié.
+        """
+        if await valorant_account_linked(member.id):
+            reactivated = await reactivate_user(member.id)
+            if reactivated:
+                logger.info(f"[on_member_join] Tracking Valorant réactivé pour {member.id} ({member.display_name}).")
+
     @commands.command(name="send_embed_rang")
     @commands.has_permissions(administrator=True)
     async def send_embed(self, ctx: commands.Context):
@@ -305,11 +319,20 @@ class EmbedCog(commands.Cog):
             logger.error(f"Erreur lors de l'envoi de l'embed : {e}")
             await ctx.send("Une erreur est survenue lors de l'envoi de l'embed.", delete_after=10)
 
-    async def notify_duplicate_pseudo_tag(self, existing_user: discord.User, current_user: discord.User, pseudo: str, tag: str):
-        channel_id = 1315770052431188069  # Remplacez par l'ID du salon désiré
-        channel = self.bot.get_channel(channel_id)
+    async def notify_duplicate_pseudo_tag(self, existing_user: discord.User, current_user: discord.User, pseudo: str, tag: str, guild: discord.Guild):
+        # Utiliser la configuration de channel au lieu d'un ID hardcodé
+        channel_id = await get_channel_id(guild.id, "duplicate_alert")
+        if not channel_id:
+            # Fallback sur le channel de modération ou rank_up
+            channel_id = await get_channel_id(guild.id, "moderation")
+        if not channel_id:
+            channel_id = await get_channel_id(guild.id, "rank_up")
+        if not channel_id:
+            logger.error(f"[notify_duplicate_pseudo_tag] Aucun channel configuré pour les alertes de doublon dans le serveur {guild.id}")
+            return
+        channel = guild.get_channel(channel_id)
         if not channel:
-            logger.error(f"Salon avec l'ID {channel_id} introuvable.")
+            logger.error(f"Salon avec l'ID {channel_id} introuvable dans le serveur {guild.id}.")
             return
 
         embed = discord.Embed(
@@ -358,14 +381,37 @@ class EmbedCog(commands.Cog):
         - Si la récupération du puuid échoue, notifie le membre (une fois par heure) via DM.
         """
         logger.info("Début de la tâche de mise à jour des rôles Valorant (phase ping-pong).")
+
+        # Statistiques du cycle
+        cycle_stats = {
+            "processed": 0,
+            "updated": 0,
+            "marked_inactive": 0,
+            "api_errors": 0,
+            "skipped_banned": 0
+        }
+
         users = await get_users_with_update_flag_false()
-        logger.info(f"{len(users)} utilisateurs trouvés avec needs_update=FALSE.")
+        logger.info(f"{len(users)} utilisateurs actifs trouvés avec needs_update=FALSE.")
 
         if not users:
             logger.info("Aucun utilisateur à mettre à jour. Réinitialisation de needs_update pour tous.")
             await reset_all_update_flag_false()
             logger.info("Fin de la tâche (aucun user).")
             return
+
+        # Pré-charger les membres pour tous les guilds (optimisation pour grands serveurs)
+        # On utilise get_member() qui est instantané depuis le cache
+        # fetch_member() n'est utilisé qu'en dernier recours (1 seul appel par user max)
+        guild_list = list(self.bot.guilds)
+
+        # Cache local pour les ban_role_id (évite les appels BDD répétés)
+        ban_role_cache: Dict[int, Optional[int]] = {}
+        for guild in guild_list:
+            try:
+                ban_role_cache[guild.id] = await ModerationService.get_ban_role_id(guild.id)
+            except Exception:
+                ban_role_cache[guild.id] = None
 
         for record in users:
             discord_id = record["discord_id"]
@@ -376,43 +422,54 @@ class EmbedCog(commands.Cog):
             current_rank = record.get("valorant_rank")
             current_elo = record.get("valorant_elo")
 
+            # Étape 1: Chercher dans le cache (instantané)
             members = []
-            for guild in self.bot.guilds:
+            guilds_to_fetch = []
+            for guild in guild_list:
                 m = guild.get_member(discord_id)
-                if not m:
-                    try:
-                        m = await guild.fetch_member(discord_id)
-                    except discord.NotFound:
-                        m = None
-                    except discord.Forbidden:
-                        logger.warning(
-                            f"[update_roles_task] Missing permissions to fetch member {discord_id} in guild={guild.id}."
-                        )
-                        m = None
-                    except discord.HTTPException as e:
-                        logger.error(
-                            f"[update_roles_task] HTTP error fetching member {discord_id} in guild={guild.id}: {e}"
-                        )
-                        m = None
                 if m:
                     members.append(m)
+                else:
+                    guilds_to_fetch.append(guild)
+
+            # Étape 2: Si pas trouvé dans le cache, faire UN SEUL fetch_member
+            # (pas besoin de fetcher dans tous les guilds si on l'a trouvé dans un)
+            if not members and guilds_to_fetch:
+                # On essaie fetch_member sur le premier guild seulement
+                # car si le membre n'est dans aucun serveur, il est inactif
+                for guild in guilds_to_fetch[:1]:  # Limite à 1 appel API
+                    try:
+                        m = await guild.fetch_member(discord_id)
+                        if m:
+                            members.append(m)
+                            break
+                    except discord.NotFound:
+                        continue
+                    except discord.Forbidden:
+                        logger.debug(f"[update_roles_task] Pas de permission fetch pour {discord_id} dans guild={guild.id}")
+                        continue
+                    except discord.HTTPException:
+                        continue
+
             if not members:
-                logger.warning(f"[update_roles_task] Member introuvable pour Discord ID {discord_id}.")
+                logger.info(f"[update_roles_task] Member {discord_id} introuvable dans tous les serveurs - marquage inactif.")
+                await mark_user_inactive(discord_id)
                 await mark_user_update_flag_true(discord_id)
+                cycle_stats["marked_inactive"] += 1
                 continue
+
+            cycle_stats["processed"] += 1
 
             eligible_members = []
             for member in members:
-                try:
-                    ban_role_id = await ModerationService.get_ban_role_id(member.guild.id)
-                    if ban_role_id:
-                        ban_role = member.guild.get_role(ban_role_id)
-                        if ban_role and ban_role in member.roles:
-                            logger.info(f"[update_roles_task] Skipping {member.display_name} (role 'ban').")
-                            continue
-                except Exception as e:
-                    logger.error(f"[update_roles_task] Erreur verification ban pour {member.display_name}: {e}")
-                    continue
+                # Utiliser le cache local pour les ban roles (pas d'appel BDD)
+                ban_role_id = ban_role_cache.get(member.guild.id)
+                if ban_role_id:
+                    ban_role = member.guild.get_role(ban_role_id)
+                    if ban_role and ban_role in member.roles:
+                        logger.debug(f"[update_roles_task] Skipping {member.display_name} (role 'ban').")
+                        cycle_stats["skipped_banned"] += 1
+                        continue
                 eligible_members.append(member)
 
             if not eligible_members:
@@ -447,18 +504,20 @@ class EmbedCog(commands.Cog):
                     await set_valorant_details(discord_id, puuid, region, current_rank or "", current_elo or 0)
                 except RateLimitException as e:
                     logger.warning(f"RateLimitException pour {pseudo}#{tag}: {e}")
+                    cycle_stats["api_errors"] += 1
                     await mark_user_update_flag_true(discord_id)
                     continue
 
             # Récupération du rang avec les valeurs correctement mises à jour
             try:
-                stats = await get_player_rank(region, puuid)
+                rank_result = await get_player_rank(region, puuid)
             except RateLimitException as e:
                 logger.warning(f"RateLimitException lors de la récupération du rang pour {discord_id}: {e}")
+                cycle_stats["api_errors"] += 1
                 await mark_user_update_flag_true(discord_id)
                 continue
-            if stats:
-                new_rank, new_elo = stats
+            if rank_result:
+                new_rank, new_elo = rank_result
             else:
                 new_rank, new_elo = None, None
                 logger.info(f"[update_roles_task] {pseudo}#{tag} n'a pas de rang compétitif ou API échec.")
@@ -514,8 +573,15 @@ class EmbedCog(commands.Cog):
                         continue
 
             await mark_user_update_flag_true(discord_id)
+            cycle_stats["updated"] += 1
 
-        logger.info("Fin de la tâche de mise à jour des rôles Valorant (phase ping-pong).")
+        # Log des statistiques du cycle
+        logger.info(
+            f"Fin de la tâche de mise à jour des rôles Valorant. "
+            f"Stats: {cycle_stats['processed']} traités, {cycle_stats['updated']} mis à jour, "
+            f"{cycle_stats['marked_inactive']} marqués inactifs, {cycle_stats['api_errors']} erreurs API, "
+            f"{cycle_stats['skipped_banned']} ignorés (bannis)."
+        )
 
 
     @commands.command(name="reset_valo_updates")
