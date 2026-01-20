@@ -84,8 +84,10 @@ class SpamConfirmationView(discord.ui.View):
         await interaction.response.defer()
 
         # Supprimer tous les messages de l'utilisateur depuis la détection
+        # On cherche les messages dans une fenêtre de 2 minutes avant la détection jusqu'à maintenant
         deleted_count = 0
-        logger.info(f"Début suppression messages spam pour {self.user.display_name} depuis {self.detection_time}")
+        search_start = self.detection_time - timedelta(minutes=2)
+        logger.info(f"Début suppression messages spam pour {self.user.display_name} depuis {search_start}")
 
         for channel in self.guild.text_channels:
             try:
@@ -93,9 +95,9 @@ class SpamConfirmationView(discord.ui.View):
                 if not perms.manage_messages or not perms.read_message_history:
                     continue
 
-                # Collecter les messages à supprimer
+                # Collecter les messages à supprimer (dans la fenêtre de temps)
                 messages_to_delete = []
-                async for msg in channel.history(limit=500, after=self.detection_time):
+                async for msg in channel.history(limit=500, after=search_start):
                     if msg.author.id == self.user.id:
                         messages_to_delete.append(msg)
 
