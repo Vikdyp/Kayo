@@ -4,7 +4,7 @@ import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from cogs.moderation.services.moderation_service import ModerationService
@@ -242,7 +242,7 @@ class Moderation(commands.Cog):
             # Définir la durée du bannissement si temporaire
             ban_end = None
             if ban_type == "temp" and duration_minutes:
-                ban_end = datetime.utcnow() + timedelta(minutes=duration_minutes)
+                ban_end = datetime.now(timezone.utc) + timedelta(minutes=duration_minutes)
 
             # Collecter les rôles de l'utilisateur pour le backup
             roles_to_backup = [
@@ -295,7 +295,7 @@ class Moderation(commands.Cog):
             embed = discord.Embed(
                 title="📛 Vous avez été banni(e) du serveur",
                 color=discord.Color.red(),
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(timezone.utc)
             )
             embed.add_field(name="Serveur", value=f"**{guild.name}**", inline=False)
             embed.add_field(name="Raison", value=reason, inline=False)
@@ -401,7 +401,7 @@ class Moderation(commands.Cog):
         embed = discord.Embed(
             title="✅ Vous avez été débanni(e) du serveur",
             color=discord.Color.green(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
         embed.add_field(name="Serveur", value=f"**{guild.name}**", inline=False)
         embed.add_field(name="Raison", value=reason or "Expiration du bannissement temporaire ou décision du staff.", inline=False)
@@ -502,7 +502,7 @@ class Moderation(commands.Cog):
             logger.warning(f"Période invalide: {period}")
             return 0
 
-        after_date = datetime.utcnow() - delta
+        after_date = datetime.now(timezone.utc) - delta
         total_deleted = 0
 
         logger.info(f"Début suppression messages user {user_id}, période: {period}, scope: {scope}")
@@ -553,7 +553,7 @@ class Moderation(commands.Cog):
     @tasks.loop(minutes=1)
     async def check_bans_expired(self):
         """Vérifie régulièrement les bannissements temporaires expirés et débannit automatiquement les membres."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         expired_bans = await ModerationService.get_expired_bans(now)
 
         count = 0
@@ -594,7 +594,7 @@ class Moderation(commands.Cog):
 
         # Vérifier si le ban est expiré (pour les bans temporaires)
         ban_end = ban_info.get("ban_end")
-        if ban_end and datetime.utcnow() > ban_end:
+        if ban_end and datetime.now(timezone.utc) > ban_end:
             # Ban expiré, supprimer le ban et ne pas re-bannir
             await ModerationService.remove_ban(member.id)
             logger.info(f"Ban expiré pour {member.display_name}, suppression du ban.")
@@ -650,7 +650,7 @@ class Moderation(commands.Cog):
                     title="📛 Vous êtes toujours banni(e)",
                     description="Vous avez rejoint le serveur mais vous êtes toujours sous le coup d'un bannissement.",
                     color=discord.Color.red(),
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(timezone.utc)
                 )
                 embed.add_field(name="Serveur", value=guild.name, inline=True)
                 embed.add_field(name="Type", value="Permanent" if ban_type == "perma" else "Temporaire", inline=True)

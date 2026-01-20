@@ -5,7 +5,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Set, Tuple, Optional, Any
 from urllib.parse import urlparse
 
@@ -152,7 +152,7 @@ class SpamConfirmationView(discord.ui.View):
                     title="📛 Vous avez été banni(e)",
                     description="Vous avez été banni(e) pour spam multi-salons.",
                     color=discord.Color.red(),
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(timezone.utc)
                 )
                 embed.add_field(name="Serveur", value=self.guild.name, inline=False)
                 embed.add_field(name="Raison", value="Spam multi-salons détecté", inline=False)
@@ -535,7 +535,7 @@ class AutoMod(commands.Cog):
         embed = discord.Embed(
             title="⚙️ Configuration AutoMod",
             color=discord.Color.blue(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
 
         # Statut des détections
@@ -591,7 +591,7 @@ class AutoMod(commands.Cog):
 
     def add_to_spam_whitelist(self, user_id: int, guild_id: int) -> None:
         """Ajoute un utilisateur à la whitelist temporaire (24h)."""
-        expiration = datetime.utcnow() + timedelta(hours=24)
+        expiration = datetime.now(timezone.utc) + timedelta(hours=24)
         self.spam_whitelist[(user_id, guild_id)] = expiration
         logger.debug(f"Utilisateur {user_id} ajouté à la whitelist spam jusqu'à {expiration}")
 
@@ -599,7 +599,7 @@ class AutoMod(commands.Cog):
         """Vérifie si un utilisateur est dans la whitelist spam."""
         key = (user_id, guild_id)
         if key in self.spam_whitelist:
-            if datetime.utcnow() < self.spam_whitelist[key]:
+            if datetime.now(timezone.utc) < self.spam_whitelist[key]:
                 return True
             else:
                 # Expirée, la supprimer
@@ -744,7 +744,7 @@ class AutoMod(commands.Cog):
                 title="📛 Vous avez été banni(e) automatiquement",
                 description="Votre message a été détecté comme un scam.",
                 color=discord.Color.red(),
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(timezone.utc)
             )
             embed.add_field(name="Serveur", value=guild.name, inline=False)
             embed.add_field(name="Raison", value="Message de scam détecté", inline=False)
@@ -817,7 +817,7 @@ class AutoMod(commands.Cog):
                 embed = discord.Embed(
                     title="🚨 Scam détecté - Ban automatique",
                     color=discord.Color.red(),
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(timezone.utc)
                 )
                 embed.add_field(name="Utilisateur", value=f"{user.mention} ({user.id})", inline=False)
                 embed.add_field(name="Salon", value=channel.mention, inline=True)
@@ -833,7 +833,7 @@ class AutoMod(commands.Cog):
                     title="⚠️ Auto-modération",
                     description=extra_info or "Action automatique effectuée",
                     color=discord.Color.orange(),
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(timezone.utc)
                 )
                 embed.add_field(name="Utilisateur", value=f"{user.mention}", inline=True)
 
@@ -844,7 +844,7 @@ class AutoMod(commands.Cog):
 
     def _cleanup_message_cache(self) -> None:
         """Nettoie le cache des messages anciens (> 2 minutes)."""
-        cutoff = datetime.utcnow() - timedelta(minutes=2)
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=2)
         for user_id in list(self.message_cache.keys()):
             self.message_cache[user_id] = [
                 entry for entry in self.message_cache[user_id]
@@ -863,7 +863,7 @@ class AutoMod(commands.Cog):
         channel_id = message.channel.id
         message_id = message.id
         content_hash = hash(message.content.lower().strip())
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         # Récupérer les paramètres de la config
         threshold = config.get('spam_channel_threshold', 3)
@@ -902,7 +902,7 @@ class AutoMod(commands.Cog):
         """Envoie une demande de confirmation aux modérateurs pour un spam détecté."""
         user = message.author
         guild = message.guild
-        detection_time = datetime.utcnow()
+        detection_time = datetime.now(timezone.utc)
 
         # Éviter les alertes en double
         if user.id in self.pending_spam_alerts:
@@ -969,7 +969,7 @@ class AutoMod(commands.Cog):
             logger.exception(f"Erreur lors de l'envoi de l'alerte spam: {e}")
         finally:
             # Retirer après un délai pour éviter le spam d'alertes
-            await discord.utils.sleep_until(datetime.utcnow() + timedelta(seconds=60))
+            await discord.utils.sleep_until(datetime.now(timezone.utc) + timedelta(seconds=60))
             self.pending_spam_alerts.discard(user.id)
 
     @commands.Cog.listener()
