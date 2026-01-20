@@ -499,10 +499,13 @@ class Moderation(commands.Cog):
 
         delta = period_mapping.get(period)
         if not delta:
+            logger.warning(f"Période invalide: {period}")
             return 0
 
         after_date = datetime.utcnow() - delta
         total_deleted = 0
+
+        logger.info(f"Début suppression messages user {user_id}, période: {period}, scope: {scope}")
 
         # Déterminer les serveurs à parcourir
         guilds_to_process = [current_guild] if scope == "current" else self.bot.guilds
@@ -512,32 +515,37 @@ class Moderation(commands.Cog):
             for channel in guild.text_channels:
                 try:
                     # Vérifier que le bot a les permissions
-                    if not channel.permissions_for(guild.me).manage_messages:
-                        continue
-                    if not channel.permissions_for(guild.me).read_message_history:
+                    perms = channel.permissions_for(guild.me)
+                    if not perms.manage_messages or not perms.read_message_history:
                         continue
 
                     # Collecter les messages à supprimer
                     messages_to_delete = []
-                    async for msg in channel.history(limit=1000, after=after_date):
+                    async for msg in channel.history(limit=500, after=after_date):
                         if msg.author.id == user_id:
                             messages_to_delete.append(msg)
 
-                    # Supprimer par lots de 100 (limite Discord)
-                    for i in range(0, len(messages_to_delete), 100):
-                        batch = messages_to_delete[i:i+100]
-                        if len(batch) == 1:
-                            await batch[0].delete()
-                        elif len(batch) > 1:
-                            await channel.delete_messages(batch)
-                        total_deleted += len(batch)
+                    if not messages_to_delete:
+                        continue
+
+                    logger.debug(f"Trouvé {len(messages_to_delete)} messages dans {channel.name}")
+
+                    # Supprimer les messages un par un (plus fiable)
+                    for msg in messages_to_delete:
+                        try:
+                            await msg.delete()
+                            total_deleted += 1
+                        except discord.NotFound:
+                            pass  # Déjà supprimé
+                        except discord.Forbidden:
+                            logger.debug(f"Pas de permission pour supprimer msg {msg.id}")
+                        except Exception as e:
+                            logger.debug(f"Erreur suppression msg {msg.id}: {e}")
 
                 except discord.Forbidden:
-                    logger.debug(f"Pas de permission pour purger dans {channel.name} ({guild.name})")
-                except discord.HTTPException as e:
-                    logger.error(f"Erreur lors de la purge dans {channel.name} ({guild.name}): {e}")
+                    pass
                 except Exception as e:
-                    logger.error(f"Erreur inattendue lors de la purge dans {channel.name} ({guild.name}): {e}")
+                    logger.error(f"Erreur dans {channel.name} ({guild.name}): {e}")
 
         logger.info(f"Suppression terminée: {total_deleted} messages de l'utilisateur {user_id} supprimés.")
         return total_deleted
@@ -618,10 +626,16 @@ class Moderation(commands.Cog):
             return
 
         try:
-            # Supprimer tous les rôles (sauf @everyone et le rôle ban)
-            roles_to_remove = [role for role in member.roles if role != guild.default_role and role != ban_role]
-            if roles_to_remove:
-                await member.remove_roles(*roles_to_remove, reason="Re-ban automatique: membre toujours banni")
+            # Supprimer tous les rôles un par un (pour éviter les erreurs de hiérarchie)
+            roles_to_remove = [
+                role for role in member.roles
+                if role != guild.default_role and role != ban_role and role < guild.me.top_role
+            ]
+            for role in roles_to_remove:
+                try:
+                    await member.remove_roles(role, reason="Re-ban automatique: membre toujours banni")
+                except (discord.Forbidden, discord.HTTPException):
+                    logger.debug(f"Impossible de retirer le rôle {role.name} de {member.display_name}")
 
             # Ajouter le rôle ban
             await member.add_roles(ban_role, reason="Re-ban automatique: membre toujours banni")

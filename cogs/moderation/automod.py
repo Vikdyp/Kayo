@@ -85,11 +85,12 @@ class SpamConfirmationView(discord.ui.View):
 
         # Supprimer tous les messages de l'utilisateur depuis la détection
         deleted_count = 0
+        logger.info(f"Début suppression messages spam pour {self.user.display_name} depuis {self.detection_time}")
+
         for channel in self.guild.text_channels:
             try:
-                if not channel.permissions_for(self.guild.me).manage_messages:
-                    continue
-                if not channel.permissions_for(self.guild.me).read_message_history:
+                perms = channel.permissions_for(self.guild.me)
+                if not perms.manage_messages or not perms.read_message_history:
                     continue
 
                 # Collecter les messages à supprimer
@@ -98,21 +99,29 @@ class SpamConfirmationView(discord.ui.View):
                     if msg.author.id == self.user.id:
                         messages_to_delete.append(msg)
 
-                # Supprimer par lots de 100 (limite Discord)
-                for i in range(0, len(messages_to_delete), 100):
-                    batch = messages_to_delete[i:i+100]
-                    if len(batch) == 1:
-                        await batch[0].delete()
-                    elif len(batch) > 1:
-                        await channel.delete_messages(batch)
-                    deleted_count += len(batch)
+                if not messages_to_delete:
+                    continue
+
+                logger.debug(f"Trouvé {len(messages_to_delete)} messages dans {channel.name}")
+
+                # Supprimer les messages un par un (plus fiable)
+                for msg in messages_to_delete:
+                    try:
+                        await msg.delete()
+                        deleted_count += 1
+                    except discord.NotFound:
+                        pass  # Déjà supprimé
+                    except discord.Forbidden:
+                        pass
+                    except Exception as e:
+                        logger.debug(f"Erreur suppression msg: {e}")
 
             except discord.Forbidden:
                 pass
-            except discord.HTTPException as e:
-                logger.error(f"Erreur purge spam dans {channel.name}: {e}")
             except Exception as e:
-                logger.error(f"Erreur inattendue purge spam: {e}")
+                logger.error(f"Erreur purge spam dans {channel.name}: {e}")
+
+        logger.info(f"Suppression spam terminée: {deleted_count} messages supprimés")
 
         # Bannir l'utilisateur via ModerationService
         try:

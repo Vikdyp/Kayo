@@ -46,7 +46,10 @@ LOGGING = {
     'admin': True,
 
     # MODERATION
-    'moderation' : False,
+    'moderation' : True,
+    'moderation_service': True,
+    'automod': True,
+    'services.automod_service': True,
     'clean': False,
     'deban_manager' : False,
 
