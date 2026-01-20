@@ -92,16 +92,21 @@ class SpamConfirmationView(discord.ui.View):
                 if not channel.permissions_for(self.guild.me).read_message_history:
                     continue
 
-                def check(msg):
-                    return msg.author.id == self.user.id
+                # Collecter les messages à supprimer
+                messages_to_delete = []
+                async for msg in channel.history(limit=500, after=self.detection_time):
+                    if msg.author.id == self.user.id:
+                        messages_to_delete.append(msg)
 
-                deleted = await channel.purge(
-                    limit=None,
-                    check=check,
-                    after=self.detection_time,
-                    reason="Suppression spam multi-salons"
-                )
-                deleted_count += len(deleted)
+                # Supprimer par lots de 100 (limite Discord)
+                for i in range(0, len(messages_to_delete), 100):
+                    batch = messages_to_delete[i:i+100]
+                    if len(batch) == 1:
+                        await batch[0].delete()
+                    elif len(batch) > 1:
+                        await channel.delete_messages(batch)
+                    deleted_count += len(batch)
+
             except discord.Forbidden:
                 pass
             except discord.HTTPException as e:

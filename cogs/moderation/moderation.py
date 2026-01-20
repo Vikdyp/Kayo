@@ -517,17 +517,20 @@ class Moderation(commands.Cog):
                     if not channel.permissions_for(guild.me).read_message_history:
                         continue
 
-                    # Utiliser purge avec un check sur l'auteur
-                    def check(msg):
-                        return msg.author.id == user_id
+                    # Collecter les messages à supprimer
+                    messages_to_delete = []
+                    async for msg in channel.history(limit=1000, after=after_date):
+                        if msg.author.id == user_id:
+                            messages_to_delete.append(msg)
 
-                    deleted = await channel.purge(
-                        limit=None,
-                        check=check,
-                        after=after_date,
-                        reason=f"Suppression des messages suite à un ban"
-                    )
-                    total_deleted += len(deleted)
+                    # Supprimer par lots de 100 (limite Discord)
+                    for i in range(0, len(messages_to_delete), 100):
+                        batch = messages_to_delete[i:i+100]
+                        if len(batch) == 1:
+                            await batch[0].delete()
+                        elif len(batch) > 1:
+                            await channel.delete_messages(batch)
+                        total_deleted += len(batch)
 
                 except discord.Forbidden:
                     logger.debug(f"Pas de permission pour purger dans {channel.name} ({guild.name})")
@@ -589,6 +592,15 @@ class Moderation(commands.Cog):
             logger.info(f"Ban expiré pour {member.display_name}, suppression du ban.")
             return
 
+        # Attendre que les autres systèmes (auto-role, etc.) aient assigné les rôles
+        await asyncio.sleep(3)
+
+        # Rafraîchir le membre pour avoir les rôles à jour
+        try:
+            member = await member.guild.fetch_member(member.id)
+        except discord.NotFound:
+            return  # Le membre a quitté
+
         # Le membre est toujours banni, appliquer le rôle ban
         guild = member.guild
         ban_role_id = await ModerationService.get_ban_role_id(guild.id)
@@ -601,9 +613,13 @@ class Moderation(commands.Cog):
             logger.warning(f"Rôle ban {ban_role_id} introuvable dans {guild.name}")
             return
 
+        # Vérifier si le membre a déjà le rôle ban
+        if ban_role in member.roles:
+            return
+
         try:
-            # Supprimer tous les rôles (sauf @everyone)
-            roles_to_remove = [role for role in member.roles if role != guild.default_role]
+            # Supprimer tous les rôles (sauf @everyone et le rôle ban)
+            roles_to_remove = [role for role in member.roles if role != guild.default_role and role != ban_role]
             if roles_to_remove:
                 await member.remove_roles(*roles_to_remove, reason="Re-ban automatique: membre toujours banni")
 
