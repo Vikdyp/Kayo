@@ -468,6 +468,72 @@ class Moderation(commands.Cog):
     async def before_check_bans_expired(self):
         await self.bot.wait_until_ready()
 
+    @commands.Cog.listener()
+    async def on_member_join(self, member: discord.Member):
+        """Re-bannit automatiquement un membre qui rejoint s'il est toujours banni."""
+        if member.bot:
+            return
+
+        # Vérifier si l'utilisateur est dans la table des bans
+        ban_info = await ModerationService.get_ban_info(member.id)
+        if not ban_info:
+            return  # Pas banni
+
+        # Vérifier si le ban est expiré (pour les bans temporaires)
+        ban_end = ban_info.get("ban_end")
+        if ban_end and datetime.utcnow() > ban_end:
+            # Ban expiré, supprimer le ban et ne pas re-bannir
+            await ModerationService.remove_ban(member.id)
+            logger.info(f"Ban expiré pour {member.display_name}, suppression du ban.")
+            return
+
+        # Le membre est toujours banni, appliquer le rôle ban
+        guild = member.guild
+        ban_role_id = await ModerationService.get_ban_role_id(guild.id)
+        if not ban_role_id:
+            logger.warning(f"Pas de rôle ban configuré pour {guild.name}, impossible de re-bannir {member.display_name}")
+            return
+
+        ban_role = guild.get_role(ban_role_id)
+        if not ban_role:
+            logger.warning(f"Rôle ban {ban_role_id} introuvable dans {guild.name}")
+            return
+
+        try:
+            # Supprimer tous les rôles (sauf @everyone)
+            roles_to_remove = [role for role in member.roles if role != guild.default_role]
+            if roles_to_remove:
+                await member.remove_roles(*roles_to_remove, reason="Re-ban automatique: membre toujours banni")
+
+            # Ajouter le rôle ban
+            await member.add_roles(ban_role, reason="Re-ban automatique: membre toujours banni")
+
+            ban_reason = ban_info.get("ban_reason", "Non spécifiée")
+            ban_type = ban_info.get("ban_type", "perma")
+            logger.info(f"Re-ban automatique de {member.display_name} dans {guild.name} (type: {ban_type}, raison: {ban_reason})")
+
+            # Envoyer un DM à l'utilisateur pour l'informer
+            try:
+                embed = discord.Embed(
+                    title="📛 Vous êtes toujours banni(e)",
+                    description="Vous avez rejoint le serveur mais vous êtes toujours sous le coup d'un bannissement.",
+                    color=discord.Color.red(),
+                    timestamp=datetime.utcnow()
+                )
+                embed.add_field(name="Serveur", value=guild.name, inline=True)
+                embed.add_field(name="Type", value="Permanent" if ban_type == "perma" else "Temporaire", inline=True)
+                embed.add_field(name="Raison", value=ban_reason, inline=False)
+                if ban_end:
+                    embed.add_field(name="Fin du ban", value=f"<t:{int(ban_end.timestamp())}:F>", inline=False)
+                await member.send(embed=embed)
+            except discord.Forbidden:
+                pass  # DMs fermés
+
+        except discord.Forbidden:
+            logger.error(f"Permissions insuffisantes pour re-bannir {member.display_name} dans {guild.name}")
+        except discord.HTTPException as e:
+            logger.error(f"Erreur HTTP lors du re-ban de {member.display_name} dans {guild.name}: {e}")
+
 async def setup(bot: commands.Bot):
     await bot.add_cog(Moderation(bot))
     logger.info("Moderation Cog chargé avec succès.")
