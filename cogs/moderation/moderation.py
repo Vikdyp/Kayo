@@ -17,6 +17,9 @@ class Moderation(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.lock = asyncio.Lock()
+        # Set pour tracker les membres bannis en attente de fin d'onboarding
+        # Structure: {(user_id, guild_id)}
+        self.pending_reban: set[tuple[int, int]] = set()
         self.check_bans_expired.start()
         logger.info("Initialisation du Cog de Modération.")
 
@@ -600,16 +603,48 @@ class Moderation(commands.Cog):
             logger.info(f"Ban expiré pour {member.display_name}, suppression du ban.")
             return
 
-        # Attendre que les autres systèmes (auto-role, etc.) aient assigné les rôles
-        await asyncio.sleep(3)
+        # Si le serveur a l'onboarding activé et le membre est en cours d'onboarding,
+        # on attend que l'onboarding soit terminé via on_member_update
+        if member.pending:
+            self.pending_reban.add((member.id, member.guild.id))
+            logger.debug(f"Membre banni {member.display_name} en onboarding, attente de fin d'onboarding")
+            return
 
-        # Rafraîchir le membre pour avoir les rôles à jour
-        try:
-            member = await member.guild.fetch_member(member.id)
-        except discord.NotFound:
-            return  # Le membre a quitté
+        # Pas d'onboarding ou déjà terminé, appliquer le re-ban immédiatement
+        await self._apply_reban(member, ban_info)
 
-        # Le membre est toujours banni, appliquer le rôle ban
+    @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member):
+        """Détecte la fin de l'onboarding pour appliquer le re-ban."""
+        # Vérifier si c'est une fin d'onboarding (pending passe de True à False)
+        if not (before.pending and not after.pending):
+            return
+
+        # Vérifier si ce membre est dans notre liste d'attente de re-ban
+        key = (after.id, after.guild.id)
+        if key not in self.pending_reban:
+            return
+
+        # Retirer de la liste d'attente
+        self.pending_reban.discard(key)
+        logger.debug(f"Fin d'onboarding détectée pour {after.display_name}, application du re-ban")
+
+        # Vérifier à nouveau le statut de ban (au cas où il aurait été débanni entre temps)
+        ban_info = await ModerationService.get_ban_info(after.id)
+        if not ban_info:
+            return
+
+        # Vérifier si le ban est expiré
+        ban_end = ban_info.get("ban_end")
+        if ban_end and datetime.now(timezone.utc) > ban_end:
+            await ModerationService.remove_ban(after.id)
+            return
+
+        # Appliquer le re-ban
+        await self._apply_reban(after, ban_info)
+
+    async def _apply_reban(self, member: discord.Member, ban_info: dict):
+        """Applique le re-ban à un membre (retire les rôles et ajoute le rôle ban)."""
         guild = member.guild
         ban_role_id = await ModerationService.get_ban_role_id(guild.id)
         if not ban_role_id:
@@ -624,6 +659,10 @@ class Moderation(commands.Cog):
         # Vérifier si le membre a déjà le rôle ban
         if ban_role in member.roles:
             return
+
+        ban_end = ban_info.get("ban_end")
+        ban_reason = ban_info.get("ban_reason", "Non spécifiée")
+        ban_type = ban_info.get("ban_type", "perma")
 
         try:
             # Supprimer tous les rôles un par un (pour éviter les erreurs de hiérarchie)
@@ -640,8 +679,6 @@ class Moderation(commands.Cog):
             # Ajouter le rôle ban
             await member.add_roles(ban_role, reason="Re-ban automatique: membre toujours banni")
 
-            ban_reason = ban_info.get("ban_reason", "Non spécifiée")
-            ban_type = ban_info.get("ban_type", "perma")
             logger.info(f"Re-ban automatique de {member.display_name} dans {guild.name} (type: {ban_type}, raison: {ban_reason})")
 
             # Envoyer un DM à l'utilisateur pour l'informer

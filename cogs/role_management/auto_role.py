@@ -19,29 +19,13 @@ class AutoRoleAssign(commands.Cog):
     async def on_member_join(self, member: discord.Member):
         """
         Événement déclenché lorsqu'un nouveau membre rejoint le serveur.
-        Vérifie si l'utilisateur est banni globalement et lui applique le rôle 'ban' si c'est le cas.
+        Note: La gestion du re-ban est maintenant faite dans le cog Moderation
+        qui attend la fin de l'onboarding avant d'appliquer le rôle ban.
+        Ce listener est conservé pour compatibilité mais ne fait plus rien.
         """
-        guild = member.guild
-
-        # Vérifier si l'utilisateur est banni globalement
-        ban_info = await ModerationService.get_ban_info(member.id)
-        if ban_info:
-            # Récupérer le rôle ban du serveur
-            ban_role_id = await ModerationService.get_ban_role_id(guild.id)
-            if ban_role_id:
-                ban_role = guild.get_role(ban_role_id)
-                if ban_role:
-                    try:
-                        await member.add_roles(ban_role, reason="Ban global appliqué automatiquement")
-                        logger.info(f"Rôle 'ban' appliqué à {member} (ID: {member.id}) - ban global")
-                    except discord.Forbidden:
-                        logger.error(f"Permission refusée pour attribuer le rôle 'ban' à {member}.")
-                    except discord.HTTPException as e:
-                        logger.error(f"Erreur HTTP lors de l'attribution du rôle 'ban' à {member}: {e}")
-                else:
-                    logger.warning(f"Rôle 'ban' avec ID {ban_role_id} introuvable dans le serveur '{guild.name}'.")
-            else:
-                logger.warning(f"Aucun rôle 'ban' configuré pour le serveur '{guild.name}' (ID: {guild.id}).")
+        # La logique de re-ban est maintenant gérée par Moderation.on_member_join
+        # et Moderation.on_member_update pour attendre la fin de l'onboarding
+        pass
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AutoRoleAssign(bot))
