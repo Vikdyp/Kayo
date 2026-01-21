@@ -1,5 +1,6 @@
 # cogs/moderation/automod.py
 
+import asyncio
 import re
 import discord
 from discord.ext import commands
@@ -83,57 +84,23 @@ class SpamConfirmationView(discord.ui.View):
         self.resolved = True
         await interaction.response.defer()
 
-        # Supprimer tous les messages de l'utilisateur depuis la détection
-        # On cherche les messages dans une fenêtre de 2 minutes avant la détection jusqu'à maintenant
-        deleted_count = 0
-        search_start = self.detection_time - timedelta(minutes=2)
-        logger.info(f"Début suppression messages spam pour {self.user.display_name} depuis {search_start}")
-
-        for channel in self.guild.text_channels:
-            try:
-                perms = channel.permissions_for(self.guild.me)
-                if not perms.manage_messages or not perms.read_message_history:
-                    continue
-
-                # Collecter les messages à supprimer (dans la fenêtre de temps)
-                messages_to_delete = []
-                async for msg in channel.history(limit=500, after=search_start):
-                    if msg.author.id == self.user.id:
-                        messages_to_delete.append(msg)
-
-                if not messages_to_delete:
-                    continue
-
-                logger.debug(f"Trouvé {len(messages_to_delete)} messages dans {channel.name}")
-
-                # Supprimer les messages un par un (plus fiable)
-                for msg in messages_to_delete:
-                    try:
-                        await msg.delete()
-                        deleted_count += 1
-                    except discord.NotFound:
-                        pass  # Déjà supprimé
-                    except discord.Forbidden:
-                        pass
-                    except Exception as e:
-                        logger.debug(f"Erreur suppression msg: {e}")
-
-            except discord.Forbidden:
-                pass
-            except Exception as e:
-                logger.error(f"Erreur purge spam dans {channel.name}: {e}")
-
-        logger.info(f"Suppression spam terminée: {deleted_count} messages supprimés")
-
-        # Bannir l'utilisateur via ModerationService
         try:
-            internal_server_id = await ModerationService.get_internal_server_id(self.guild.id)
-
-            # Sauvegarder les rôles
+            # 1. Sauvegarder les rôles IMMÉDIATEMENT avant toute modification
             roles_to_backup = [
                 role.id for role in self.user.roles
                 if role != self.guild.default_role and role.name.lower() != "ban"
             ]
+
+            # 2. Timeout immédiat pour empêcher d'envoyer d'autres messages
+            try:
+                member = self.guild.get_member(self.user.id)
+                if member:
+                    await member.timeout(timedelta(seconds=60), reason="Spam détecté - ban en cours")
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+
+            # 3. Enregistrer le ban en base de données
+            internal_server_id = await ModerationService.get_internal_server_id(self.guild.id)
 
             await ModerationService.add_ban(
                 user_id=self.user.id,
@@ -145,10 +112,58 @@ class SpamConfirmationView(discord.ui.View):
                 server_id=internal_server_id
             )
 
-            # Appliquer le ban sur tous les serveurs
+            # 4. Appliquer le ban sur tous les serveurs
             await self._apply_ban_all_guilds(self.user.id, "Spam multi-salons détecté")
 
-            # Envoyer un DM à l'utilisateur
+            # 5. Supprimer les messages (après le ban pour que le membre ne puisse plus en envoyer)
+            deleted_count = 0
+            search_start = self.detection_time - timedelta(minutes=2)
+            logger.info(f"Début suppression messages spam pour {self.user.display_name} depuis {search_start}")
+
+            for channel in self.guild.text_channels:
+                try:
+                    perms = channel.permissions_for(self.guild.me)
+                    if not perms.manage_messages or not perms.read_message_history:
+                        continue
+
+                    # Utiliser purge avec un check pour supprimer en masse (plus rapide)
+                    def check_user(msg):
+                        return msg.author.id == self.user.id
+
+                    deleted = await channel.purge(
+                        limit=500,
+                        after=search_start,
+                        check=check_user,
+                        reason="Suppression spam multi-salons"
+                    )
+                    deleted_count += len(deleted)
+
+                    if deleted:
+                        logger.debug(f"Supprimé {len(deleted)} messages dans {channel.name}")
+
+                except discord.Forbidden:
+                    pass
+                except discord.HTTPException as e:
+                    # Si purge échoue (messages trop vieux), fallback sur suppression individuelle
+                    if "older than 14 days" in str(e) or "bulk delete" in str(e).lower():
+                        try:
+                            async for msg in channel.history(limit=500, after=search_start):
+                                if msg.author.id == self.user.id:
+                                    try:
+                                        await msg.delete()
+                                        deleted_count += 1
+                                    except (discord.NotFound, discord.Forbidden):
+                                        pass
+                        except Exception:
+                            pass
+                    else:
+                        logger.debug(f"Erreur purge dans {channel.name}: {e}")
+                except Exception as e:
+                    logger.error(f"Erreur purge spam dans {channel.name}: {e}")
+
+            logger.info(f"Suppression spam terminée: {deleted_count} messages supprimés")
+
+            # 6. Envoyer un DM à l'utilisateur
             try:
                 embed = discord.Embed(
                     title="📛 Vous avez été banni(e)",
@@ -162,7 +177,7 @@ class SpamConfirmationView(discord.ui.View):
             except discord.Forbidden:
                 pass
 
-            # Mettre à jour l'embed
+            # 7. Mettre à jour l'embed
             embed = interaction.message.embeds[0] if interaction.message.embeds else None
             if embed:
                 embed.color = discord.Color.red()
@@ -259,6 +274,8 @@ class AutoMod(commands.Cog):
         self.spam_whitelist: Dict[Tuple[int, int], datetime] = {}
         # Set pour éviter les alertes en double
         self.pending_spam_alerts: Set[int] = set()
+        # Set pour tracker les utilisateurs en cours de bannissement (évite double exécution)
+        self.banning_users: Set[int] = set()
         # Compiler les patterns regex de base
         self.scam_patterns = [re.compile(pattern, re.IGNORECASE) for pattern in SCAM_PATTERNS]
         # Cache des configurations par serveur
@@ -701,26 +718,45 @@ class AutoMod(commands.Cog):
         member = message.author
         guild = message.guild
 
+        # Vérifier si l'utilisateur est déjà en cours de bannissement
+        if member.id in self.banning_users:
+            # Juste supprimer le message, le ban est déjà en cours
+            try:
+                await message.delete()
+            except (discord.Forbidden, discord.NotFound):
+                pass
+            return
+
+        # Marquer l'utilisateur comme en cours de bannissement
+        self.banning_users.add(member.id)
+
         logger.warning(f"Scam détecté de {member.display_name} dans {guild.name}: {message.content[:100]}")
 
-        # 1. Supprimer le message
         try:
-            await message.delete()
-            logger.info(f"Message scam supprimé de {member.display_name}")
-        except discord.Forbidden:
-            logger.error(f"Pas de permission pour supprimer le message scam de {member.display_name}")
-        except discord.NotFound:
-            pass  # Déjà supprimé
-
-        # 2. Bannir l'utilisateur
-        try:
-            internal_server_id = await ModerationService.get_internal_server_id(guild.id)
-
-            # Sauvegarder les rôles
+            # 1. Sauvegarder les rôles AVANT toute modification
             roles_to_backup = [
                 role.id for role in member.roles
                 if role != guild.default_role and role.name.lower() != "ban"
             ]
+
+            # 2. Timeout immédiat (60 secondes) pour empêcher d'envoyer d'autres messages
+            try:
+                await member.timeout(timedelta(seconds=60), reason="Scam détecté - ban en cours")
+                logger.debug(f"Timeout appliqué à {member.display_name}")
+            except (discord.Forbidden, discord.HTTPException) as e:
+                logger.debug(f"Impossible d'appliquer le timeout: {e}")
+
+            # 3. Supprimer le message
+            try:
+                await message.delete()
+                logger.info(f"Message scam supprimé de {member.display_name}")
+            except discord.Forbidden:
+                logger.error(f"Pas de permission pour supprimer le message scam de {member.display_name}")
+            except discord.NotFound:
+                pass  # Déjà supprimé
+
+            # 4. Enregistrer le ban en base de données
+            internal_server_id = await ModerationService.get_internal_server_id(guild.id)
 
             await ModerationService.add_ban(
                 user_id=member.id,
@@ -732,41 +768,45 @@ class AutoMod(commands.Cog):
                 server_id=internal_server_id
             )
 
-            # Appliquer le ban sur tous les serveurs
+            # 5. Appliquer le ban sur tous les serveurs
             await self._apply_ban_all_guilds(member.id, "Scam détecté (auto-modération)")
 
             logger.info(f"Utilisateur {member.display_name} banni pour scam")
 
+            # 6. Envoyer un DM à l'utilisateur
+            try:
+                embed = discord.Embed(
+                    title="📛 Vous avez été banni(e) automatiquement",
+                    description="Votre message a été détecté comme un scam.",
+                    color=discord.Color.red(),
+                    timestamp=datetime.now(timezone.utc)
+                )
+                embed.add_field(name="Serveur", value=guild.name, inline=False)
+                embed.add_field(name="Raison", value="Message de scam détecté", inline=False)
+                embed.add_field(
+                    name="Contestation",
+                    value="Si vous pensez qu'il s'agit d'une erreur, contactez un administrateur.",
+                    inline=False
+                )
+                await member.send(embed=embed)
+            except discord.Forbidden:
+                pass  # DMs fermés
+
+            # 7. Log dans le salon de modération
+            await self._log_automod_action(
+                guild=guild,
+                action_type="scam",
+                user=member,
+                content=message.content,
+                channel=message.channel
+            )
+
         except Exception as e:
             logger.exception(f"Erreur lors du ban pour scam: {e}")
-
-        # 3. Envoyer un DM à l'utilisateur
-        try:
-            embed = discord.Embed(
-                title="📛 Vous avez été banni(e) automatiquement",
-                description="Votre message a été détecté comme un scam.",
-                color=discord.Color.red(),
-                timestamp=datetime.now(timezone.utc)
-            )
-            embed.add_field(name="Serveur", value=guild.name, inline=False)
-            embed.add_field(name="Raison", value="Message de scam détecté", inline=False)
-            embed.add_field(
-                name="Contestation",
-                value="Si vous pensez qu'il s'agit d'une erreur, contactez un administrateur.",
-                inline=False
-            )
-            await member.send(embed=embed)
-        except discord.Forbidden:
-            pass  # DMs fermés
-
-        # 4. Log dans le salon de modération
-        await self._log_automod_action(
-            guild=guild,
-            action_type="scam",
-            user=member,
-            content=message.content,
-            channel=message.channel
-        )
+        finally:
+            # Retirer l'utilisateur de la liste après un délai de sécurité
+            await asyncio.sleep(5)
+            self.banning_users.discard(member.id)
 
     async def _apply_ban_all_guilds(self, user_id: int, reason: str) -> None:
         """Applique le rôle ban sur tous les serveurs."""
@@ -983,6 +1023,14 @@ class AutoMod(commands.Cog):
 
         # Ignorer les bots
         if message.author.bot:
+            return
+
+        # Ignorer les utilisateurs en cours de bannissement (évite double exécution)
+        if message.author.id in self.banning_users:
+            try:
+                await message.delete()
+            except (discord.Forbidden, discord.NotFound):
+                pass
             return
 
         # Récupérer la configuration du serveur
