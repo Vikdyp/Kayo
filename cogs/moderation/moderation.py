@@ -10,7 +10,7 @@ from typing import Optional
 from cogs.moderation.services.moderation_service import ModerationService
 from utils.confirmation_view import ConfirmationView
 
-logger = logging.getLogger("moderation")
+logger = logging.getLogger(__name__)
 
 class Moderation(commands.Cog):
     """Cog pour gérer les bannissements, débannissements, avertissements et vérifications."""

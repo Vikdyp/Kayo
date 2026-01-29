@@ -9,7 +9,7 @@ import random
 
 from cogs.utilities.data_manager import DataManager
 
-logger = logging.getLogger("discord.economy")
+logger = logging.getLogger(__name__)
 
 
 class BuyItemView(discord.ui.View):

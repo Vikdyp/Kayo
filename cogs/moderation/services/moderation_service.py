@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from typing import Dict, Optional, List
 
-logger = logging.getLogger("moderation_service")
+logger = logging.getLogger(__name__)
 
 class ModerationService:
     @staticmethod

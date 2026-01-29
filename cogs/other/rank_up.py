@@ -7,7 +7,7 @@ import logging
 from cogs.configuration.services.role_service import ServerRoleService
 from cogs.configuration.services.channel_service import ServerChannelService
 
-logger = logging.getLogger('cogs.rank_up')
+logger = logging.getLogger(__name__)
 
 # Ordre des rangs (1 = meilleur, 9 = moins bon)
 RANK_ORDER = {

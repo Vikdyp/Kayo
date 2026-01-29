@@ -8,7 +8,7 @@ from cogs.role_management.services.role_combination_service import RoleCombinati
 import logging
 import asyncio
 
-logger = logging.getLogger("role_combination")
+logger = logging.getLogger(__name__)
 
 class RoleCombination(commands.Cog):
     """Cog pour gérer les combinaisons de rôles."""

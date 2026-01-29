@@ -6,7 +6,7 @@ from discord.ext import commands, tasks
 import discord
 from cogs.configuration.services.channel_service import ServerChannelService
 
-logger = logging.getLogger("vocal.creator")
+logger = logging.getLogger(__name__)
 
 # ID de la catégorie pour les salons vocaux temporaires
 TEMP_VOCAL_CATEGORY_ACTION = "temp_vocal_category"

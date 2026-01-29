@@ -7,7 +7,7 @@ import discord
 from utils.database import database  # Module d'accès à la BDD
 from cogs.configuration.services.channel_service import ServerChannelService
 
-logger = logging.getLogger("tournament.service")
+logger = logging.getLogger(__name__)
 
 async def get_server_id(guild_id: int) -> Optional[int]:
     """Récupère l'ID interne du serveur depuis la table serveur_id."""

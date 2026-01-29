@@ -10,7 +10,7 @@ from utils.base import (
 )
 import logging
 
-logger = logging.getLogger("accueil.services")
+logger = logging.getLogger(__name__)
 
 def get_local_datetime():
     paris_tz = ZoneInfo("Europe/Paris")

@@ -7,7 +7,7 @@ from datetime import date
 from typing import Any, Optional, List, Dict, Tuple
 from cogs.ranking.services.valorant_service import get_puuid, get_mmr_history, get_stored_mmr_history, RateLimitException
 
-logger = logging.getLogger('tracker_service')
+logger = logging.getLogger(__name__)
 
 class ValorantService:
     @staticmethod

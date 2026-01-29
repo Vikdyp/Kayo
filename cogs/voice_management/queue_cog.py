@@ -6,7 +6,7 @@ import logging
 import random
 import string
 from contextlib import asynccontextmanager
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 
 import discord
 from discord.ext import commands, tasks
@@ -27,23 +27,48 @@ class MatchmakingQueue(commands.Cog):
         self.bot = bot
         # Dictionnaire pour stocker les messages persistants de la queue par guild : {guild_id: (channel_id, message_id)}
         self.queue_status_embed_message: Dict[int, Tuple[int, int]] = {}
-        self.lock = asyncio.Lock()
+
+        # Locks par serveur pour permettre le traitement parallèle entre serveurs
+        self._server_locks: Dict[int, asyncio.Lock] = {}
+        self._locks_lock = asyncio.Lock()  # Meta-lock pour créer les locks de serveur
+
         self.process_queue_task_loop.start()   # démarrage unique de la boucle principale
         self.stale_task.start()               # démarrage de la tâche de stale
 
-        # Compteurs pour suivre le nombre de joueurs par rôle
-        self.role_counters = {
-            "duelist": 0,
-            "controller": 0,
-            "sentinel": 0,
-            "initiator": 0,
-            "fill": 0
-        }
-        # self.total_teams_created = 0  # si besoin, sinon supprimer
+        # Compteurs pour suivre le nombre de joueurs par rôle (par serveur)
+        self.role_counters: Dict[int, Dict[str, int]] = {}  # {server_id: {role: count}}
 
     def cog_unload(self) -> None:
         self.process_queue_task_loop.cancel()
         self.stale_task.cancel()
+
+    def _get_role_counters(self, server_id: int) -> Dict[str, int]:
+        """Récupère ou initialise les compteurs de rôles pour un serveur."""
+        if server_id not in self.role_counters:
+            self.role_counters[server_id] = {
+                "duelist": 0,
+                "controller": 0,
+                "sentinel": 0,
+                "initiator": 0,
+                "fill": 0
+            }
+        return self.role_counters[server_id]
+
+    async def get_server_lock(self, server_id: int) -> asyncio.Lock:
+        """Récupère ou crée un lock pour un serveur spécifique."""
+        if server_id not in self._server_locks:
+            async with self._locks_lock:
+                # Double-check pattern pour éviter les race conditions
+                if server_id not in self._server_locks:
+                    self._server_locks[server_id] = asyncio.Lock()
+        return self._server_locks[server_id]
+
+    @asynccontextmanager
+    async def server_queue_lock(self, server_id: int):
+        """Context manager pour verrouiller la queue d'un serveur spécifique."""
+        lock = await self.get_server_lock(server_id)
+        async with lock:
+            yield
 
 
     @tasks.loop(minutes=1)
@@ -84,8 +109,10 @@ class MatchmakingQueue(commands.Cog):
                         await user.send(
                             "⏰ Votre inscription à la queue a été supprimée car vous étiez en attente depuis plus de 10 minutes."
                         )
-                    except:
-                        logger.warning(f"Impossible de DM pour suppression stale: {user_id}")
+                    except discord.Forbidden:
+                        logger.debug(f"DMs désactivés pour {user_id} (suppression stale)")
+                    except discord.HTTPException as e:
+                        logger.warning(f"Erreur HTTP DM suppression stale {user_id}: {e}")
 
             elif age >= mins_any and entry["team_size"] != 0:
                 # Passage en "any"
@@ -97,8 +124,10 @@ class MatchmakingQueue(commands.Cog):
                             "🔄 Votre préférence de taille a été passée à **N'importe** "
                             "car vous étiez en attente depuis plus de 5 minutes."
                         )
-                    except:
-                        logger.warning(f"Impossible de DM pour conversion any: {user_id}")
+                    except discord.Forbidden:
+                        logger.debug(f"DMs désactivés pour {user_id} (conversion any)")
+                    except discord.HTTPException as e:
+                        logger.warning(f"Erreur HTTP DM conversion any {user_id}: {e}")
 
         # Rafraîchir l'embed uniquement si on a modifié au moins une entrée
         if to_update:
@@ -184,23 +213,43 @@ class MatchmakingQueue(commands.Cog):
     @tasks.loop(seconds=15)
     async def process_queue_task_loop(self) -> None:
         """
-        Boucle qui tente de former des groupes toutes les 15 secondes en utilisant une approche gloutonne.
+        Boucle qui tente de former des groupes toutes les 15 secondes.
+        Traite chaque serveur en parallèle avec son propre lock.
         """
-        async with self.queue_lock():
-            entries = await MatchmakingService.get_queue_entries()
+        # Récupère toutes les entrées pour identifier les serveurs actifs
+        all_entries = await MatchmakingService.get_queue_entries()
+        if not all_entries:
+            logger.debug("Queue vide.")
+            return
+
+        # Identifier les serveurs uniques avec des entrées en queue
+        server_ids = set(e["server_id"] for e in all_entries)
+
+        # Traiter chaque serveur en parallèle
+        tasks_list = [
+            self._process_server_queue(server_id)
+            for server_id in server_ids
+        ]
+        await asyncio.gather(*tasks_list, return_exceptions=True)
+
+    async def _process_server_queue(self, server_id: int) -> None:
+        """
+        Traite la queue d'un serveur spécifique avec son propre lock.
+        """
+        async with self.server_queue_lock(server_id):
+            entries = await MatchmakingService.get_queue_entries(server_id)
             if not entries:
-                logger.debug("Queue vide.")
                 return
 
             # Regroupement par (langue, region, platform, team_size)
             grouped = self.group_entries(entries)
 
-            # Ordre de priorité : -1 (n'importe) puis 5, 3, 2
+            # Ordre de priorité : 5, 3, 2, puis -1 (n'importe)
             team_size_priority = [5, 3, 2, -1]
 
             for desired_size in team_size_priority:
                 for group_key, group_entries in list(grouped.items()):
-                    server_id, lang, region, platf, tsize = group_key
+                    _, lang, region, platf, tsize = group_key
 
                     if tsize == -1:
                         # Pour les entrées génériques, essayer différentes tailles
@@ -210,13 +259,8 @@ class MatchmakingQueue(commands.Cog):
                         await self.form_groups_greedy(group_entries, desired_size, server_id)
 
                     # Mise à jour de la liste des entrées après modification
-                    entries = await MatchmakingService.get_queue_entries()
+                    entries = await MatchmakingService.get_queue_entries(server_id)
                     grouped = self.group_entries(entries)
-
-    @asynccontextmanager
-    async def queue_lock(self):
-        async with self.lock:
-            yield
 
     # ------------------------------------------------
     # Regroupement des entrées
@@ -308,11 +352,12 @@ class MatchmakingQueue(commands.Cog):
         await self.create_voice_channel(group_members, server_id)
 
         # 3. Pour chaque bloc : décrémenter les compteurs de rôles puis retirer du queue
+        role_counters = self._get_role_counters(server_id)
         for b in blocks:
             # a) Décrémentation des compteurs pour les rôles de ce bloc
             for r in b.get("roles", []):
-                if r in self.role_counters:
-                    self.role_counters[r] = max(0, self.role_counters[r] - 1)
+                if r in role_counters:
+                    role_counters[r] = max(0, role_counters[r] - 1)
 
             # b) Suppression du bloc dans la DB
             tmids = b.get("team_member_ids")
@@ -329,12 +374,18 @@ class MatchmakingQueue(commands.Cog):
 
     @commands.command(name="role_counters", help="Affiche les compteurs de rôles actuels dans la queue.")
     @commands.has_permissions(administrator=True)
-    async def role_counters(self, ctx: commands.Context) -> None:
+    async def show_role_counters(self, ctx: commands.Context) -> None:
         """
         Affiche le nombre actuel de joueurs en attente par rôle.
         Réservé aux administrateurs.
         """
-        if not self.role_counters:
+        server_id = await self._get_server_id(ctx.guild.id)
+        if not server_id:
+            await ctx.send("Serveur non configuré.")
+            return
+
+        role_counters = self._get_role_counters(server_id)
+        if not role_counters:
             await ctx.send("Aucun compteur de rôles n'est configuré.")
             return
 
@@ -343,7 +394,7 @@ class MatchmakingQueue(commands.Cog):
             title="🔢 Compteurs de Rôles Actuels",
             color=discord.Color.blue()
         )
-        for role, count in self.role_counters.items():
+        for role, count in role_counters.items():
             embed.add_field(name=role.capitalize(), value=str(count), inline=True)
 
         await ctx.send(embed=embed)
@@ -478,9 +529,13 @@ class MatchmakingQueue(commands.Cog):
         embed.add_field(name="Équipes en attente", value=str(total_team), inline=True)
         embed.add_field(name="Joueurs totaux", value=str(total_entries), inline=True)
 
-        if self.role_counters:
-            priority_role = min(self.role_counters, key=self.role_counters.get)
-            embed.add_field(name="Rôle Prioritaire", value=priority_role.capitalize(), inline=False)
+        if server_id:
+            role_counters = self._get_role_counters(server_id)
+            if role_counters:
+                priority_role = min(role_counters, key=role_counters.get)
+                embed.add_field(name="Rôle Prioritaire", value=priority_role.capitalize(), inline=False)
+            else:
+                embed.add_field(name="Rôle Prioritaire", value="N/A", inline=False)
         else:
             embed.add_field(name="Rôle Prioritaire", value="N/A", inline=False)
 
@@ -511,10 +566,11 @@ class MatchmakingQueue(commands.Cog):
     # ------------------------------------------------
 
     async def remove_from_queue(self, user: discord.Member) -> None:
-        async with self.queue_lock():
-            server_id = await self._get_server_id(user.guild.id)
-            if not server_id:
-                raise ValueError("Serveur introuvable.")
+        server_id = await self._get_server_id(user.guild.id)
+        if not server_id:
+            raise ValueError("Serveur introuvable.")
+
+        async with self.server_queue_lock(server_id):
             # Récupérer les rôles avant suppression
             roles = await MatchmakingService.get_roles_for_discord_member(server_id, user.id) or []
 
@@ -523,9 +579,10 @@ class MatchmakingQueue(commands.Cog):
                 raise ValueError("Vous n'êtes pas dans la queue.")
 
             # Décrémentation des compteurs de rôles
+            role_counters = self._get_role_counters(server_id)
             for r in roles:
-                if r in self.role_counters:
-                    self.role_counters[r] = max(0, self.role_counters[r] - 1)
+                if r in role_counters:
+                    role_counters[r] = max(0, role_counters[r] - 1)
 
             await self.update_queue_status_embed(user.guild.id)
             logger.info(f"{user.display_name} a été retiré de la queue.")
@@ -534,10 +591,11 @@ class MatchmakingQueue(commands.Cog):
         """
         Si le membre est leader d'une équipe, retire l'équipe entière.
         """
-        async with self.queue_lock():
-            server_id = await self._get_server_id(member.guild.id)
-            if not server_id:
-                return
+        server_id = await self._get_server_id(member.guild.id)
+        if not server_id:
+            return
+
+        async with self.server_queue_lock(server_id):
             team_code = await MatchmakingService.is_user_leader_of_team(member.id, server_id)
             if team_code:
                 team_members = await MatchmakingService.get_team_members(team_code, server_id)
@@ -560,10 +618,11 @@ class MatchmakingQueue(commands.Cog):
         elo: int,
         roles: List[str]
     ) -> None:
-        async with self.queue_lock():
-            server_id = await self._get_server_id(user.guild.id)
-            if not server_id:
-                raise ValueError("Serveur introuvable.")
+        server_id = await self._get_server_id(user.guild.id)
+        if not server_id:
+            raise ValueError("Serveur introuvable.")
+
+        async with self.server_queue_lock(server_id):
             if await MatchmakingService.is_user_leader_of_team(user.id, server_id):
                 raise ValueError("Déjà leader d'une équipe, impossible de rejoindre en solo.")
 
@@ -583,9 +642,10 @@ class MatchmakingQueue(commands.Cog):
                 roles=roles
             )
 
+            role_counters = self._get_role_counters(server_id)
             for r in roles:
-                if r in self.role_counters:
-                    self.role_counters[r] += 1
+                if r in role_counters:
+                    role_counters[r] += 1
 
             await self.update_queue_status_embed(user.guild.id)
             logger.info(f"[Queue] Solo ajouté : {user.display_name} avec rôles {roles}")
@@ -607,10 +667,11 @@ class MatchmakingQueue(commands.Cog):
         """
         Ajoute une équipe partielle (duo, trio ou quatuor) dans la queue.
         """
-        async with self.queue_lock():
-            server_id = await self._get_server_id(leader.guild.id)
-            if not server_id:
-                raise ValueError("Serveur introuvable.")
+        server_id = await self._get_server_id(leader.guild.id)
+        if not server_id:
+            raise ValueError("Serveur introuvable.")
+
+        async with self.server_queue_lock(server_id):
             for m in members:
                 if await MatchmakingService.is_user_leader_of_team(m.id, server_id):
                     raise ValueError(f"{m.display_name} est déjà leader d'une autre équipe.")
@@ -656,62 +717,64 @@ class MatchmakingQueue(commands.Cog):
         server_id = await self._get_server_id(leader.guild.id)
         if not server_id:
             raise ValueError("Serveur introuvable.")
-        code = await MatchmakingService.is_user_leader_of_team(leader.id, server_id)
-        if not code:
-            raise ValueError("Vous n'êtes pas le leader d'une équipe.")
 
-        member_ids = await MatchmakingService.get_team_members(code, server_id)
-        if not member_ids:
-            raise ValueError("Votre équipe est vide. Impossible de rejoindre la queue.")
+        async with self.server_queue_lock(server_id):
+            code = await MatchmakingService.is_user_leader_of_team(leader.id, server_id)
+            if not code:
+                raise ValueError("Vous n'êtes pas le leader d'une équipe.")
 
-        total_elo = 0
-        elo_high = -999999
-        elo_low = 999999
-        valid_members = []
-        for mid in member_ids:
-            user_info = await MatchmakingService.get_user_info(mid)
-            if not user_info:
-                raise ValueError(f"Le membre {mid} n'a pas d'information Valorant.")
-            e = user_info["elo"]
-            total_elo += e
-            if e > elo_high:
-                elo_high = e
-            if e < elo_low:
-                elo_low = e
-            valid_members.append(mid)
+            member_ids = await MatchmakingService.get_team_members(code, server_id)
+            if not member_ids:
+                raise ValueError("Votre équipe est vide. Impossible de rejoindre la queue.")
 
-        if not valid_members:
-            raise ValueError("Aucun membre valide dans l'équipe.")
+            total_elo = 0
+            elo_high = -999999
+            elo_low = 999999
+            valid_members = []
+            for mid in member_ids:
+                user_info = await MatchmakingService.get_user_info(mid)
+                if not user_info:
+                    raise ValueError(f"Le membre {mid} n'a pas d'information Valorant.")
+                e = user_info["elo"]
+                total_elo += e
+                if e > elo_high:
+                    elo_high = e
+                if e < elo_low:
+                    elo_low = e
+                valid_members.append(mid)
 
-        elo_moy = total_elo // len(valid_members)
+            if not valid_members:
+                raise ValueError("Aucun membre valide dans l'équipe.")
 
-        entry_type = len(valid_members)
-        await MatchmakingService.add_entry_to_queue(
-            server_id=server_id,
-            entry_type=entry_type,
-            discord_member_id=leader.id,
-            team_member_ids=valid_members,
-            langue=langue,
-            region=region,
-            platform=platform,
-            team_size=desired_size,
-            mmr_extended=mmr_extended,
-            elo=elo_moy,
-            elo_high=elo_high,
-            elo_low=elo_low,
-            roles=roles
-        )
+            elo_moy = total_elo // len(valid_members)
 
-        for r in roles:
-            if r in self.role_counters:
-                self.role_counters[r] += 1
+            entry_type = len(valid_members)
+            await MatchmakingService.add_entry_to_queue(
+                server_id=server_id,
+                entry_type=entry_type,
+                discord_member_id=leader.id,
+                team_member_ids=valid_members,
+                langue=langue,
+                region=region,
+                platform=platform,
+                team_size=desired_size,
+                mmr_extended=mmr_extended,
+                elo=elo_moy,
+                elo_high=elo_high,
+                elo_low=elo_low,
+                roles=roles
+            )
 
-        await self.update_queue_status_embed(leader.guild.id)
-        self.bot.logger.info(f"[Queue] Equipe ajoutée par {leader.display_name} avec rôles {roles}")
-        logger.info(
-            f"[Queue] Equipe '{code}' ajoutée en queue : entry_type={entry_type}, desired_size={desired_size}, "
-            f"mmr_extended={mmr_extended}, elo_moy={elo_moy}, elo_high={elo_high}, elo_low={elo_low}, roles={roles}."
-        )
+            role_counters = self._get_role_counters(server_id)
+            for r in roles:
+                if r in role_counters:
+                    role_counters[r] += 1
+
+            await self.update_queue_status_embed(leader.guild.id)
+            logger.info(
+                f"[Queue] Equipe '{code}' ajoutée en queue : entry_type={entry_type}, desired_size={desired_size}, "
+                f"mmr_extended={mmr_extended}, elo_moy={elo_moy}, elo_high={elo_high}, elo_low={elo_low}, roles={roles}."
+            )
 
 
 # ------------------------------------------------

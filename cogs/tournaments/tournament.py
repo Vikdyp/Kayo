@@ -15,7 +15,7 @@ from .service.tournament_service import (
     get_active_tournament
 )
 
-logger = logging.getLogger("tournament")
+logger = logging.getLogger(__name__)
 
 class TournamentCog(commands.Cog):
     def __init__(self, bot: commands.Bot):

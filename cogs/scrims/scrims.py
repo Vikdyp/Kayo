@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo  # Pour le fuseau Europe/Paris
 from cogs.scrims.service.scrims_services import ScrimService
 from utils.checks import rules_interaction_check
 
-logger = logging.getLogger("scrims")
+logger = logging.getLogger(__name__)
 
 class ScrimCog(commands.Cog):
     def __init__(self, bot: commands.Bot):

@@ -18,7 +18,7 @@ import numpy as np
 from cogs.ranking.services.mmr_tracker_service import ValorantService
 from utils.checks import valorant_link_required
 
-logger = logging.getLogger('valorant_mmr')
+logger = logging.getLogger(__name__)
 
 class MMRTracker(commands.Cog):
     """Suivi automatique du MMR toutes les 5 minutes + gestion via une commande unique."""

@@ -3,7 +3,7 @@ from discord.ext import commands
 from cogs.accueil.services.accueil_services import get_welcome_channel_id, get_channel_ids
 import logging
 
-logger = logging.getLogger("accueil.accueil")
+logger = logging.getLogger(__name__)
 
 class WelcomeCog(commands.Cog):
     """Cog pour gérer les messages de bienvenue des nouveaux membres."""

@@ -15,7 +15,7 @@ from .service.profile_service import (
     set_user_profile
 )
 
-logger = logging.getLogger("discord.reputation")
+logger = logging.getLogger(__name__)
 
 # -----------------------------
 # Fonctions d'aide

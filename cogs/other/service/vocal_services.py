@@ -3,7 +3,7 @@ import logging
 from typing import Optional, Tuple
 from utils.database import database  # Assurez-vous que ce module est correctement configuré
 
-logger = logging.getLogger("vocal.services")
+logger = logging.getLogger(__name__)
 
 async def get_server_id(guild_id: int) -> Optional[int]:
     query = """

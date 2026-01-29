@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 from utils.database import database  # Module d'accès à la BDD
 
-logger = logging.getLogger("scrims.services")
+logger = logging.getLogger(__name__)
 
 class SimpleCache:
     def __init__(self, ttl=300):

@@ -8,7 +8,7 @@ from utils.base import (
     delete_persistent_message,
 )
 
-logger = logging.getLogger("game_role_service")
+logger = logging.getLogger(__name__)
 
 
 

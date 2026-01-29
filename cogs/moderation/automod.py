@@ -13,7 +13,7 @@ from cogs.moderation.services.moderation_service import ModerationService
 from cogs.moderation.services.automod_service import AutomodService
 from cogs.configuration.services.channel_service import ServerChannelService
 
-logger = logging.getLogger("automod")
+logger = logging.getLogger(__name__)
 
 
 # Patterns de scam connus

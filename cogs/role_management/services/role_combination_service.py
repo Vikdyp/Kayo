@@ -4,7 +4,7 @@ from typing import List, Dict, Optional
 from utils.database import database
 import logging
 
-logger = logging.getLogger("role_combination_service")
+logger = logging.getLogger(__name__)
 
 async def get_server_id(guild_id: int) -> Optional[int]:
     query = "SELECT id FROM serveur_id WHERE guild_id = $1;"

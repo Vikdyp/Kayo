@@ -4,7 +4,7 @@ import logging
 from typing import Optional
 from utils.database import database
 
-logger = logging.getLogger('cogs.moderation.services.clean_service')
+logger = logging.getLogger(__name__)
 
 
 class CleanService:

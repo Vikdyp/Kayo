@@ -5,7 +5,7 @@ import random
 import logging
 from utils.database import database  # Assurez-vous que le chemin est correct
 
-logger = logging.getLogger("event_cog")
+logger = logging.getLogger(__name__)
 
 # Constantes / Configuration
 MIN_INVITES_REQUIRED = 1    # Nombre minimum d'invitations nécessaires pour participer

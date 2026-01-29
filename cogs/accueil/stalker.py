@@ -11,7 +11,7 @@ from typing import Optional, Dict
 
 from cogs.accueil.services import accueil_services
 
-logger = logging.getLogger("accueil.stalker")
+logger = logging.getLogger(__name__)
 
 STATS_EMBED_ACTIONS = ("stat_embed", "stats_embed")
 

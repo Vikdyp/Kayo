@@ -8,7 +8,7 @@ from typing import Dict, Optional, List
 
 from cogs.configuration.services.role_service import ServerRoleService
 
-logger = logging.getLogger('roles_configuration')
+logger = logging.getLogger(__name__)
 
 class RolesConfiguration(commands.Cog):
     """Cog pour gérer la configuration des rôles."""

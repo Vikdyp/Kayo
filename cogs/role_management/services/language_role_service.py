@@ -10,7 +10,7 @@ from utils.base import (
 )
 from typing import Optional, Dict, List
 
-logger = logging.getLogger("RoleService")
+logger = logging.getLogger(__name__)
 
 
 class RoleService:

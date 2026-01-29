@@ -3,7 +3,7 @@ from typing import Optional
 
 from utils.database import database
 
-logger = logging.getLogger("valorant.shop_service")
+logger = logging.getLogger(__name__)
 
 ACTION_NAME = "valorant_shop"
 

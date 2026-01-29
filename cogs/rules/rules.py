@@ -12,7 +12,7 @@ from cogs.rules.service.rules_services import (
     accept_rules_user  
 )
 
-logger = logging.getLogger("rules")
+logger = logging.getLogger(__name__)
 
 class AcceptRulesView(discord.ui.View):
     def __init__(self, cog):

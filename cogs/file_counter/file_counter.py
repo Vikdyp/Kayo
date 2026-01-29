@@ -4,7 +4,7 @@ import logging
 from typing import Optional
 from cogs.file_counter.services.file_counter_service import FileCounterService
 
-logger = logging.getLogger("cogs.file_counter")
+logger = logging.getLogger(__name__)
 
 class CounterView(discord.ui.View):
     def __init__(self, server_db_id: int, channel_id: int, message_id: int, ajouter_count: int, terminer_count: int):

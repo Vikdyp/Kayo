@@ -3,7 +3,7 @@ from datetime import date
 from typing import Dict, Tuple
 from utils.database import database
 
-logger = logging.getLogger("reputation")
+logger = logging.getLogger(__name__)
 
 async def get_internal_id(discord_id: int) -> int:
     query_select = "SELECT id FROM user_id WHERE discord_id = $1;"

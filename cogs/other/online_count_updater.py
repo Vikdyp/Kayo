@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from cogs.configuration.services.role_service import ServerRoleService
 from cogs.configuration.services.channel_service import ServerChannelService
 
-logger = logging.getLogger("rank_updater")
+logger = logging.getLogger(__name__)
 
 # Noms des rangs Valorant
 RANK_NAMES = {"fer", "bronze", "argent", "or", "platine", "diamant", "ascendant", "immortel", "radiant"}

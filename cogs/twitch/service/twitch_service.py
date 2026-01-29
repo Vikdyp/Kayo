@@ -5,7 +5,7 @@ from typing import List, Optional
 
 from utils.database import database
 
-logger = logging.getLogger("twitch.service")
+logger = logging.getLogger(__name__)
 
 
 class StreamerService:

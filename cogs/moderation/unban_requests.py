@@ -10,7 +10,7 @@ from datetime import datetime
 from cogs.moderation.services.moderation_service import ModerationService
 from utils.database import database
 
-logger = logging.getLogger("deban_manager")
+logger = logging.getLogger(__name__)
 
 # Vue pour l'embed principal de demande de débannissement
 class DebanManagerView(View):

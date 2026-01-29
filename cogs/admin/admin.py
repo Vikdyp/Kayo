@@ -7,7 +7,7 @@ from bot import cog_paths
 
 from utils.database import database
 
-logger = logging.getLogger('admin')
+logger = logging.getLogger(__name__)
 
 class AdminSync(commands.Cog):
     """Cog pour gérer la synchronisation et le rechargement des cogs."""

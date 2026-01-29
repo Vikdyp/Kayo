@@ -6,7 +6,7 @@ from typing import Optional, Dict
 from utils.database import database
 from .reputation_service import get_internal_id
 
-logger = logging.getLogger("profil")
+logger = logging.getLogger(__name__)
 
 # Regex pour valider le lien tracker
 TRACKER_REGEX = r"^https://tracker\.gg/valorant/profile/riot/.+/overview$"

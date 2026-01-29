@@ -11,7 +11,7 @@ from utils.confirmation_view import ConfirmationView
 from cogs.moderation.services.clean_service import CleanService
 from utils.database import database
 
-logger = logging.getLogger('clean')
+logger = logging.getLogger(__name__)
 
 
 def is_admin():

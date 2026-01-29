@@ -43,7 +43,7 @@ class QuoiResponder(commands.Cog):
         query = "SELECT id FROM serveur_id WHERE guild_id = $1;"
         internal_id = await database.fetchval(query, guild.id)
         if not internal_id:
-            logger = logging.getLogger("quoicoubeh")
+            logger = logging.getLogger(__name__)
             logger.error(f"Serveur non trouve pour guild_id {guild.id}.")
         return internal_id
 

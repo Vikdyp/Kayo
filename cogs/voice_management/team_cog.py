@@ -6,7 +6,7 @@ from discord.ext import commands, tasks
 import logging
 import random
 import string
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Literal
 import datetime
 import asyncio
 
@@ -77,12 +77,14 @@ async def get_voice_category(guild: discord.Guild) -> Optional[discord.CategoryC
 
 class TeamManager(commands.Cog):
     """
-    Gère la création d'équipe via /create_team, /join_team,
-    l'expulsion via /kick_member, et la suppression avec /delete_team.
+    Gère la création d'équipe via le groupe /team (create, join, leave, kick, delete, list, info).
 
     Chaque équipe dispose d'un code unique et est gérée via la table 'teams'
     et 'team_members'. Dès que l'équipe atteint 5 membres, un salon vocal est créé.
     """
+
+    # Groupe de commandes /team
+    team_group = app_commands.Group(name="team", description="Gestion des équipes de matchmaking")
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
@@ -149,17 +151,17 @@ class TeamManager(commands.Cog):
             logger.error(f"Erreur lors de la suppression des équipes : {e}")
 
     # ------------------------------------------------
-    # Commandes
+    # Commandes du groupe /team
     # ------------------------------------------------
 
-    @app_commands.command(name="create_team", description="Créer une équipe (même région que le leader).")
+    @team_group.command(name="create", description="Créer une équipe (même région que le leader).")
     @valorant_link_required()
     @app_commands.describe(visibility="Définissez la visibilité de l'équipe.")
-    @app_commands.choices(visibility=[
-        app_commands.Choice(name="Public", value="public"),
-        app_commands.Choice(name="Privé",  value="private")
-    ])
-    async def create_team(self, interaction: discord.Interaction, visibility: app_commands.Choice[str]) -> None:
+    async def team_create(
+        self,
+        interaction: discord.Interaction,
+        visibility: Literal["public", "private"] = "public"
+    ) -> None:
         """
         Crée une équipe et un thread dans le forum. Si l'équipe est publique, un code secret est généré.
         """
@@ -187,22 +189,23 @@ class TeamManager(commands.Cog):
             await interaction.edit_original_response(content="Forum channel invalide.")
             return
 
-        if visibility.value == "public":
+        visibility_display = "Public" if visibility == "public" else "Privé"
+        if visibility == "public":
             content: str = (
                 f"Équipe créée par {leader.mention}\n"
                 f"Code secret : ||{code}||\n"
                 f"Région Leader : {leader_info['region']}\n"
-                f"Visibilité : {visibility.name.capitalize()}"
+                f"Visibilité : {visibility_display}"
             )
         else:
             content = (
                 f"Équipe créée par {leader.mention}\n"
                 f"Région Leader : {leader_info['region']}\n"
-                f"Visibilité : {visibility.name.capitalize()}"
+                f"Visibilité : {visibility_display}"
             )
 
         from .team_views import TeamForumJoinButtonView, TeamForumPrivateView
-        view = TeamForumJoinButtonView(self, code) if visibility.value == "public" else TeamForumPrivateView(self, code)
+        view = TeamForumJoinButtonView(self, code) if visibility == "public" else TeamForumPrivateView(self, code)
 
         try:
             post = await forum_channel.create_thread(
@@ -222,7 +225,7 @@ class TeamManager(commands.Cog):
             leader.id,
             forum_channel.id,
             thread_id,
-            visibility.value,
+            visibility,
             created_at,
             server_id,
         )
@@ -235,17 +238,18 @@ class TeamManager(commands.Cog):
             await interaction.edit_original_response(content="Erreur lors de l'ajout du leader à l'équipe.")
             return
 
-        if visibility.value == "public":
-            await real_thread.send(f"Code secret : **{code}**\nRejoignez l'équipe avec `/join_team {code}`.")
+        if visibility == "public":
+            await real_thread.send(f"Code secret : **{code}**\nRejoignez l'équipe avec `/team join {code}`.")
 
         await interaction.edit_original_response(
             content=(f"Équipe créée !\nPost : {real_thread.jump_url}\nCode : {code}\n"
-                     f"Visibilité : {visibility.name.capitalize()}")
+                     f"Visibilité : {visibility_display}")
         )
 
-    @app_commands.command(name="join_team", description="Rejoindre une équipe via son code.")
+    @team_group.command(name="join", description="Rejoindre une équipe via son code.")
     @valorant_link_required()
-    async def join_team(self, interaction: discord.Interaction, code: str) -> None:
+    @app_commands.describe(code="Le code de l'équipe à rejoindre.")
+    async def team_join(self, interaction: discord.Interaction, code: str) -> None:
         """
         Permet à un utilisateur de rejoindre une équipe existante si celle-ci n'est pas complète.
         """
@@ -292,18 +296,78 @@ class TeamManager(commands.Cog):
             if len(members) == 5:
                 await self.create_voice_channel_and_invite(team)
 
-    @app_commands.command(name="kick_member", description="Expulser un membre (leader seulement).")
-    async def kick_member(self, interaction: discord.Interaction, code: str, member: discord.Member) -> None:
+    @team_group.command(name="leave", description="Quitter votre équipe actuelle.")
+    async def team_leave(self, interaction: discord.Interaction) -> None:
         """
-        Permet au leader d'expulser un membre de l'équipe.
+        Permet à un utilisateur de quitter son équipe actuelle.
+        Le leader ne peut pas quitter sans supprimer l'équipe.
         """
         await interaction.response.defer(ephemeral=True)
-        code = code.strip().upper()
 
         server_id = await self._get_server_id(interaction.guild.id)
         if not server_id:
             await interaction.edit_original_response(content="Serveur introuvable.")
             return
+
+        # Trouver l'équipe de l'utilisateur
+        user_team = await MatchmakingService.get_user_team(interaction.user.id, server_id)
+        if not user_team:
+            await interaction.edit_original_response(content="Vous n'êtes membre d'aucune équipe.")
+            return
+
+        code = user_team["code"]
+
+        # Le leader ne peut pas quitter, il doit supprimer l'équipe
+        if interaction.user.id == user_team["leader_id"]:
+            await interaction.edit_original_response(
+                content="En tant que leader, vous ne pouvez pas quitter l'équipe. "
+                        f"Utilisez `/team delete {code}` pour supprimer l'équipe."
+            )
+            return
+
+        lock = self.get_team_lock(code)
+        async with lock:
+            if not await MatchmakingService.remove_member_from_team(code, interaction.user.id, server_id):
+                await interaction.edit_original_response(content="Erreur lors du retrait de l'équipe.")
+                return
+
+            await self.update_team_thread(code, server_id)
+            await interaction.edit_original_response(content="Vous avez quitté l'équipe.")
+
+    @team_group.command(name="kick", description="Expulser un membre (leader seulement).")
+    @app_commands.describe(
+        member="Le membre à expulser.",
+        code="Le code de l'équipe (optionnel si vous êtes leader d'une seule équipe)."
+    )
+    async def team_kick(
+        self,
+        interaction: discord.Interaction,
+        member: discord.Member,
+        code: Optional[str] = None
+    ) -> None:
+        """
+        Permet au leader d'expulser un membre de l'équipe.
+        """
+        await interaction.response.defer(ephemeral=True)
+
+        server_id = await self._get_server_id(interaction.guild.id)
+        if not server_id:
+            await interaction.edit_original_response(content="Serveur introuvable.")
+            return
+
+        # Si pas de code fourni, trouver l'équipe du leader
+        if code is None:
+            user_team = await MatchmakingService.get_user_team(interaction.user.id, server_id)
+            if not user_team:
+                await interaction.edit_original_response(content="Vous n'êtes membre d'aucune équipe.")
+                return
+            if user_team["leader_id"] != interaction.user.id:
+                await interaction.edit_original_response(content="Vous n'êtes pas le leader de votre équipe.")
+                return
+            code = user_team["code"]
+        else:
+            code = code.strip().upper()
+
         team = await MatchmakingService.get_team(code, server_id)
         if not team:
             await interaction.edit_original_response(content="Équipe introuvable.")
@@ -311,6 +375,10 @@ class TeamManager(commands.Cog):
 
         if interaction.user.id != team["leader_id"]:
             await interaction.edit_original_response(content="Vous n'êtes pas le leader.")
+            return
+
+        if member.id == team["leader_id"]:
+            await interaction.edit_original_response(content="Vous ne pouvez pas vous expulser vous-même.")
             return
 
         lock = self.get_team_lock(code)
@@ -325,33 +393,44 @@ class TeamManager(commands.Cog):
                 return
 
             await self.update_team_thread(code, server_id)
-            await interaction.edit_original_response(content=f"{member.display_name} expulsé.")
+            await interaction.edit_original_response(content=f"{member.display_name} a été expulsé de l'équipe.")
 
-            members = await MatchmakingService.get_team_members(code, server_id)
-            if len(members) == 0:
-                await self.delete_team_resources(team)
-                self.remove_team_lock(code)
-
-    @app_commands.command(name="delete_team", description="Supprimer une équipe (admin ou leader).")
-    @app_commands.describe(code="Le code de l'équipe à supprimer.")
-    async def delete_team(self, interaction: discord.Interaction, code: str) -> None:
+    @team_group.command(name="delete", description="Supprimer une équipe (admin ou leader).")
+    @app_commands.describe(code="Le code de l'équipe à supprimer (optionnel si vous êtes leader).")
+    async def team_delete(self, interaction: discord.Interaction, code: Optional[str] = None) -> None:
         """
         Supprime une équipe ainsi que ses ressources (thread et salon vocal). Seul le leader ou un admin peut le faire.
         """
         await interaction.response.defer(ephemeral=True)
-        code = code.strip().upper()
 
         server_id = await self._get_server_id(interaction.guild.id)
         if not server_id:
             await interaction.edit_original_response(content="Serveur introuvable.")
             return
+
+        user: discord.Member = interaction.user
+        is_admin = any(r.permissions.administrator for r in user.roles)
+
+        # Si pas de code fourni, trouver l'équipe du leader
+        if code is None:
+            user_team = await MatchmakingService.get_user_team(user.id, server_id)
+            if not user_team:
+                await interaction.edit_original_response(
+                    content="Vous n'êtes membre d'aucune équipe. Spécifiez un code si vous êtes admin."
+                )
+                return
+            if user_team["leader_id"] != user.id and not is_admin:
+                await interaction.edit_original_response(content="Vous n'êtes pas le leader de votre équipe.")
+                return
+            code = user_team["code"]
+        else:
+            code = code.strip().upper()
+
         team = await MatchmakingService.get_team(code, server_id)
         if not team:
             await interaction.edit_original_response(content="Équipe introuvable ou déjà supprimée.")
             return
 
-        user: discord.Member = interaction.user
-        is_admin = any(r.permissions.administrator for r in user.roles)
         if not is_admin and user.id != team["leader_id"]:
             await interaction.edit_original_response(content="Vous n'avez pas la permission de supprimer cette équipe.")
             return
@@ -366,8 +445,8 @@ class TeamManager(commands.Cog):
                 await interaction.edit_original_response(content="Erreur lors de la suppression de l'équipe.")
             self.remove_team_lock(code)
 
-    @app_commands.command(name="list_teams", description="Liste toutes les équipes publiques.")
-    async def list_teams(self, interaction: discord.Interaction) -> None:
+    @team_group.command(name="list", description="Liste toutes les équipes publiques.")
+    async def team_list(self, interaction: discord.Interaction) -> None:
         """
         Affiche la liste des équipes publiques disponibles.
         """
@@ -382,15 +461,96 @@ class TeamManager(commands.Cog):
                 await interaction.edit_original_response(content="Aucune équipe publique disponible.")
                 return
 
-            msg: str = "### Équipes Publiques Disponibles:\n"
+            embed = discord.Embed(
+                title="Équipes Publiques Disponibles",
+                color=discord.Color.blue()
+            )
+
             for t in teams:
                 leader = interaction.guild.get_member(t["leader_id"])
                 leader_mention = leader.mention if leader else f"<@{t['leader_id']}>"
-                msg += f"- **Code**: {t['code']} | **Leader**: {leader_mention} | **Visibilité**: {t['visibility']}\n"
-            await interaction.edit_original_response(content=msg)
+                members = await MatchmakingService.get_team_members(t["code"], server_id)
+                embed.add_field(
+                    name=f"Code: {t['code']}",
+                    value=f"**Leader:** {leader_mention}\n**Membres:** {len(members)}/5",
+                    inline=True
+                )
+
+            await interaction.edit_original_response(embed=embed)
         except Exception as e:
-            logger.error(f"Erreur list_teams: {e}")
+            logger.error(f"Erreur team_list: {e}")
             await interaction.edit_original_response(content="Erreur lors de la récupération des équipes publiques.")
+
+    @team_group.command(name="info", description="Afficher les détails d'une équipe.")
+    @app_commands.describe(code="Le code de l'équipe (optionnel si vous êtes dans une équipe).")
+    async def team_info(self, interaction: discord.Interaction, code: Optional[str] = None) -> None:
+        """
+        Affiche les informations détaillées d'une équipe.
+        """
+        await interaction.response.defer(ephemeral=True)
+
+        server_id = await self._get_server_id(interaction.guild.id)
+        if not server_id:
+            await interaction.edit_original_response(content="Serveur introuvable.")
+            return
+
+        # Si pas de code, utiliser l'équipe de l'utilisateur
+        if code is None:
+            user_team = await MatchmakingService.get_user_team(interaction.user.id, server_id)
+            if not user_team:
+                await interaction.edit_original_response(
+                    content="Vous n'êtes membre d'aucune équipe. Spécifiez un code pour voir une équipe."
+                )
+                return
+            code = user_team["code"]
+        else:
+            code = code.strip().upper()
+
+        team = await MatchmakingService.get_team(code, server_id)
+        if not team:
+            await interaction.edit_original_response(content="Équipe introuvable.")
+            return
+
+        members: List[int] = await MatchmakingService.get_team_members(code, server_id)
+        leader = interaction.guild.get_member(team["leader_id"])
+        leader_mention = leader.mention if leader else f"<@{team['leader_id']}>"
+
+        embed = discord.Embed(
+            title=f"Équipe {code}",
+            color=discord.Color.blue()
+        )
+        embed.add_field(name="Leader", value=leader_mention, inline=True)
+        embed.add_field(name="Visibilité", value=team["visibility"].capitalize(), inline=True)
+        embed.add_field(name="Membres", value=f"{len(members)}/5", inline=True)
+
+        # Liste des membres avec infos
+        members_info = []
+        for mid in members:
+            member = interaction.guild.get_member(mid)
+            if member:
+                info = await MatchmakingService.get_user_info(mid)
+                elo = info["elo"] if info else "??"
+                region = info["region"] if info else "??"
+                role_icon = "👑 " if mid == team["leader_id"] else ""
+                members_info.append(f"{role_icon}{member.display_name} (ELO: {elo}, {region})")
+            else:
+                members_info.append(f"<@{mid}> (non trouvé)")
+
+        embed.add_field(
+            name="Liste des membres",
+            value="\n".join(members_info) if members_info else "Aucun membre",
+            inline=False
+        )
+
+        # Lien vers le thread si disponible
+        if team.get("thread_id"):
+            forum_channel = self.bot.get_channel(team["forum_channel_id"])
+            if forum_channel and isinstance(forum_channel, discord.ForumChannel):
+                thread = forum_channel.get_thread(team["thread_id"])
+                if thread:
+                    embed.add_field(name="Thread", value=f"[Voir le thread]({thread.jump_url})", inline=False)
+
+        await interaction.edit_original_response(embed=embed)
 
     # ------------------------------------------------
     # Tâche de cleanup (équipes >24h)

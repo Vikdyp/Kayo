@@ -1,7 +1,7 @@
 #cogs\voice_management\services\five_stack_service.py
 import datetime
 import logging
-from typing import Optional, List, Tuple, Dict
+from typing import Optional, List, Tuple, Dict, Any
 
 import discord
 
@@ -76,8 +76,8 @@ class MatchmakingService:
         Retourne le code de l'équipe si trouvé, None sinon.
         """
         query = """
-        SELECT team_code 
-        FROM team_members 
+        SELECT team_code
+        FROM team_members
         WHERE member_id = $1 AND server_id = $2
         LIMIT 1;
         """
@@ -86,6 +86,33 @@ class MatchmakingService:
             return row["team_code"] if row else None
         except Exception as e:
             logger.error(f"Erreur vérif appartenance user {member_id}: {e}")
+            return None
+
+    @staticmethod
+    async def get_user_team(member_id: int, server_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Récupère l'équipe complète d'un utilisateur s'il en fait partie.
+
+        Args:
+            member_id: ID Discord du membre
+            server_id: ID interne du serveur
+
+        Returns:
+            Dict avec les infos de l'équipe ou None
+        """
+        query = """
+        SELECT t.code, t.leader_id, t.forum_channel_id, t.thread_id,
+               t.visibility, t.voice_channel_id, t.created_at, t.server_id
+        FROM teams t
+        INNER JOIN team_members tm ON t.code = tm.team_code AND t.server_id = tm.server_id
+        WHERE tm.member_id = $1 AND tm.server_id = $2
+        LIMIT 1;
+        """
+        try:
+            row = await database.fetchrow(query, member_id, server_id)
+            return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"Erreur récupération équipe pour user {member_id}: {e}")
             return None
 
     @staticmethod
@@ -773,4 +800,529 @@ class MatchmakingService:
         except Exception as e:
             logger.error(f"Erreur remove_entry {entry_id}: {e}")
             return False
-    # Fin
+
+    # ------------------------------------------------
+    # Gestion de l'historique des matchs (table 'match_history')
+    # ------------------------------------------------
+
+    @staticmethod
+    async def create_match_history(
+        server_id: int,
+        match_code: str,
+        voice_channel_id: Optional[int],
+        match_quality_score: Optional[float],
+        elo_spread: Optional[int],
+        avg_elo: Optional[int],
+        role_diversity_score: Optional[float],
+        total_wait_time_seconds: Optional[int],
+        team_size: int,
+        langue: str,
+        region: str,
+        platform: str
+    ) -> Optional[int]:
+        """
+        Crée une entrée dans match_history et retourne l'ID du match créé.
+        """
+        query = """
+        INSERT INTO match_history (
+            server_id, match_code, voice_channel_id, match_quality_score,
+            elo_spread, avg_elo, role_diversity_score, total_wait_time_seconds,
+            team_size, langue, region, platform
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        RETURNING id;
+        """
+        try:
+            match_id = await database.fetchval(
+                query, server_id, match_code, voice_channel_id, match_quality_score,
+                elo_spread, avg_elo, role_diversity_score, total_wait_time_seconds,
+                team_size, langue, region, platform
+            )
+            logger.info(f"[MatchHistory] Match créé: id={match_id}, code={match_code}")
+            return match_id
+        except Exception as e:
+            logger.error(f"[MatchHistory] Erreur création match: {e}")
+            return None
+
+    @staticmethod
+    async def add_match_participant(
+        match_id: int,
+        discord_member_id: int,
+        elo_at_match: Optional[int],
+        roles_selected: List[str],
+        entry_type: int,
+        wait_time_seconds: int
+    ) -> bool:
+        """
+        Ajoute un participant à un match.
+        """
+        query = """
+        INSERT INTO match_participants (
+            match_id, discord_member_id, elo_at_match, roles_selected,
+            entry_type, wait_time_seconds
+        )
+        VALUES ($1, $2, $3, $4, $5, $6);
+        """
+        try:
+            await database.execute(
+                query, match_id, discord_member_id, elo_at_match,
+                roles_selected, entry_type, wait_time_seconds
+            )
+            logger.debug(f"[MatchHistory] Participant ajouté: match={match_id}, member={discord_member_id}")
+            return True
+        except Exception as e:
+            logger.error(f"[MatchHistory] Erreur ajout participant: {e}")
+            return False
+
+    @staticmethod
+    async def get_match_history(server_id: int, limit: int = 10) -> List[Dict]:
+        """
+        Récupère les X derniers matchs pour un serveur.
+        """
+        query = """
+        SELECT id, match_code, created_at, match_quality_score, elo_spread,
+               avg_elo, role_diversity_score, team_size, langue, region, platform
+        FROM match_history
+        WHERE server_id = $1
+        ORDER BY created_at DESC
+        LIMIT $2;
+        """
+        try:
+            rows = await database.fetch(query, server_id, limit)
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error(f"[MatchHistory] Erreur get_match_history: {e}")
+            return []
+
+    @staticmethod
+    async def get_player_match_history(discord_id: int, server_id: int, limit: int = 10) -> List[Dict]:
+        """
+        Récupère l'historique des matchs d'un joueur.
+        """
+        query = """
+        SELECT mh.id, mh.match_code, mh.created_at, mh.match_quality_score,
+               mh.team_size, mh.elo_spread, mh.avg_elo,
+               mp.elo_at_match, mp.roles_selected, mp.entry_type
+        FROM match_history mh
+        JOIN match_participants mp ON mh.id = mp.match_id
+        WHERE mp.discord_member_id = $1 AND mh.server_id = $2
+        ORDER BY mh.created_at DESC
+        LIMIT $3;
+        """
+        try:
+            rows = await database.fetch(query, discord_id, server_id, limit)
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error(f"[MatchHistory] Erreur get_player_match_history: {e}")
+            return []
+
+    @staticmethod
+    async def get_match_participants(match_id: int) -> List[Dict]:
+        """
+        Récupère tous les participants d'un match.
+        """
+        query = """
+        SELECT discord_member_id, elo_at_match, roles_selected, entry_type, wait_time_seconds
+        FROM match_participants
+        WHERE match_id = $1;
+        """
+        try:
+            rows = await database.fetch(query, match_id)
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error(f"[MatchHistory] Erreur get_match_participants: {e}")
+            return []
+
+    # ------------------------------------------------
+    # Gestion des statistiques joueur (table 'player_matchmaking_stats')
+    # ------------------------------------------------
+
+    @staticmethod
+    async def get_player_stats(discord_id: int, server_id: int) -> Optional[Dict]:
+        """
+        Récupère les statistiques de matchmaking d'un joueur.
+        """
+        query = """
+        SELECT total_matches, total_wait_time_seconds, matches_as_solo,
+               matches_in_group, last_match_at, preferred_role,
+               CASE WHEN total_matches > 0
+                    THEN total_wait_time_seconds / total_matches
+                    ELSE 0
+               END as avg_wait_time_seconds
+        FROM player_matchmaking_stats
+        WHERE discord_id = $1 AND server_id = $2;
+        """
+        try:
+            row = await database.fetchrow(query, discord_id, server_id)
+            if row:
+                return dict(row)
+            return None
+        except Exception as e:
+            logger.error(f"[Stats] Erreur get_player_stats: {e}")
+            return None
+
+    @staticmethod
+    async def update_player_stats(
+        discord_id: int,
+        server_id: int,
+        wait_time_seconds: int,
+        is_solo: bool,
+        roles: Optional[List[str]] = None
+    ) -> bool:
+        """
+        Met à jour les statistiques d'un joueur après un match.
+        Utilise UPSERT pour créer l'entrée si elle n'existe pas.
+
+        Args:
+            discord_id: ID Discord du joueur
+            server_id: ID interne du serveur
+            wait_time_seconds: Temps d'attente en secondes
+            is_solo: True si le joueur était en solo
+            roles: Liste des rôles sélectionnés (le premier non-fill sera le préféré)
+        """
+        # Déterminer le rôle préféré (premier rôle non-fill)
+        preferred_role = None
+        if roles:
+            for r in roles:
+                if r.lower() != 'fill':
+                    preferred_role = r
+                    break
+
+        query = """
+        INSERT INTO player_matchmaking_stats (
+            discord_id, server_id, total_matches, total_wait_time_seconds,
+            matches_as_solo, matches_in_group, last_match_at, preferred_role
+        )
+        VALUES ($1, $2, 1, $3, $4, $5, NOW(), $6)
+        ON CONFLICT (discord_id, server_id) DO UPDATE SET
+            total_matches = player_matchmaking_stats.total_matches + 1,
+            total_wait_time_seconds = player_matchmaking_stats.total_wait_time_seconds + $3,
+            matches_as_solo = player_matchmaking_stats.matches_as_solo + $4,
+            matches_in_group = player_matchmaking_stats.matches_in_group + $5,
+            last_match_at = NOW(),
+            preferred_role = COALESCE($6, player_matchmaking_stats.preferred_role);
+        """
+        try:
+            solo_increment = 1 if is_solo else 0
+            group_increment = 0 if is_solo else 1
+            await database.execute(
+                query, discord_id, server_id, wait_time_seconds,
+                solo_increment, group_increment, preferred_role
+            )
+            logger.debug(f"[Stats] Stats mises à jour pour {discord_id}")
+            return True
+        except Exception as e:
+            logger.error(f"[Stats] Erreur update_player_stats: {e}")
+            return False
+
+    @staticmethod
+    async def get_server_stats(server_id: int) -> Dict:
+        """
+        Récupère les statistiques globales de matchmaking pour un serveur.
+        """
+        query = """
+        SELECT
+            COUNT(*) as total_matches,
+            AVG(match_quality_score) as avg_quality_score,
+            AVG(elo_spread) as avg_elo_spread,
+            AVG(total_wait_time_seconds) as avg_total_wait_time
+        FROM match_history
+        WHERE server_id = $1;
+        """
+        try:
+            row = await database.fetchrow(query, server_id)
+            if row:
+                return dict(row)
+            return {"total_matches": 0, "avg_quality_score": 0, "avg_elo_spread": 0, "avg_total_wait_time": 0}
+        except Exception as e:
+            logger.error(f"[Stats] Erreur get_server_stats: {e}")
+            return {"total_matches": 0, "avg_quality_score": 0, "avg_elo_spread": 0, "avg_total_wait_time": 0}
+
+    # ------------------------------------------------
+    # Gestion du feedback (table 'match_feedback')
+    # ------------------------------------------------
+
+    @staticmethod
+    async def save_match_feedback(
+        match_id: int,
+        reporter_id: int,
+        rating: int,
+        feedback_type: str,
+        issues: Optional[List[str]] = None,
+        comment: Optional[str] = None
+    ) -> bool:
+        """
+        Enregistre le feedback d'un joueur pour un match.
+        """
+        query = """
+        INSERT INTO match_feedback (match_id, reporter_id, rating, feedback_type, issues, comment)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (match_id, reporter_id) DO UPDATE SET
+            rating = EXCLUDED.rating,
+            feedback_type = EXCLUDED.feedback_type,
+            issues = EXCLUDED.issues,
+            comment = EXCLUDED.comment,
+            created_at = NOW();
+        """
+        try:
+            await database.execute(query, match_id, reporter_id, rating, feedback_type, issues, comment)
+            logger.info(f"[Feedback] Feedback enregistré: match={match_id}, reporter={reporter_id}, rating={rating}")
+            return True
+        except Exception as e:
+            logger.error(f"[Feedback] Erreur save_match_feedback: {e}")
+            return False
+
+    @staticmethod
+    async def get_match_feedback(match_id: int) -> List[Dict]:
+        """
+        Récupère tous les feedbacks pour un match.
+        """
+        query = """
+        SELECT reporter_id, rating, feedback_type, issues, comment, created_at
+        FROM match_feedback
+        WHERE match_id = $1;
+        """
+        try:
+            rows = await database.fetch(query, match_id)
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error(f"[Feedback] Erreur get_match_feedback: {e}")
+            return []
+
+    @staticmethod
+    async def has_user_given_feedback(match_id: int, reporter_id: int) -> bool:
+        """
+        Vérifie si un utilisateur a déjà donné son feedback pour un match.
+        """
+        query = "SELECT 1 FROM match_feedback WHERE match_id = $1 AND reporter_id = $2 LIMIT 1;"
+        try:
+            row = await database.fetchrow(query, match_id, reporter_id)
+            return row is not None
+        except Exception as e:
+            logger.error(f"[Feedback] Erreur has_user_given_feedback: {e}")
+            return False
+
+    @staticmethod
+    async def get_avg_feedback_rating(server_id: int) -> Optional[float]:
+        """
+        Récupère la note moyenne des feedbacks pour un serveur.
+        """
+        query = """
+        SELECT AVG(mf.rating) as avg_rating
+        FROM match_feedback mf
+        JOIN match_history mh ON mf.match_id = mh.id
+        WHERE mh.server_id = $1;
+        """
+        try:
+            return await database.fetchval(query, server_id)
+        except Exception as e:
+            logger.error(f"[Feedback] Erreur get_avg_feedback_rating: {e}")
+            return None
+
+    @staticmethod
+    async def get_matches_pending_feedback(discord_id: int, server_id: int, hours: int = 24) -> List[Dict]:
+        """
+        Récupère les matchs récents d'un joueur pour lesquels il n'a pas encore donné de feedback.
+        """
+        query = """
+        SELECT mh.id, mh.match_code, mh.created_at, mh.team_size
+        FROM match_history mh
+        JOIN match_participants mp ON mh.id = mp.match_id
+        LEFT JOIN match_feedback mf ON mh.id = mf.match_id AND mf.reporter_id = $1
+        WHERE mp.discord_member_id = $1
+          AND mh.server_id = $2
+          AND mh.created_at > NOW() - INTERVAL '%s hours'
+          AND mf.id IS NULL
+        ORDER BY mh.created_at DESC;
+        """ % hours
+        try:
+            rows = await database.fetch(query, discord_id, server_id)
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error(f"[Feedback] Erreur get_matches_pending_feedback: {e}")
+            return []
+
+    # ------------------------------------------------
+    # Utilitaires pour le matching amélioré
+    # ------------------------------------------------
+
+    @staticmethod
+    async def get_avg_match_interval(server_id: int) -> int:
+        """
+        Calcule l'intervalle moyen entre les matchs en secondes.
+        Utile pour estimer le temps d'attente.
+        """
+        query = """
+        WITH match_times AS (
+            SELECT created_at,
+                   LAG(created_at) OVER (ORDER BY created_at) as prev_created_at
+            FROM match_history
+            WHERE server_id = $1
+            ORDER BY created_at DESC
+            LIMIT 100
+        )
+        SELECT AVG(EXTRACT(EPOCH FROM (created_at - prev_created_at)))::int as avg_interval
+        FROM match_times
+        WHERE prev_created_at IS NOT NULL;
+        """
+        try:
+            result = await database.fetchval(query, server_id)
+            return result or 300  # Default: 5 minutes
+        except Exception as e:
+            logger.error(f"[Stats] Erreur get_avg_match_interval: {e}")
+            return 300
+
+    @staticmethod
+    async def remove_entries_batch(entry_ids: List[int], server_id: int) -> int:
+        """
+        Supprime plusieurs entrées de la queue en une seule requête.
+        Retourne le nombre d'entrées supprimées.
+        """
+        if not entry_ids:
+            return 0
+        query = """
+        DELETE FROM matchmaking_queue
+        WHERE id = ANY($1::integer[]) AND server_id = $2
+        RETURNING id;
+        """
+        try:
+            rows = await database.fetch(query, entry_ids, server_id)
+            count = len(rows)
+            logger.info(f"[Queue] Batch suppression: {count} entrées supprimées")
+            return count
+        except Exception as e:
+            logger.error(f"[Queue] Erreur remove_entries_batch: {e}")
+            return 0
+
+    @staticmethod
+    async def get_match_by_id(match_id: int) -> Optional[Dict]:
+        """
+        Récupère les détails d'un match par son ID.
+        """
+        query = """
+        SELECT id, server_id, match_code, created_at, voice_channel_id,
+               match_quality_score, elo_spread, avg_elo, role_diversity_score,
+               total_wait_time_seconds, team_size, langue, region, platform
+        FROM match_history
+        WHERE id = $1;
+        """
+        try:
+            row = await database.fetchrow(query, match_id)
+            return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"[MatchHistory] Erreur get_match_by_id: {e}")
+            return None
+
+    @staticmethod
+    async def get_server_matchmaking_stats(server_id: int) -> Dict:
+        """
+        Récupère les statistiques détaillées de matchmaking pour un serveur.
+        Inclut le nombre de matchs aujourd'hui, cette semaine, joueurs uniques, etc.
+        """
+        query = """
+        WITH match_stats AS (
+            SELECT
+                COUNT(*) as total_matches,
+                AVG(match_quality_score) as avg_quality_score,
+                AVG(total_wait_time_seconds) as avg_wait_time_seconds,
+                COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '1 day') as matches_today,
+                COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days') as matches_this_week
+            FROM match_history
+            WHERE server_id = $1
+        ),
+        player_stats AS (
+            SELECT COUNT(DISTINCT mp.discord_member_id) as unique_players
+            FROM match_participants mp
+            JOIN match_history mh ON mp.match_id = mh.id
+            WHERE mh.server_id = $1
+        ),
+        size_dist AS (
+            SELECT team_size, COUNT(*) as count
+            FROM match_history
+            WHERE server_id = $1
+            GROUP BY team_size
+        )
+        SELECT
+            ms.total_matches,
+            ms.avg_quality_score,
+            ms.avg_wait_time_seconds,
+            ms.matches_today,
+            ms.matches_this_week,
+            ps.unique_players
+        FROM match_stats ms, player_stats ps;
+        """
+        size_query = """
+        SELECT team_size, COUNT(*) as count
+        FROM match_history
+        WHERE server_id = $1
+        GROUP BY team_size;
+        """
+        try:
+            row = await database.fetchrow(query, server_id)
+            size_rows = await database.fetch(size_query, server_id)
+
+            result = dict(row) if row else {
+                'total_matches': 0,
+                'avg_quality_score': 0,
+                'avg_wait_time_seconds': 0,
+                'matches_today': 0,
+                'matches_this_week': 0,
+                'unique_players': 0
+            }
+
+            # Ajouter la distribution par taille
+            result['team_size_distribution'] = {
+                r['team_size']: r['count'] for r in size_rows
+            } if size_rows else {}
+
+            return result
+        except Exception as e:
+            logger.error(f"[Stats] Erreur get_server_matchmaking_stats: {e}")
+            return {
+                'total_matches': 0,
+                'avg_quality_score': 0,
+                'avg_wait_time_seconds': 0,
+                'matches_today': 0,
+                'matches_this_week': 0,
+                'unique_players': 0,
+                'team_size_distribution': {}
+            }
+
+    @staticmethod
+    async def get_leaderboard(server_id: int, category: str = "matches", limit: int = 10) -> List[Dict]:
+        """
+        Récupère le classement des joueurs selon une catégorie.
+
+        Args:
+            server_id: ID du serveur
+            category: "matches" ou "wait_time"
+            limit: Nombre de joueurs à retourner
+
+        Returns:
+            Liste de dictionnaires avec discord_id et la valeur de classement
+        """
+        if category == "matches":
+            query = """
+            SELECT discord_id, total_matches, total_wait_time_seconds
+            FROM player_matchmaking_stats
+            WHERE server_id = $1
+            ORDER BY total_matches DESC
+            LIMIT $2;
+            """
+        elif category == "wait_time":
+            query = """
+            SELECT discord_id, total_matches, total_wait_time_seconds
+            FROM player_matchmaking_stats
+            WHERE server_id = $1
+            ORDER BY total_wait_time_seconds DESC
+            LIMIT $2;
+            """
+        else:
+            return []
+
+        try:
+            rows = await database.fetch(query, server_id, limit)
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error(f"[Stats] Erreur get_leaderboard: {e}")
+            return []

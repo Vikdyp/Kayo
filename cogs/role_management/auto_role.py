@@ -6,7 +6,7 @@ import logging
 
 from cogs.moderation.services.moderation_service import ModerationService
 
-logger = logging.getLogger('auto_role_assign')
+logger = logging.getLogger(__name__)
 
 class AutoRoleAssign(commands.Cog):
     """Cog pour appliquer automatiquement le rôle 'ban' aux membres bannis globalement."""

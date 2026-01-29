@@ -5,7 +5,7 @@ from discord.ext import commands
 from cogs.role_management.services.language_role_service import RoleService  # Importer la classe
 import logging
 
-logger = logging.getLogger("roles.management")
+logger = logging.getLogger(__name__)
 
 class RoleView(discord.ui.View):
     def __init__(self, cog):

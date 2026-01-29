@@ -3,7 +3,7 @@ import logging
 from utils.database import database
 from utils.base import get_or_create_server_record
 
-logger = logging.getLogger("services.file_counter_service")
+logger = logging.getLogger(__name__)
 
 class FileCounterService:
 

@@ -10,7 +10,7 @@ from utils.confirmation_view import ConfirmationView
 # On importe le nouveau service combiné
 from cogs.configuration.services.channel_service import ServerChannelService
 
-logger = logging.getLogger('channels_configuration')
+logger = logging.getLogger(__name__)
 
 class ChannelsConfiguration(commands.Cog):
     """Cog pour gérer la configuration des salons."""

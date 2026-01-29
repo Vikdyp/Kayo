@@ -9,7 +9,7 @@ from utils.base import (
     delete_persistent_message,
 )
 
-logger = logging.getLogger("rules_service")
+logger = logging.getLogger(__name__)
 
 # 2) Gérer le salon "rules"
 # ------------------------------------------------

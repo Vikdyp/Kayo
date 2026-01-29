@@ -10,7 +10,7 @@ from utils.base import (
     get_persistent_message,
     delete_persistent_message,
 )
-logger = logging.getLogger("rank_service")
+logger = logging.getLogger(__name__)
 
 # Les rangs Valorant de base
 RANGS_VALORANT = (
@@ -343,62 +343,13 @@ async def refresh_role_mappings(guild_id: int, guild_name: str):
     await get_role_mappings(guild_id, guild_name)
 
 # ------------------------------------------------
-# FLAGS DE MISE À JOUR
+# FLAGS DE MISE À JOUR (DEPRECATED - remplacées par le pipeline)
 # ------------------------------------------------
-async def get_users_with_update_flag_false() -> list:
-    """
-    Récupère tous les utilisateurs actifs (jointure valorant_info + user_id)
-    où needs_update = FALSE.
-    Les utilisateurs inactifs (qui ont quitté tous les serveurs) sont exclus.
-    """
-    query = """
-        SELECT u.discord_id,
-               v.pseudo  AS valorant_pseudo,
-               v.tag     AS valorant_tag,
-               v.puuid   AS valorant_puuid,
-               v.region  AS valorant_region,
-               v.rank    AS valorant_rank,
-               v.elo     AS valorant_elo
-          FROM valorant_info v
-          JOIN user_id u ON u.id = v.user_id
-         WHERE v.needs_update = FALSE
-           AND v.is_active = TRUE
-           AND v.pseudo IS NOT NULL
-           AND v.tag    IS NOT NULL
-    """
-    try:
-        return await database.fetch(query)
-    except Exception as e:
-        logger.error(f"[get_users_with_update_flag_false] Erreur: {e}")
-        return []
-
-async def mark_user_update_flag_true(discord_id: int) -> None:
-    """
-    Met needs_update = TRUE pour l'utilisateur donné (via discord_id).
-    """
-    query = """
-        UPDATE valorant_info v
-           SET needs_update = TRUE
-          FROM user_id u
-         WHERE u.id = v.user_id
-           AND u.discord_id = $1
-    """
-    try:
-        await database.execute(query, discord_id)
-        logger.debug(f"[mark_user_update_flag_true] Discord ID {discord_id} -> needs_update=TRUE.")
-    except Exception as e:
-        logger.error(f"[mark_user_update_flag_true] Erreur: {e}")
-
-async def reset_all_update_flag_false() -> None:
-    """
-    Remet tous les utilisateurs à needs_update = FALSE.
-    """
-    query = "UPDATE valorant_info SET needs_update = FALSE"
-    try:
-        await database.execute(query)
-        logger.info("[reset_all_update_flag_false] Tout le monde repasse à needs_update=FALSE.")
-    except Exception as e:
-        logger.error(f"[reset_all_update_flag_false] Erreur: {e}")
+# Les fonctions suivantes ont été supprimées car elles utilisaient
+# la colonne 'needs_update' qui n'existe plus:
+# - get_users_with_update_flag_false() -> remplacée par get_users_for_pipeline()
+# - mark_user_update_flag_true() -> remplacée par update_pipeline_success/error()
+# - reset_all_update_flag_false() -> plus nécessaire avec last_checked_at
 
 # ------------------------------------------------
 # PERSISTENCE DE LA NOTIFICATION
@@ -480,7 +431,8 @@ async def reactivate_user(discord_id: int) -> bool:
         UPDATE valorant_info
            SET is_active = TRUE,
                deactivated_at = NULL,
-               needs_update = FALSE
+               last_checked_at = NULL,
+               error_count = 0
          WHERE user_id = $1
            AND is_active = FALSE
     """
@@ -670,3 +622,217 @@ async def cleanup_old_inactive_users(days: int = 180) -> int:
     except Exception as e:
         logger.error(f"[cleanup_old_inactive_users] Erreur: {e}")
         return 0
+
+
+# ------------------------------------------------
+# PIPELINE FUNCTIONS (new time-based scheduling)
+# ------------------------------------------------
+
+async def get_users_for_pipeline(limit: int = 50) -> List[Dict]:
+    """
+    Récupère les utilisateurs pour le pipeline, ordonnés par last_checked_at.
+    Les utilisateurs jamais vérifiés (NULL) sont prioritaires.
+    Seuls les utilisateurs actifs avec pseudo/tag sont retournés.
+
+    Args:
+        limit: Nombre maximum d'utilisateurs à retourner
+
+    Returns:
+        Liste de dictionnaires avec les infos utilisateur
+    """
+    query = """
+        SELECT u.discord_id,
+               v.pseudo  AS valorant_pseudo,
+               v.tag     AS valorant_tag,
+               v.puuid   AS valorant_puuid,
+               v.region  AS valorant_region,
+               v.platform AS valorant_platform,
+               v.rank    AS valorant_rank,
+               v.elo     AS valorant_elo,
+               v.error_count,
+               v.last_error_at
+          FROM valorant_info v
+          JOIN user_id u ON u.id = v.user_id
+         WHERE v.is_active = TRUE
+           AND v.pseudo IS NOT NULL
+           AND v.tag    IS NOT NULL
+         ORDER BY v.last_checked_at ASC NULLS FIRST
+         LIMIT $1
+    """
+    try:
+        records = await database.fetch(query, limit)
+        logger.debug(f"[get_users_for_pipeline] {len(records)} utilisateurs récupérés")
+        return records
+    except Exception as e:
+        logger.error(f"[get_users_for_pipeline] Erreur: {e}")
+        return []
+
+
+async def update_pipeline_success(
+    discord_id: int,
+    puuid: Optional[str] = None,
+    region: Optional[str] = None,
+    platform: Optional[str] = None,
+    rank: Optional[str] = None,
+    elo: Optional[int] = None
+) -> bool:
+    """
+    Met à jour un utilisateur après une étape pipeline réussie.
+    Reset error_count à 0 et met last_checked_at à NOW().
+
+    Args:
+        discord_id: ID Discord de l'utilisateur
+        puuid, region, platform, rank, elo: Champs optionnels à mettre à jour
+
+    Returns:
+        True si succès, False sinon
+    """
+    user_pk = await get_user_pk_by_discord_id(discord_id)
+    if not user_pk:
+        logger.warning(f"[update_pipeline_success] user_pk introuvable pour discord_id={discord_id}")
+        return False
+
+    # Construire la requête dynamiquement selon les champs fournis
+    updates = ["last_checked_at = NOW()", "error_count = 0", "last_error_at = NULL"]
+    params = []
+    param_idx = 1
+
+    if puuid is not None:
+        updates.append(f"puuid = ${param_idx}")
+        params.append(puuid)
+        param_idx += 1
+
+    if region is not None:
+        updates.append(f"region = ${param_idx}")
+        params.append(region)
+        param_idx += 1
+
+    if platform is not None:
+        updates.append(f"platform = ${param_idx}")
+        params.append(platform)
+        param_idx += 1
+
+    if rank is not None:
+        updates.append(f"rank = ${param_idx}")
+        params.append(rank)
+        param_idx += 1
+
+    if elo is not None:
+        updates.append(f"elo = ${param_idx}")
+        params.append(elo)
+        param_idx += 1
+
+    params.append(user_pk)
+
+    query = f"""
+        UPDATE valorant_info
+           SET {', '.join(updates)}
+         WHERE user_id = ${param_idx}
+    """
+
+    try:
+        await database.execute(query, *params)
+        logger.debug(f"[update_pipeline_success] Mis à jour discord_id={discord_id}")
+        return True
+    except Exception as e:
+        logger.error(f"[update_pipeline_success] Erreur pour discord_id={discord_id}: {e}")
+        return False
+
+
+async def update_pipeline_error(discord_id: int) -> bool:
+    """
+    Met à jour un utilisateur après une erreur pipeline.
+    Incrémente error_count et met last_error_at et last_checked_at à NOW().
+
+    Args:
+        discord_id: ID Discord de l'utilisateur
+
+    Returns:
+        True si succès, False sinon
+    """
+    user_pk = await get_user_pk_by_discord_id(discord_id)
+    if not user_pk:
+        logger.warning(f"[update_pipeline_error] user_pk introuvable pour discord_id={discord_id}")
+        return False
+
+    query = """
+        UPDATE valorant_info
+           SET error_count = error_count + 1,
+               last_error_at = NOW(),
+               last_checked_at = NOW()
+         WHERE user_id = $1
+    """
+
+    try:
+        await database.execute(query, user_pk)
+        logger.debug(f"[update_pipeline_error] error_count incrémenté pour discord_id={discord_id}")
+        return True
+    except Exception as e:
+        logger.error(f"[update_pipeline_error] Erreur pour discord_id={discord_id}: {e}")
+        return False
+
+
+async def reset_user_for_account_change(discord_id: int, new_pseudo: str, new_tag: str) -> bool:
+    """
+    Reset complet des données Valorant lors d'un changement de compte.
+    Conserve is_active et tracking_enabled, reset tout le reste.
+
+    Args:
+        discord_id: ID Discord de l'utilisateur
+        new_pseudo: Nouveau pseudo Valorant
+        new_tag: Nouveau tag Valorant
+
+    Returns:
+        True si succès, False sinon
+    """
+    user_pk = await get_user_pk_by_discord_id(discord_id)
+    if not user_pk:
+        logger.warning(f"[reset_user_for_account_change] user_pk introuvable pour discord_id={discord_id}")
+        return False
+
+    query = """
+        UPDATE valorant_info
+           SET pseudo = $1,
+               tag = $2,
+               puuid = NULL,
+               region = NULL,
+               platform = NULL,
+               rank = NULL,
+               elo = NULL,
+               error_count = 0,
+               last_error_at = NULL,
+               last_checked_at = NULL,
+               last_notification = NULL
+         WHERE user_id = $3
+    """
+
+    try:
+        await database.execute(query, new_pseudo, new_tag, user_pk)
+        logger.info(f"[reset_user_for_account_change] Reset pour discord_id={discord_id}, nouveau compte: {new_pseudo}#{new_tag}")
+        return True
+    except Exception as e:
+        logger.error(f"[reset_user_for_account_change] Erreur pour discord_id={discord_id}: {e}")
+        return False
+
+
+async def get_all_valorant_discord_ids() -> List[int]:
+    """
+    Récupère tous les discord_id ayant un compte Valorant lié.
+    Utilisé pour le startup sync.
+
+    Returns:
+        Liste des discord_id
+    """
+    query = """
+        SELECT u.discord_id
+          FROM valorant_info v
+          JOIN user_id u ON u.id = v.user_id
+         WHERE v.pseudo IS NOT NULL
+           AND v.tag IS NOT NULL
+    """
+    try:
+        records = await database.fetch(query)
+        return [r["discord_id"] for r in records]
+    except Exception as e:
+        logger.error(f"[get_all_valorant_discord_ids] Erreur: {e}")
+        return []

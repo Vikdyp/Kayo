@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 # Charger les variables d'environnement depuis le fichier .env
 load_dotenv()
 
-logger = logging.getLogger("valorant_service")
+logger = logging.getLogger(__name__)
 
 API_KEY = os.getenv("HENRIK_VALO_KEY")
 HEADERS = {"Authorization": API_KEY} if API_KEY else {}

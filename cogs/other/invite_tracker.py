@@ -4,7 +4,7 @@ import asyncpg
 from utils.database import database  # Vérifie que le chemin est correct
 import logging
 
-logger = logging.getLogger("invite_tracker")
+logger = logging.getLogger(__name__)
 
 class InviteTrackerCog(commands.Cog):
     def __init__(self, bot):

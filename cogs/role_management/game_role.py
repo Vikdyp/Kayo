@@ -10,7 +10,7 @@ from cogs.role_management.services.game_role_service import (
 import logging
 
 
-logger = logging.getLogger("roles.roles")
+logger = logging.getLogger(__name__)
 
 class RolesView(discord.ui.View):
     def __init__(self, cog):

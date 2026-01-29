@@ -5,7 +5,7 @@ from typing import Optional, List, Dict, Any
 from utils.database import database
 from utils.base import get_or_create_server_record
 
-logger = logging.getLogger('services.automod_service')
+logger = logging.getLogger(__name__)
 
 
 class AutomodService:

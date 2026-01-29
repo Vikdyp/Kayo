@@ -1,7 +1,8 @@
 #cogs\voice_management\queue_views.py
 
 import logging
-from typing import List, Optional, Tuple
+import time
+from typing import Dict, List, Optional, Tuple
 
 import discord
 from discord import ButtonStyle, Interaction
@@ -14,8 +15,41 @@ from cogs.configuration.services.channel_service import ServerChannelService
 # Constante pour l'ID du salon où l'utilisateur doit lier ses informations Valorant
 VALORANT_INFO_ACTION = "rang"
 
+# Rate limiting: cooldown en secondes et cache des dernières interactions
+BUTTON_COOLDOWN_SECONDS = 3.0
+_user_cooldowns: Dict[int, float] = {}  # {user_id: last_interaction_timestamp}
+
 # Logger local
 logger = logging.getLogger(__name__)
+
+
+def check_rate_limit(user_id: int) -> Optional[float]:
+    """
+    Vérifie si un utilisateur est en cooldown.
+
+    Args:
+        user_id: ID Discord de l'utilisateur
+
+    Returns:
+        None si pas en cooldown, sinon le temps restant en secondes
+    """
+    now = time.time()
+    last_use = _user_cooldowns.get(user_id, 0)
+    elapsed = now - last_use
+
+    if elapsed < BUTTON_COOLDOWN_SECONDS:
+        return BUTTON_COOLDOWN_SECONDS - elapsed
+
+    _user_cooldowns[user_id] = now
+    return None
+
+
+def cleanup_old_cooldowns() -> None:
+    """Nettoie les entrées de cooldown obsolètes (> 1 minute)."""
+    now = time.time()
+    expired = [uid for uid, ts in _user_cooldowns.items() if now - ts > 60]
+    for uid in expired:
+        del _user_cooldowns[uid]
 
 
 # -------------------------
@@ -349,6 +383,15 @@ class QueueView(View):
         """
         Affiche le sélecteur pour rejoindre la queue en solo.
         """
+        # Rate limiting
+        remaining = check_rate_limit(interaction.user.id)
+        if remaining is not None:
+            await interaction.response.send_message(
+                f"Veuillez patienter {remaining:.1f}s avant de réessayer.",
+                ephemeral=True
+            )
+            return
+
         try:
             view = self._create_team_size_view(entry_type="solo")
             await interaction.response.send_message(
@@ -356,8 +399,8 @@ class QueueView(View):
                 view=view,
                 ephemeral=True
             )
-        except Exception as e:
-            logger.error(f"Erreur join_solo_button: {e}")
+        except discord.HTTPException as e:
+            logger.error(f"Erreur HTTP join_solo_button: {e}")
             await interaction.response.send_message(
                 "Une erreur est survenue lors de l'affichage du menu.",
                 ephemeral=True
@@ -373,6 +416,15 @@ class QueueView(View):
         Affiche le sélecteur pour inscrire une équipe préformée dans la queue.
         Seul le leader peut inscrire l'équipe.
         """
+        # Rate limiting
+        remaining = check_rate_limit(interaction.user.id)
+        if remaining is not None:
+            await interaction.response.send_message(
+                f"Veuillez patienter {remaining:.1f}s avant de réessayer.",
+                ephemeral=True
+            )
+            return
+
         try:
             view = self._create_team_size_view(entry_type="team")
             await interaction.response.send_message(
@@ -380,8 +432,8 @@ class QueueView(View):
                 view=view,
                 ephemeral=True
             )
-        except Exception as e:
-            logger.error(f"Erreur join_team_button: {e}")
+        except discord.HTTPException as e:
+            logger.error(f"Erreur HTTP join_team_button: {e}")
             await interaction.response.send_message(
                 "Une erreur est survenue lors de l'affichage du menu d'équipe.",
                 ephemeral=True
@@ -396,6 +448,15 @@ class QueueView(View):
         """
         Permet au joueur ou leader de quitter la queue.
         """
+        # Rate limiting
+        remaining = check_rate_limit(interaction.user.id)
+        if remaining is not None:
+            await interaction.response.send_message(
+                f"Veuillez patienter {remaining:.1f}s avant de réessayer.",
+                ephemeral=True
+            )
+            return
+
         user = interaction.user
         try:
             await interaction.response.defer(ephemeral=True)
@@ -408,8 +469,8 @@ class QueueView(View):
         except ValueError as ve:
             logger.error(f"Erreur leave_queue_button: {ve}")
             await interaction.followup.send(str(ve), ephemeral=True)
-        except Exception as e:
-            logger.error(f"Erreur lors du retrait de la queue: {e}")
+        except discord.HTTPException as e:
+            logger.error(f"Erreur HTTP lors du retrait de la queue: {e}")
             await interaction.followup.send(
                 "Une erreur est survenue lors de votre demande de quitter la queue.",
                 ephemeral=True,
