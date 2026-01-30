@@ -1,114 +1,31 @@
-# cogs/configuration/services/channel_service.py
+# cogs\configuration\services\channel_service.py
 
-import logging
-from typing import Optional
-from utils.database import database
-from utils.base import get_or_create_server_record
+from database.repos.guilds_repo import GuildsRepo
+from database.repos.guild_channels_repo import GuildChannelsRepo
 
-logger = logging.getLogger(__name__)
+def normalize_key(k: str) -> str:
+    return " ".join(k.strip().split())
 
-class ServerChannelService:
-    @staticmethod
-    async def get_or_create_server_record(guild_id: int, guild_name: str) -> int:
-        """Wrapper vers :func:`utils.base.get_or_create_server_record`."""
-        return await get_or_create_server_record(guild_id, guild_name)
+class ChannelConfigurationService:
+    def __init__(self, db):
+        self._db = db
 
-    @staticmethod
-    async def get_channels_config(guild_id: int, guild_name: str) -> dict:
-        """
-        Récupère la config de tous les salons pour un serveur donné (via l'ID interne).
-        """
-        try:
-            server_db_id = await ServerChannelService.get_or_create_server_record(guild_id, guild_name)
-            if not server_db_id:
-                return {}
+    async def get_all(self, guild_id: int) -> dict[str, int]:
+        async with self._db.acquire() as conn:
+            return await GuildChannelsRepo.get_all(conn, guild_id)
 
-            query = """
-            SELECT action, channel_id
-            FROM channel_configurations
-            WHERE server_id = $1;
-            """
-            records = await database.fetch(query, server_db_id)
-            config = {record['action']: record['channel_id'] for record in records}
-            logger.info(f"[ServerChannelService] Salons récupérés pour server_id={server_db_id}: {config}")
-            return config
+    async def get_one(self, guild_id: int, key: str) -> int | None:
+        key = normalize_key(key)
+        async with self._db.acquire() as conn:
+            return await GuildChannelsRepo.get(conn, guild_id, key)
 
-        except Exception as e:
-            logger.error(f"[ServerChannelService] Erreur get_channels_config: {e}")
-            return {}
+    async def set_one(self, guild_id: int, guild_name: str | None, key: str, channel_id: int) -> None:
+        key = normalize_key(key)
+        async with self._db.transaction() as conn:
+            await GuildsRepo.ensure_exists(conn, guild_id, guild_name)
+            await GuildChannelsRepo.upsert(conn, guild_id, key, channel_id)
 
-    @staticmethod
-    async def get_channel_id(guild_id: int, guild_name: str, action: str) -> Optional[int]:
-        """
-        Retourne l'ID du salon configuré pour une action donnée.
-        """
-        try:
-            server_db_id = await ServerChannelService.get_or_create_server_record(guild_id, guild_name)
-            if not server_db_id:
-                return None
-
-            query = """
-            SELECT channel_id
-            FROM channel_configurations
-            WHERE server_id = $1 AND action = $2;
-            """
-            channel_id = await database.fetchval(query, server_db_id, action)
-            if channel_id:
-                logger.debug(
-                    f"[ServerChannelService] Salon trouvé pour action='{action}' (server_id={server_db_id}): {channel_id}"
-                )
-            else:
-                logger.warning(
-                    f"[ServerChannelService] Aucun salon configuré pour action='{action}' (server_id={server_db_id})."
-                )
-            return channel_id
-
-        except Exception as e:
-            logger.error(f"[ServerChannelService] Erreur get_channel_id pour action='{action}': {e}")
-            return None
-
-    @staticmethod
-    async def set_channel_for_action(guild_id: int, guild_name: str, action: str, channel_id: int) -> bool:
-        """
-        Configure un salon pour une action, en stockant server_id (FK) au lieu du guild_id.
-        """
-        try:
-            server_db_id = await ServerChannelService.get_or_create_server_record(guild_id, guild_name)
-            if not server_db_id:
-                return False
-
-            query = """
-            INSERT INTO channel_configurations (server_id, action, channel_id)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (server_id, action) DO UPDATE
-            SET channel_id = EXCLUDED.channel_id;
-            """
-            await database.execute(query, server_db_id, action, channel_id)
-            logger.info(f"[ServerChannelService] Salon {channel_id} configuré pour '{action}' (server_id={server_db_id}).")
-            return True
-
-        except Exception as e:
-            logger.error(f"[ServerChannelService] Erreur set_channel_for_action: {e}")
-            return False
-
-    @staticmethod
-    async def remove_channel_for_action(guild_id: int, guild_name: str, action: str) -> bool:
-        """
-        Supprime la config d'un salon pour une action, via server_id.
-        """
-        try:
-            server_db_id = await ServerChannelService.get_or_create_server_record(guild_id, guild_name)
-            if not server_db_id:
-                return False
-
-            query = """
-            DELETE FROM channel_configurations
-            WHERE server_id = $1 AND action = $2;
-            """
-            await database.execute(query, server_db_id, action)
-            logger.info(f"[ServerChannelService] Config salon '{action}' supprimée (server_id={server_db_id}).")
-            return True
-
-        except Exception as e:
-            logger.error(f"[ServerChannelService] Erreur remove_channel_for_action: {e}")
-            return False
+    async def remove_one(self, guild_id: int, key: str) -> bool:
+        key = normalize_key(key)
+        async with self._db.transaction() as conn:
+            return await GuildChannelsRepo.delete(conn, guild_id, key)

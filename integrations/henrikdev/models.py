@@ -13,11 +13,11 @@ class RateLimit(BaseModel):
     """Infos rate limit extraites des headers."""
     model_config = ConfigDict(extra="ignore")
 
-    limit: int
-    remaining: int
-    reset_seconds: int
-    bucket: str
-    version: str
+    limit: Optional[int] = None
+    remaining: Optional[int] = None
+    reset_seconds: Optional[int] = None
+    bucket: Optional[str] = None
+    version: Optional[str] = None
 
 
 # --------------------------------------------------------------------------------------------------------------------------
@@ -175,7 +175,7 @@ class PeakData(BaseModel):
     season: SeasonRef
     ranking_schema: str
     tier: TierRef
-    rr: Optional[int] = None  # présent dans ta vraie réponse :contentReference[oaicite:2]{index=2}
+    rr: Optional[int] = None
 
 
 class CurrentData(BaseModel):
@@ -185,8 +185,8 @@ class CurrentData(BaseModel):
     last_change: int
     elo: int
     games_needed_for_rating: int
-    rank_protection_shields: Optional[int] = None  # présent dans ta vraie réponse :contentReference[oaicite:3]{index=3}
-    leaderboard_placement: Optional[LeaderboardPlacement] = None  # souvent null :contentReference[oaicite:4]{index=4}
+    rank_protection_shields: Optional[int] = None
+    leaderboard_placement: Optional[LeaderboardPlacement] = None
 
 
 class SeasonalEntry(BaseModel):
@@ -195,10 +195,10 @@ class SeasonalEntry(BaseModel):
     wins: int
     games: int
     end_tier: TierRef
-    end_rr: Optional[int] = None  # présent dans ta vraie réponse :contentReference[oaicite:5]{index=5}
+    end_rr: Optional[int] = None
     ranking_schema: str
     leaderboard_placement: Optional[LeaderboardPlacement] = None
-    act_wins: List[TierRef] = []
+    act_wins: List[TierRef] = Field(default_factory=list)
 
 
 class MmrData(BaseModel):
@@ -206,7 +206,7 @@ class MmrData(BaseModel):
     account: MmrAccount
     peak: PeakData
     current: CurrentData
-    seasonal: List[SeasonalEntry] = []
+    seasonal: List[SeasonalEntry] = Field(default_factory=list)
 
 
 class MmrResponse(BaseModel):

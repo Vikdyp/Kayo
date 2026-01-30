@@ -1,144 +1,191 @@
 # bot.py
-import logging
+
 import asyncio
+import logging
+from typing import Iterable
+
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 
 from logging_config import setup_logging
-from config import DISCORD_TOKEN, TEST_GUILD_ID, LOG_LEVELS, TEST_MODE
-from utils.database import database
+from config import DISCORD_TOKEN, TEST_GUILD_ID, LOG_LEVELS, TEST_MODE, DATABASE
+
 from utils.checks import rules_check, rules_interaction_check
-from cogs.other.online_count_updater import setup_rank_updater
 
-# Configure le logging au démarrage
+from database.engine import Db, DbConfig
+from database.migrate import run_migrations
+
+# ------------------------------------------------------------
+# Logging
+# ------------------------------------------------------------
 setup_logging(LOG_LEVELS)
-
 logger = logging.getLogger("bot")
 
-intents = discord.Intents.all()
-intents.guilds = True
-intents.members = True
-intents.messages = True
-intents.message_content = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+# ------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------
+def _build_postgres_dsn() -> str:
+    """
+    Construit une DSN à partir de config.DATABASE.
+    Ex: postgresql://user:pass@host:5432/dbname?sslmode=require
+    """
+    user = DATABASE.get("user")
+    password = DATABASE.get("password")
+    host = DATABASE.get("host")
+    port = DATABASE.get("port")
+    dbname = DATABASE.get("database")
+    ssl = DATABASE.get("ssl", False)
 
-# Si rules_check() renvoie une fonction predicate, OK.
-# Sinon, la version standard est: bot.add_check(predicate)
-bot.check(rules_check())
+    missing = [k for k, v in {
+        "DATABASE_USER": user,
+        "DATABASE_PASSWORD": password,
+        "DATABASE_HOST": host,
+        "DATABASE_NAME": dbname,
+    }.items() if not v]
+
+    if missing:
+        raise RuntimeError(f"Missing database config env vars: {', '.join(missing)}")
+
+    # asyncpg accepte l’URL classique
+    dsn = f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
+    if ssl:
+        # postgresql URL standard
+        dsn += "?sslmode=require"
+    return dsn
+
+
+COG_PATHS: list[str] = [
+    "cogs.configuration.channels_configuration",
+    "cogs.configuration.roles_configuration",
+]
+
+
+# ------------------------------------------------------------
+# Bot
+# ------------------------------------------------------------
+class KayoBot(commands.Bot):
+    def __init__(self) -> None:
+        intents = discord.Intents.all()
+        intents.guilds = True
+        intents.members = True
+        intents.messages = True
+        intents.message_content = True
+
+        super().__init__(command_prefix="!", intents=intents)
+
+        # Global prefix-command checks
+        self.check(rules_check())
+
+        # Will be set in setup_hook()
+        self.db: Db | None = None
+
+    async def setup_hook(self) -> None:
+        """
+        Called once, before on_ready. Good place for:
+        - DB init
+        - migrations
+        - loading cogs
+        - syncing app commands
+        """
+        # 1) DB init + migrations
+        dsn = _build_postgres_dsn()
+        self.db = Db(DbConfig(dsn=dsn))
+        await self.db.open()
+        logger.info("DB pool opened.")
+
+        await run_migrations(self.db)
+        logger.info("Migrations applied.")
+
+        # 2) Load extensions (cogs)
+        await self._load_extensions(COG_PATHS)
+
+        # 3) Sync slash commands
+        await self._sync_app_commands()
+
+    async def close(self) -> None:
+        """
+        Graceful shutdown.
+        """
+        try:
+            await super().close()
+        finally:
+            if self.db is not None:
+                await self.db.close()
+                logger.info("DB pool closed.")
+
+    async def on_ready(self) -> None:
+        logger.info("Connected as %s", self.user)
+
+    async def on_app_command_error(
+        self,
+        interaction: discord.Interaction,
+        error: discord.app_commands.AppCommandError,
+    ) -> None:
+        logger.exception("Slash command error: %s", error)
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send("Une erreur interne est survenue.", ephemeral=True)
+            else:
+                await interaction.response.send_message("Une erreur interne est survenue.", ephemeral=True)
+        except Exception:
+            pass
+
+    async def _load_extensions(self, paths: Iterable[str]) -> None:
+        for cog_path in paths:
+            try:
+                await self.load_extension(cog_path)
+                logger.info("Cog loaded: %s", cog_path)
+            except commands.errors.ExtensionAlreadyLoaded:
+                logger.warning("Cog already loaded: %s", cog_path)
+            except commands.errors.ExtensionNotFound:
+                logger.error("Cog not found: %s", cog_path)
+            except commands.errors.NoEntryPointError:
+                logger.error("No setup() in cog: %s", cog_path)
+            except Exception:
+                logger.exception("Failed to load cog: %s", cog_path)
+
+    async def _sync_app_commands(self) -> None:
+        """
+        Sync commands globally (prod) or to test guild (dev).
+        """
+        # Discord can rate limit sync; keep it simple and safe.
+        await asyncio.sleep(1)
+
+        try:
+            if TEST_MODE:
+                if not TEST_GUILD_ID:
+                    logger.error("TEST_MODE=True but TEST_GUILD_ID is missing; skipping sync.")
+                    return
+                guild_id = int(TEST_GUILD_ID)
+                guild = discord.Object(id=guild_id)
+
+                self.tree.copy_global_to(guild=guild)
+                synced = await self.tree.sync(guild=guild)
+                logger.info("Synced to test guild %s: %s commands", guild_id, len(synced))
+            else:
+                synced = await self.tree.sync()
+                logger.info("Synced globally: %s commands", len(synced))
+        except Exception:
+            logger.exception("Command sync failed")
+
+
+bot = KayoBot()
+
 
 @bot.tree.interaction_check
 async def _global_rules_check(interaction: discord.Interaction) -> bool:
     return await rules_interaction_check(interaction)
 
-cog_paths = [
-    "cogs.configuration.channels_configuration",
-    "cogs.configuration.role_mappings_configuration",
-    "cogs.moderation.clean",
-    "cogs.admin.admin",
-    "cogs.moderation.moderation",
-    "cogs.moderation.automod",
-    "cogs.accueil.accueil",
-    "cogs.role_management.game_role",
-    "cogs.ranking.assign_rank",
-    "cogs.rules.rules",
-    "cogs.moderation.unban_requests",
-    "cogs.troll.quoicoubeh",
-    "cogs.voice_management.queue_cog",
-    "cogs.voice_management.team_cog",
-    "cogs.voice_management.voice_cleaner",
-    "cogs.accueil.stalker",
-    "cogs.reputation.reputation",
-    "cogs.other.vocal_creator",
-    "cogs.scrims.scrims",
-    "cogs.other.rank_up",
-    "cogs.admin.status",
-    "cogs.twitch.twitch_notifier",
-    "cogs.ranking.mmr_tracker",
-    "cogs.shop.shop_notifier",
-]
 
-@bot.event
-async def on_ready():
-    logger.info("Connecté en tant que %s", bot.user)
-
-    # Note: database.connect() est appelé dans main() avant le chargement des cogs
-    database.set_bot_reference(bot)
-
-    if not clean_old_logs.is_running():
-        clean_old_logs.start()
-        logger.info("Tâche de nettoyage planifiée démarrée.")
-
-    setup_rank_updater(bot)
-    logger.info("RankUpdater activé.")
-
-    # Sync commandes
-    await asyncio.sleep(1)
-    try:
-        if TEST_MODE:
-            if not TEST_GUILD_ID:
-                logger.error("TEST_MODE activé mais TEST_GUILD_ID manquant; sync ignorée.")
-                return
-            guild_id = int(TEST_GUILD_ID)
-            guild = discord.Object(id=guild_id)
-            bot.tree.copy_global_to(guild=guild)
-            synced = await bot.tree.sync(guild=guild)
-            logger.info("Synced commandes test guild %s: %s", guild_id, len(synced))
-        else:
-            synced = await bot.tree.sync()
-            logger.info("Synced commandes globales: %s", len(synced))
-    except Exception:
-        logger.exception("Erreur lors de la synchronisation des commandes")
-
-@bot.event
-async def on_app_command_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
-    logger.exception("Erreur dans une commande slash: %s", error)
-    try:
-        await interaction.response.send_message("Une erreur interne est survenue.", ephemeral=True)
-    except Exception:
-        pass
-
-@tasks.loop(hours=24)
-async def clean_old_logs():
-    try:
-        await database.purge_old_logs_and_clean_relations(days=30)
-    except Exception:
-        logger.exception("Erreur lors du nettoyage automatique des logs")
-
-async def load_cogs():
-    for cog_path in cog_paths:
-        try:
-            await bot.load_extension(cog_path)
-            logger.info("Cog chargé: %s", cog_path)
-        except commands.errors.ExtensionAlreadyLoaded:
-            logger.warning("Cog déjà chargé: %s", cog_path)
-        except commands.errors.ExtensionNotFound:
-            logger.error("Cog non trouvé: %s", cog_path)
-        except commands.errors.NoEntryPointError:
-            logger.error("Pas de fonction setup dans le cog: %s", cog_path)
-        except Exception:
-            logger.exception("Erreur lors du chargement du cog %s", cog_path)
-
-async def main():
+async def main() -> None:
     if not DISCORD_TOKEN:
-        logger.error("DISCORD_TOKEN manquant (TEST_MODE=%s).", TEST_MODE)
+        logger.error("DISCORD_TOKEN missing (TEST_MODE=%s).", TEST_MODE)
         return
 
-    try:
-        # Connecter à la base de données AVANT de charger les cogs
-        await database.connect()
-        logger.info("Connexion à la base de données établie.")
+    async with bot:
+        await bot.start(DISCORD_TOKEN)
 
-        async with bot:
-            await load_cogs()
-            await bot.start(DISCORD_TOKEN)
-    except KeyboardInterrupt:
-        logger.info("Bot arrêté manuellement.")
-    except Exception:
-        logger.exception("Erreur inattendue")
-    finally:
-        await database.disconnect()
-        logger.info("Bot arrêté proprement.")
 
 if __name__ == "__main__":
     asyncio.run(main())
