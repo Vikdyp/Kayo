@@ -6,7 +6,6 @@ from discord import app_commands
 import logging
 from typing import Dict, List, Optional
 
-from utils.confirmation_view import ConfirmationView
 from cogs.configuration.services.channel_service import ChannelConfigurationService, normalize_key
 
 logger = logging.getLogger(__name__)
@@ -156,27 +155,14 @@ class ChannelsConfiguration(commands.Cog):
                     )
                     return
 
-                async def confirmation_callback(result: Optional[bool]):
-                    if result is True:
-                        success = await self.service.remove_one(guild_id, key)
-                        if success:
-                            await interaction.followup.send(
-                                f"Configuration supprimée pour **{self.get_action_display_name(key)}** (`{key}`).",
-                                ephemeral=True,
-                            )
-                        else:
-                            await interaction.followup.send("Suppression échouée (DB).", ephemeral=True)
-                    elif result is False:
-                        await interaction.followup.send("Suppression annulée.", ephemeral=True)
-                    else:
-                        await interaction.followup.send("Délai de confirmation expiré.", ephemeral=True)
-
-                view = ConfirmationView(interaction=interaction, callback=confirmation_callback)
-                await interaction.followup.send(
-                    f"Supprimer la configuration pour **{self.get_action_display_name(key)}** (`{key}`) ?",
-                    view=view,
-                    ephemeral=True,
-                )
+                success = await self.service.remove_one(guild_id, key)
+                if success:
+                    await interaction.followup.send(
+                        f"Configuration supprimée pour **{self.get_action_display_name(key)}** (`{key}`).",
+                        ephemeral=True,
+                    )
+                else:
+                    await interaction.followup.send("Suppression échouée (DB).", ephemeral=True)
                 return
 
             await interaction.followup.send(f"Action non prise en charge : **{action.value}**.", ephemeral=True)

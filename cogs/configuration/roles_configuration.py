@@ -6,7 +6,6 @@ from discord import app_commands
 import logging
 from typing import Dict, Optional, List
 
-from utils.confirmation_view import ConfirmationView
 from cogs.configuration.services.role_service import RoleConfigurationService, normalize_key
 
 logger = logging.getLogger(__name__)
@@ -143,27 +142,14 @@ class RolesConfiguration(commands.Cog):
                     )
                     return
 
-                async def confirmation_callback(result: Optional[bool]):
-                    if result is True:
-                        success = await self.service.remove_one(guild_id, key)
-                        if success:
-                            await interaction.followup.send(
-                                f"Configuration supprimée pour **`{key}`**.",
-                                ephemeral=True,
-                            )
-                        else:
-                            await interaction.followup.send("Suppression échouée (DB).", ephemeral=True)
-                    elif result is False:
-                        await interaction.followup.send("Suppression annulée.", ephemeral=True)
-                    else:
-                        await interaction.followup.send("Délai de confirmation expiré.", ephemeral=True)
-
-                view = ConfirmationView(interaction=interaction, callback=confirmation_callback)
-                await interaction.followup.send(
-                    f"Supprimer la configuration pour **`{key}`** ?",
-                    view=view,
-                    ephemeral=True,
-                )
+                success = await self.service.remove_one(guild_id, key)
+                if success:
+                    await interaction.followup.send(
+                        f"Configuration supprimée pour **`{key}`**.",
+                        ephemeral=True,
+                    )
+                else:
+                    await interaction.followup.send("Suppression échouée (DB).", ephemeral=True)
                 return
 
             await interaction.followup.send("Action non prise en charge.", ephemeral=True)
