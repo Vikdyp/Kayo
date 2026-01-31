@@ -1,4 +1,4 @@
-# cogs\configuration\services\channel_service.py
+# database\services\guild_channels_service.py
 
 from database.repos.guilds_repo import GuildsRepo
 from database.repos.guild_channels_repo import GuildChannelsRepo

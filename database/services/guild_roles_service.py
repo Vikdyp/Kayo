@@ -1,4 +1,4 @@
-# cogs\configuration\services\role_service.py
+# database\services\guild_roles_service.py
 
 from database.repos.guilds_repo import GuildsRepo
 from database.repos.guild_roles_repo import GuildRolesRepo

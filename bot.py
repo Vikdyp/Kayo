@@ -10,10 +10,12 @@ from discord.ext import commands
 from logging_config import setup_logging
 from config import DISCORD_TOKEN, TEST_GUILD_ID, LOG_LEVELS, TEST_MODE, DATABASE
 
-from utils.checks import rules_check, rules_interaction_check
-
 from database.engine import Db, DbConfig
 from database.migrate import run_migrations
+from database.services.member_stats_service import MemberStatsService
+from database.services.persistent_messages_service import PersistentMessagesService
+from database.services.guild_channels_service import ChannelConfigurationService
+from cogs.accueil.services import AccueilService
 
 # ------------------------------------------------------------
 # Logging
@@ -58,6 +60,8 @@ def _build_postgres_dsn() -> str:
 COG_PATHS: list[str] = [
     "cogs.configuration.channels_configuration",
     "cogs.configuration.roles_configuration",
+    "cogs.accueil.accueil",
+    "cogs.accueil.stalker",
 ]
 
 
@@ -74,11 +78,10 @@ class KayoBot(commands.Bot):
 
         super().__init__(command_prefix="!", intents=intents)
 
-        # Global prefix-command checks
-        self.check(rules_check())
 
         # Will be set in setup_hook()
         self.db: Db | None = None
+        self.accueil_service: AccueilService | None = None
 
     async def setup_hook(self) -> None:
         """
@@ -97,10 +100,19 @@ class KayoBot(commands.Bot):
         await run_migrations(self.db)
         logger.info("Migrations applied.")
 
-        # 2) Load extensions (cogs)
+        # 2) Initialize services
+        member_stats_svc = MemberStatsService(self.db)
+        persistent_msg_svc = PersistentMessagesService(self.db)
+        channel_config_svc = ChannelConfigurationService(self.db)
+        self.accueil_service = AccueilService(
+            member_stats_svc, persistent_msg_svc, channel_config_svc
+        )
+        logger.info("AccueilService initialized.")
+
+        # 3) Load extensions (cogs)
         await self._load_extensions(COG_PATHS)
 
-        # 3) Sync slash commands
+        # 4) Sync slash commands
         await self._sync_app_commands()
 
     async def close(self) -> None:
@@ -171,11 +183,6 @@ class KayoBot(commands.Bot):
 
 
 bot = KayoBot()
-
-
-@bot.tree.interaction_check
-async def _global_rules_check(interaction: discord.Interaction) -> bool:
-    return await rules_interaction_check(interaction)
 
 
 async def main() -> None:
