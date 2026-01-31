@@ -15,6 +15,7 @@ class StatusManager(commands.Cog):
             self.bot.presence_set = True
 
     @app_commands.command(name="setstatus", description="Modifie le status et l'activité du bot.")
+    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(
         status="Le nouveau status (online, idle, dnd, invisible)",
         activity="Nouveau message d'activité. Laisser vide pour utiliser 'Perfect Team'."
@@ -26,11 +27,6 @@ class StatusManager(commands.Cog):
         app_commands.Choice(name="invisible", value="invisible")
     ])
     async def set_status(self, interaction: discord.Interaction, status: app_commands.Choice[str], activity: str = None):
-        # Vérifier que l'utilisateur a les droits d'admin dans la guilde
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("Vous n'avez pas la permission d'utiliser cette commande.", ephemeral=True)
-            return
-
         valid_statuses = {
             "online": discord.Status.online,
             "idle": discord.Status.idle,

@@ -62,6 +62,7 @@ COG_PATHS: list[str] = [
     "cogs.configuration.roles_configuration",
     "cogs.accueil.accueil",
     "cogs.accueil.stalker",
+    "cogs.admin.status",
 ]
 
 
