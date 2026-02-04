@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 
 from cogs.moderation.services.moderation_service import ModerationService
 from cogs.moderation.services.automod_service import AutomodService
-from cogs.configuration.services.channel_service import ServerChannelService
+from database.services.guild_channels_service import ChannelConfigurationService
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +61,7 @@ class SpamConfirmationView(discord.ui.View):
         message_refs: List[Tuple[int, int]],  # [(channel_id, message_id), ...]
         content: str,
         guild: discord.Guild,
+        moderation_service: ModerationService,
         timeout: float = 3600  # 1 heure
     ):
         super().__init__(timeout=timeout)
@@ -69,6 +70,7 @@ class SpamConfirmationView(discord.ui.View):
         self.message_refs = message_refs
         self.content = content
         self.guild = guild
+        self._mod_svc = moderation_service
         self.resolved = False
 
     @discord.ui.button(label="Bannir", style=discord.ButtonStyle.danger, emoji="🔨")
@@ -99,22 +101,29 @@ class SpamConfirmationView(discord.ui.View):
 
         # Bannir l'utilisateur via ModerationService
         try:
-            internal_server_id = await ModerationService.get_internal_server_id(self.guild.id)
-
             # Sauvegarder les rôles
             roles_to_backup = [
                 role.id for role in self.user.roles
                 if role != self.guild.default_role and role.name.lower() != "ban"
             ]
 
-            await ModerationService.add_ban(
+            # Sauvegarder les rôles avant le ban
+            if roles_to_backup:
+                await self._mod_svc.update_roles_backup(
+                    guild_id=self.guild.id,
+                    guild_name=self.guild.name,
+                    discord_user_id=self.user.id,
+                    roles=roles_to_backup,
+                )
+
+            await self._mod_svc.add_ban(
+                guild_id=self.guild.id,
+                guild_name=self.guild.name,
                 user_id=self.user.id,
-                ban_type="perma",
+                ban_type="perm",
                 reason="Spam multi-salons détecté (confirmé par modérateur)",
                 banned_by=interaction.user.id,
                 ban_end=None,
-                roles_backup=roles_to_backup if roles_to_backup else None,
-                server_id=internal_server_id
             )
 
             # Appliquer le ban sur tous les serveurs
@@ -194,7 +203,7 @@ class SpamConfirmationView(discord.ui.View):
             if not member:
                 continue
 
-            ban_role_id = await ModerationService.get_ban_role_id(guild.id)
+            ban_role_id = await self._mod_svc.get_ban_role_id(guild.id)
             if not ban_role_id:
                 continue
 
@@ -225,8 +234,17 @@ class SpamConfirmationView(discord.ui.View):
 class AutoMod(commands.Cog):
     """Cog pour l'auto-modération: détection de scam et spam."""
 
-    def __init__(self, bot: commands.Bot):
+    def __init__(
+        self,
+        bot: commands.Bot,
+        moderation_service: ModerationService,
+        channel_service: ChannelConfigurationService,
+        automod_service: AutomodService,
+    ):
         self.bot = bot
+        self._mod_svc = moderation_service
+        self._channel_svc = channel_service
+        self._automod_svc = automod_service
         # Cache pour tracker les messages récents par utilisateur
         # Structure: {user_id: [(guild_id, channel_id, message_id, content_hash, timestamp), ...]}
         self.message_cache: Dict[int, List[Tuple[int, int, int, int, datetime]]] = {}
@@ -246,7 +264,7 @@ class AutoMod(commands.Cog):
         if guild_id in self.config_cache:
             return self.config_cache[guild_id]
 
-        config = await AutomodService.get_or_create_config(guild_id, guild_name)
+        config = await self._automod_svc.get_or_create_config(guild_id, guild_name)
         self.config_cache[guild_id] = config
         return config
 
@@ -310,7 +328,7 @@ class AutoMod(commands.Cog):
 
         # ===== TOGGLE SCAM =====
         if action.value == "enable_scam":
-            success = await AutomodService.set_scam_detection(guild_id, guild_name, True)
+            success = await self._automod_svc.set_scam_detection(guild_id, guild_name, True)
             self.invalidate_cache(guild_id)
             if success:
                 await interaction.followup.send("✅ Détection de scam **activée**.", ephemeral=True)
@@ -319,7 +337,7 @@ class AutoMod(commands.Cog):
             return
 
         if action.value == "disable_scam":
-            success = await AutomodService.set_scam_detection(guild_id, guild_name, False)
+            success = await self._automod_svc.set_scam_detection(guild_id, guild_name, False)
             self.invalidate_cache(guild_id)
             if success:
                 await interaction.followup.send("✅ Détection de scam **désactivée**.", ephemeral=True)
@@ -329,7 +347,7 @@ class AutoMod(commands.Cog):
 
         # ===== TOGGLE SPAM =====
         if action.value == "enable_spam":
-            success = await AutomodService.set_spam_detection(guild_id, guild_name, True)
+            success = await self._automod_svc.set_spam_detection(guild_id, guild_name, True)
             self.invalidate_cache(guild_id)
             if success:
                 await interaction.followup.send("✅ Détection de spam multi-salons **activée**.", ephemeral=True)
@@ -338,7 +356,7 @@ class AutoMod(commands.Cog):
             return
 
         if action.value == "disable_spam":
-            success = await AutomodService.set_spam_detection(guild_id, guild_name, False)
+            success = await self._automod_svc.set_spam_detection(guild_id, guild_name, False)
             self.invalidate_cache(guild_id)
             if success:
                 await interaction.followup.send("✅ Détection de spam multi-salons **désactivée**.", ephemeral=True)
@@ -361,7 +379,7 @@ class AutoMod(commands.Cog):
                 if spam_threshold < 2 or spam_threshold > 10:
                     await interaction.followup.send("❌ Le seuil doit être entre 2 et 10.", ephemeral=True)
                     return
-                success = await AutomodService.set_spam_threshold(guild_id, guild_name, spam_threshold)
+                success = await self._automod_svc.set_spam_threshold(guild_id, guild_name, spam_threshold)
                 if success:
                     messages.append(f"Seuil: **{spam_threshold}** salons")
 
@@ -369,7 +387,7 @@ class AutoMod(commands.Cog):
                 if spam_time_window < 10 or spam_time_window > 300:
                     await interaction.followup.send("❌ La fenêtre doit être entre 10 et 300 secondes.", ephemeral=True)
                     return
-                success = await AutomodService.set_spam_time_window(guild_id, guild_name, spam_time_window)
+                success = await self._automod_svc.set_spam_time_window(guild_id, guild_name, spam_time_window)
                 if success:
                     messages.append(f"Fenêtre: **{spam_time_window}** secondes")
 
@@ -386,7 +404,7 @@ class AutoMod(commands.Cog):
             if not role:
                 await interaction.followup.send("❌ Veuillez spécifier un rôle.", ephemeral=True)
                 return
-            success = await AutomodService.add_whitelisted_role(guild_id, guild_name, role.id)
+            success = await self._automod_svc.add_whitelisted_role(guild_id, guild_name, role.id)
             self.invalidate_cache(guild_id)
             if success:
                 await interaction.followup.send(f"✅ Rôle {role.mention} ajouté à la whitelist.", ephemeral=True)
@@ -398,7 +416,7 @@ class AutoMod(commands.Cog):
             if not role:
                 await interaction.followup.send("❌ Veuillez spécifier un rôle.", ephemeral=True)
                 return
-            success = await AutomodService.remove_whitelisted_role(guild_id, guild_name, role.id)
+            success = await self._automod_svc.remove_whitelisted_role(guild_id, guild_name, role.id)
             self.invalidate_cache(guild_id)
             if success:
                 await interaction.followup.send(f"✅ Rôle {role.mention} retiré de la whitelist.", ephemeral=True)
@@ -411,7 +429,7 @@ class AutoMod(commands.Cog):
             if not channel:
                 await interaction.followup.send("❌ Veuillez spécifier un salon.", ephemeral=True)
                 return
-            success = await AutomodService.add_whitelisted_channel(guild_id, guild_name, channel.id)
+            success = await self._automod_svc.add_whitelisted_channel(guild_id, guild_name, channel.id)
             self.invalidate_cache(guild_id)
             if success:
                 await interaction.followup.send(f"✅ Salon {channel.mention} ajouté à la whitelist.", ephemeral=True)
@@ -423,7 +441,7 @@ class AutoMod(commands.Cog):
             if not channel:
                 await interaction.followup.send("❌ Veuillez spécifier un salon.", ephemeral=True)
                 return
-            success = await AutomodService.remove_whitelisted_channel(guild_id, guild_name, channel.id)
+            success = await self._automod_svc.remove_whitelisted_channel(guild_id, guild_name, channel.id)
             self.invalidate_cache(guild_id)
             if success:
                 await interaction.followup.send(f"✅ Salon {channel.mention} retiré de la whitelist.", ephemeral=True)
@@ -451,7 +469,7 @@ class AutoMod(commands.Cog):
             except re.error as e:
                 await interaction.followup.send(f"❌ Pattern regex invalide: {e}", ephemeral=True)
                 return
-            success = await AutomodService.add_custom_pattern(guild_id, guild_name, pattern)
+            success = await self._automod_svc.add_custom_pattern(guild_id, guild_name, pattern)
             self.invalidate_cache(guild_id)
             if success:
                 await interaction.followup.send(f"✅ Pattern `{pattern}` ajouté.", ephemeral=True)
@@ -463,7 +481,7 @@ class AutoMod(commands.Cog):
             if not pattern:
                 await interaction.followup.send("❌ Veuillez spécifier un pattern.", ephemeral=True)
                 return
-            success = await AutomodService.remove_custom_pattern(guild_id, guild_name, pattern)
+            success = await self._automod_svc.remove_custom_pattern(guild_id, guild_name, pattern)
             self.invalidate_cache(guild_id)
             if success:
                 await interaction.followup.send(f"✅ Pattern `{pattern}` retiré.", ephemeral=True)
@@ -486,7 +504,7 @@ class AutoMod(commands.Cog):
             if not domain:
                 await interaction.followup.send("❌ Veuillez spécifier un domaine.", ephemeral=True)
                 return
-            success = await AutomodService.add_custom_domain(guild_id, guild_name, domain)
+            success = await self._automod_svc.add_custom_domain(guild_id, guild_name, domain)
             self.invalidate_cache(guild_id)
             if success:
                 await interaction.followup.send(f"✅ Domaine `{domain}` ajouté.", ephemeral=True)
@@ -498,7 +516,7 @@ class AutoMod(commands.Cog):
             if not domain:
                 await interaction.followup.send("❌ Veuillez spécifier un domaine.", ephemeral=True)
                 return
-            success = await AutomodService.remove_custom_domain(guild_id, guild_name, domain)
+            success = await self._automod_svc.remove_custom_domain(guild_id, guild_name, domain)
             self.invalidate_cache(guild_id)
             if success:
                 await interaction.followup.send(f"✅ Domaine `{domain}` retiré.", ephemeral=True)
@@ -690,22 +708,29 @@ class AutoMod(commands.Cog):
 
         # 2. Bannir l'utilisateur
         try:
-            internal_server_id = await ModerationService.get_internal_server_id(guild.id)
-
             # Sauvegarder les rôles
             roles_to_backup = [
                 role.id for role in member.roles
                 if role != guild.default_role and role.name.lower() != "ban"
             ]
 
-            await ModerationService.add_ban(
+            # Sauvegarder les rôles avant le ban
+            if roles_to_backup:
+                await self._mod_svc.update_roles_backup(
+                    guild_id=guild.id,
+                    guild_name=guild.name,
+                    discord_user_id=member.id,
+                    roles=roles_to_backup,
+                )
+
+            await self._mod_svc.add_ban(
+                guild_id=guild.id,
+                guild_name=guild.name,
                 user_id=member.id,
-                ban_type="perma",
+                ban_type="perm",
                 reason="Scam détecté (auto-modération)",
                 banned_by=self.bot.user.id,
                 ban_end=None,
-                roles_backup=roles_to_backup if roles_to_backup else None,
-                server_id=internal_server_id
             )
 
             # Appliquer le ban sur tous les serveurs
@@ -751,7 +776,7 @@ class AutoMod(commands.Cog):
             if not member:
                 continue
 
-            ban_role_id = await ModerationService.get_ban_role_id(guild.id)
+            ban_role_id = await self._mod_svc.get_ban_role_id(guild.id)
             if not ban_role_id:
                 continue
 
@@ -779,9 +804,7 @@ class AutoMod(commands.Cog):
     ) -> None:
         """Envoie un log dans le salon de modération."""
         try:
-            mod_channel_id = await ServerChannelService.get_channel_id(
-                guild.id, guild.name, "modération"
-            )
+            mod_channel_id = await self._channel_svc.get_one(guild.id, "modération")
             if not mod_channel_id:
                 logger.warning(f"Salon de modération non configuré pour {guild.name}")
                 return
@@ -898,9 +921,7 @@ class AutoMod(commands.Cog):
                         message_refs.append((entry[1], entry[2]))  # (channel_id, message_id)
 
             # Récupérer le salon de modération
-            mod_channel_id = await ServerChannelService.get_channel_id(
-                guild.id, guild.name, "modération"
-            )
+            mod_channel_id = await self._channel_svc.get_one(guild.id, "modération")
             if not mod_channel_id:
                 logger.warning(f"Salon de modération non configuré pour {guild.name}")
                 self.pending_spam_alerts.discard(user.id)
@@ -949,7 +970,8 @@ class AutoMod(commands.Cog):
                 user=user,
                 message_refs=message_refs,
                 content=message.content,
-                guild=guild
+                guild=guild,
+                moderation_service=self._mod_svc,
             )
 
             await mod_channel.send(embed=embed, view=view)
@@ -999,5 +1021,18 @@ class AutoMod(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(AutoMod(bot))
+    moderation_service = getattr(bot, "moderation_service", None)
+    if moderation_service is None:
+        logger.error("moderation_service non initialisé. AutoMod ne sera pas chargé.")
+        return
+
+    automod_service = getattr(bot, "automod_service", None)
+    if automod_service is None:
+        logger.error("automod_service non initialisé. AutoMod ne sera pas chargé.")
+        return
+
+    # Créer le channel_service
+    channel_service = ChannelConfigurationService(bot.db)
+
+    await bot.add_cog(AutoMod(bot, moderation_service, channel_service, automod_service))
     logger.info("AutoMod Cog chargé avec succès.")

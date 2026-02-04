@@ -1,7 +1,16 @@
 # database\repos\user_repo.py
 
 import asyncpg
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Optional
+
+
+@dataclass(frozen=True)
+class UserRow:
+    user_id: int
+    discord_id: int
+    last_seen_at: Optional[datetime]
 
 
 class UserRepo:
@@ -44,4 +53,40 @@ class UserRepo:
         await conn.execute(
             "UPDATE users SET last_seen_at = now() WHERE user_id = $1;",
             user_id,
+        )
+
+    @staticmethod
+    async def get_by_discord_id(
+        conn: asyncpg.Connection,
+        discord_id: int,
+    ) -> Optional[UserRow]:
+        """Récupère un utilisateur par son discord_id."""
+        row = await conn.fetchrow(
+            "SELECT user_id, discord_id, last_seen_at FROM users WHERE discord_id = $1;",
+            discord_id,
+        )
+        if not row:
+            return None
+        return UserRow(
+            user_id=row["user_id"],
+            discord_id=row["discord_id"],
+            last_seen_at=row["last_seen_at"],
+        )
+
+    @staticmethod
+    async def get_by_user_id(
+        conn: asyncpg.Connection,
+        user_id: int,
+    ) -> Optional[UserRow]:
+        """Récupère un utilisateur par son user_id interne."""
+        row = await conn.fetchrow(
+            "SELECT user_id, discord_id, last_seen_at FROM users WHERE user_id = $1;",
+            user_id,
+        )
+        if not row:
+            return None
+        return UserRow(
+            user_id=row["user_id"],
+            discord_id=row["discord_id"],
+            last_seen_at=row["last_seen_at"],
         )

@@ -31,14 +31,14 @@ LOG_LEVELS = {
     "bot": logging.INFO,
 
     # Discord.py est verbeux
-    "discord": logging.WARNING,
-    "discord.http": logging.WARNING,
+    "discord": logging.INFO,
+    "discord.http": logging.INFO,
 
     # Cogs (règle globale)
     "cogs": logging.INFO,
 
     # Tu peux affiner un sous-module si besoin
-    "cogs.moderation": logging.WARNING,
+    "cogs.moderation": logging.INFO,
     "cogs.twitch": logging.INFO,
 
     # Intégrations / services

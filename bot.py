@@ -15,7 +15,15 @@ from database.migrate import run_migrations
 from database.services.member_stats_service import MemberStatsService
 from database.services.persistent_messages_service import PersistentMessagesService
 from database.services.guild_channels_service import ChannelConfigurationService
+from database.services.guild_roles_service import RoleConfigurationService
+from database.services.message_deletions_service import MessageDeletionsService
+from database.services.automod_config_service import AutomodConfigService
+from database.services.moderation_service import ModerationDbService
+from database.services.unban_requests_service import UnbanRequestsService
 from cogs.accueil.services import AccueilService
+from cogs.moderation.services.clean_service import CleanService
+from cogs.moderation.services.automod_service import AutomodService
+from cogs.moderation.services.moderation_service import ModerationService
 
 # ------------------------------------------------------------
 # Logging
@@ -63,6 +71,10 @@ COG_PATHS: list[str] = [
     "cogs.accueil.accueil",
     "cogs.accueil.stalker",
     "cogs.admin.status",
+    "cogs.moderation.clean",
+    "cogs.moderation.moderation",
+    "cogs.moderation.automod",
+    "cogs.moderation.unban_requests",
 ]
 
 
@@ -83,6 +95,10 @@ class KayoBot(commands.Bot):
         # Will be set in setup_hook()
         self.db: Db | None = None
         self.accueil_service: AccueilService | None = None
+        self.clean_service: CleanService | None = None
+        self.automod_service: AutomodService | None = None
+        self.moderation_service: ModerationService | None = None
+        self.unban_requests_svc: UnbanRequestsService | None = None
 
     async def setup_hook(self) -> None:
         """
@@ -101,19 +117,40 @@ class KayoBot(commands.Bot):
         await run_migrations(self.db)
         logger.info("Migrations applied.")
 
-        # 2) Initialize services
+        # 2) Initialize DB services
         member_stats_svc = MemberStatsService(self.db)
         persistent_msg_svc = PersistentMessagesService(self.db)
         channel_config_svc = ChannelConfigurationService(self.db)
+        role_config_svc = RoleConfigurationService(self.db)
+        message_deletions_svc = MessageDeletionsService(self.db)
+        automod_config_svc = AutomodConfigService(self.db)
+        moderation_db_svc = ModerationDbService(self.db)
+        self.unban_requests_svc = UnbanRequestsService(self.db)
+
+        # 3) Initialize business services
         self.accueil_service = AccueilService(
             member_stats_svc, persistent_msg_svc, channel_config_svc
         )
         logger.info("AccueilService initialized.")
 
-        # 3) Load extensions (cogs)
+        self.clean_service = CleanService(message_deletions_svc)
+        logger.info("CleanService initialized.")
+
+        self.automod_service = AutomodService(automod_config_svc)
+        logger.info("AutomodService initialized.")
+
+        self.moderation_service = ModerationService(
+            moderation_db_svc,
+            persistent_msg_svc,
+            role_config_svc,
+            channel_config_svc,
+        )
+        logger.info("ModerationService initialized.")
+
+        # 4) Load extensions (cogs)
         await self._load_extensions(COG_PATHS)
 
-        # 4) Sync slash commands
+        # 5) Sync slash commands
         await self._sync_app_commands()
 
     async def close(self) -> None:

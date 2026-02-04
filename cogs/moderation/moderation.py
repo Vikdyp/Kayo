@@ -8,14 +8,15 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from cogs.moderation.services.moderation_service import ModerationService
-from utils.confirmation_view import ConfirmationView
+from cogs.moderation.views.confirmation_view import ConfirmationView
 
 logger = logging.getLogger(__name__)
 
 class Moderation(commands.Cog):
     """Cog pour gérer les bannissements, débannissements, avertissements et vérifications."""
-    def __init__(self, bot: commands.Bot):
+    def __init__(self, bot: commands.Bot, moderation_service: ModerationService):
         self.bot = bot
+        self._mod_svc = moderation_service
         self.lock = asyncio.Lock()
         self.check_bans_expired.start()
         logger.info("Initialisation du Cog de Modération.")
@@ -98,7 +99,7 @@ class Moderation(commands.Cog):
                     )
                     return
 
-                ban_type = "temp" if duration_minutes else "perma"
+                ban_type = "temp" if duration_minutes else "perm"
 
                 # Déterminer les paramètres de suppression
                 delete_period = delete_messages.value if delete_messages else "none"
@@ -162,10 +163,16 @@ class Moderation(commands.Cog):
                     )
                     return
 
-                await ModerationService.add_warning(user.id)
+                await self._mod_svc.add_warning(
+                    guild_id=interaction.guild.id,
+                    guild_name=interaction.guild.name,
+                    user_id=user.id,
+                    warned_by=interaction.user.id,
+                    reason=reason,
+                )
                 await interaction.followup.send(
                     f"{user.display_name} a été averti(e). Raison : {reason}",
-                    ephemeral=True
+                    ephemeral=True,
                 )
 
             elif action.value == "check_status":
@@ -177,7 +184,10 @@ class Moderation(commands.Cog):
                     )
                     return
 
-                ban_info = await ModerationService.get_ban_info(user.id)  # user.id est l'ID Discord
+                ban_info = await self._mod_svc.get_ban_info(
+                    interaction.guild.id,
+                    user.id,
+                )  # user.id est l'ID Discord
                 if not ban_info:
                     await interaction.followup.send(
                         f"{user.mention} n'est pas banni(e).",  # Mention cliquable pour l'utilisateur
@@ -186,24 +196,15 @@ class Moderation(commands.Cog):
                     return
 
                 # Détails du bannissement
-                ban_type_str = ban_info.get("ban_type", "Inconnu")
-                ban_reason = ban_info.get("ban_reason", "Aucune raison fournie")
-                ban_end = ban_info.get("ban_end", "Permanent")
-                banned_at = ban_info.get("banned_at", "Inconnu")
+                ban_type_str = ban_info.ban_type or "Inconnu"
+                ban_reason = ban_info.reason or "Aucune raison fournie"
+                ban_end = ban_info.ban_end or "Permanent"
+                banned_at = ban_info.banned_at or "Inconnu"
 
                 # Récupération de l'utilisateur qui a banni
-                banned_by_id = ban_info.get("banned_by")
                 banned_by_mention = "Inconnu"
-                if banned_by_id:
-                    # Convertir l'ID interne en ID Discord
-                    discord_banned_by_id = await ModerationService.get_discord_id(banned_by_id)
-                    if discord_banned_by_id:
-                        try:
-                            banned_by_mention = f"<@{discord_banned_by_id}>"  # Format de mention cliquable
-                        except discord.NotFound:
-                            banned_by_mention = "Utilisateur introuvable"
-                    else:
-                        banned_by_mention = "Utilisateur inconnu"
+                if ban_info.moderator_discord_id:
+                    banned_by_mention = f"<@{ban_info.moderator_discord_id}>"
 
                 # Mention cliquable de l'utilisateur banni
                 banned_user_mention = f"<@{user.id}>"
@@ -250,18 +251,23 @@ class Moderation(commands.Cog):
                 if role != guild.default_role and role.name.lower() != "ban"
             ]
 
-            # Récupérer l'ID interne du serveur pour le contexte
-            internal_server_id = await ModerationService.get_internal_server_id(guild.id)
+            # Sauvegarder les rôles pour restauration après déban
+            await self._mod_svc.update_roles_backup(
+                guild_id=guild.id,
+                guild_name=guild.name,
+                discord_user_id=member.id,
+                roles=roles_to_backup,
+            )
 
-            # Ajouter les informations de bannissement dans la table 'bans' (global)
-            await ModerationService.add_ban(
+            # Ajouter les informations de bannissement
+            await self._mod_svc.add_ban(
+                guild_id=guild.id,
+                guild_name=guild.name,
                 user_id=member.id,
                 ban_type=ban_type,
                 reason=reason,
                 banned_by=banned_by.id,
                 ban_end=ban_end,
-                roles_backup=roles_to_backup if roles_to_backup else None,
-                server_id=internal_server_id
             )
 
             logger.debug(
@@ -270,17 +276,10 @@ class Moderation(commands.Cog):
             )
 
             # Appliquer le ban sur TOUS les serveurs où le bot et l'utilisateur sont présents
-            await self.apply_ban_all_guilds(member.id, reason)
-
-            # Récupérer l'ID interne du serveur
-            internal_server_id = await ModerationService.get_internal_server_id(guild.id)
-            if not internal_server_id:
-                logger.error(f"Impossible de récupérer l'ID interne du serveur pour {guild.id}.")
-                # Vous pouvez choisir de continuer ou de retourner False ici
-                # Je vais continuer pour envoyer le DM sans mention de salon de débannissement
+            await self.apply_ban_all_guilds(member.id, reason, source_member=member)
 
             # Récupérer l'ID du salon de demande-deban
-            deban_channel_id = await ModerationService.get_deban_channel_id(internal_server_id) if internal_server_id else None
+            deban_channel_id = await self._mod_svc.get_deban_channel_id(guild.id)
             if deban_channel_id:
                 deban_channel = guild.get_channel(deban_channel_id)
                 if deban_channel:
@@ -299,7 +298,7 @@ class Moderation(commands.Cog):
             )
             embed.add_field(name="Serveur", value=f"**{guild.name}**", inline=False)
             embed.add_field(name="Raison", value=reason, inline=False)
-            embed.add_field(name="Durée", value="Permanente" if ban_type == "perma" else f"Jusqu'à {ban_end}", inline=False)
+            embed.add_field(name="Durée", value="Permanente" if ban_end is None else f"Jusqu'à {ban_end}", inline=False)
             embed.add_field(name="Banni(e) par", value=banned_by.display_name, inline=False)
             embed.add_field(
                 name="Demande de Débannissement",
@@ -325,20 +324,14 @@ class Moderation(commands.Cog):
         """Débanni un membre et restaure ses rôles sur tous les serveurs."""
         logger.debug(f"Tentative de débannissement de l'utilisateur ID: {user_id}. Raison: {reason}")
 
-        # Convertir l'ID Discord en ID interne
-        internal_id = await ModerationService.get_or_create_user_id(user_id)
-        if not internal_id:
-            logger.error(f"Impossible de convertir l'ID Discord {user_id} en ID interne pour le débannissement.")
-            return
-
         # Récupérer les informations de bannissement (et les rôles sauvegardés)
-        ban_info = await ModerationService.get_ban_info(user_id)
+        ban_info = await self._mod_svc.get_ban_info(guild.id, user_id)
         if not ban_info:
             logger.warning(f"Aucune donnée de bannissement trouvée pour l'utilisateur Discord ID {user_id}.")
             return
 
         # Récupérer les rôles sauvegardés AVANT de supprimer le ban
-        saved_roles = await ModerationService.get_roles_backup(user_id)
+        saved_roles = await self._mod_svc.get_roles_backup(guild.id, user_id)
 
         # Appliquer le unban sur TOUS les serveurs où le bot et l'utilisateur sont présents
         for g in self.bot.guilds:
@@ -347,7 +340,7 @@ class Moderation(commands.Cog):
                 continue
 
             # Retirer le rôle ban
-            ban_role_id = await ModerationService.get_ban_role_id(g.id)
+            ban_role_id = await self._mod_svc.get_ban_role_id(g.id)
             if ban_role_id:
                 ban_role = g.get_role(ban_role_id)
                 if ban_role and ban_role in member.roles:
@@ -376,17 +369,13 @@ class Moderation(commands.Cog):
                         logger.exception(f"Erreur lors de la restauration des rôles de {member.display_name} dans {g.name}: {e}")
 
         # Supprimer les informations de bannissement
-        await ModerationService.remove_ban(internal_id)
+        await self._mod_svc.remove_ban(guild.id, user_id)
 
-        # Récupérer l'ID interne du serveur
-        internal_server_id = await ModerationService.get_internal_server_id(guild.id)
-        if not internal_server_id:
-            logger.error(f"Impossible de récupérer l'ID interne du serveur pour {guild.id}.")
-            # Vous pouvez choisir de continuer ou de retourner ici
-            # Je vais continuer pour envoyer le DM sans mention de salon de débannissement
+        # Nettoyer le backup des rôles maintenant qu'ils ont été restaurés
+        await self._mod_svc.clear_roles_backup(guild.id, user_id)
 
         # Récupérer l'ID du salon de demande-deban
-        deban_channel_id = await ModerationService.get_deban_channel_id(internal_server_id) if internal_server_id else None
+        deban_channel_id = await self._mod_svc.get_deban_channel_id(guild.id)
         if deban_channel_id:
             deban_channel = guild.get_channel(deban_channel_id)
             if deban_channel:
@@ -426,19 +415,30 @@ class Moderation(commands.Cog):
         except discord.HTTPException as e:
             logger.error(f"Erreur HTTP lors de l'envoi de l'embed de débannissement à l'utilisateur Discord ID {user_id}: {e}")
 
-    async def apply_ban_all_guilds(self, user_id: int, reason: str) -> None:
+    async def apply_ban_all_guilds(self, user_id: int, reason: str, source_member: Optional[discord.Member] = None) -> None:
         """
         Applique le rôle 'ban' à un utilisateur sur TOUS les serveurs où le bot est présent.
         Retire les rôles avant d'ajouter le rôle ban.
         Note: Les rôles sont sauvegardés dans la table bans lors de l'appel à add_ban().
+
+        Args:
+            user_id: ID Discord de l'utilisateur
+            reason: Raison du ban
+            source_member: Membre déjà récupéré (optionnel, évite le cache miss)
         """
         for guild in self.bot.guilds:
-            member = guild.get_member(user_id)
+            # Utiliser source_member si c'est le même serveur, sinon chercher dans le cache
+            if source_member and guild.id == source_member.guild.id:
+                member = source_member
+            else:
+                member = guild.get_member(user_id)
+
             if not member:
+                logger.debug(f"Membre {user_id} non trouvé dans le cache de {guild.name}.")
                 continue
 
             # Récupérer le rôle ban pour ce serveur
-            ban_role_id = await ModerationService.get_ban_role_id(guild.id)
+            ban_role_id = await self._mod_svc.get_ban_role_id(guild.id)
             if not ban_role_id:
                 logger.debug(f"Rôle 'ban' non configuré pour le serveur {guild.name}.")
                 continue
@@ -543,25 +543,22 @@ class Moderation(commands.Cog):
     async def check_bans_expired(self):
         """Vérifie régulièrement les bannissements temporaires expirés et débannit automatiquement les membres."""
         now = datetime.utcnow()
-        expired_bans = await ModerationService.get_expired_bans(now)
+        expired_bans = await self._mod_svc.get_expired_bans(now)
 
         count = 0
         for ban in expired_bans:
-            internal_user_id = ban["user_id"]  # Ceci est l'ID interne
-            # Récupérer l'ID Discord à partir de l'ID interne
-            discord_id = await ModerationService.get_discord_id(internal_user_id)
+            discord_id = ban.target_discord_id
             if not discord_id:
-                logger.error(f"Impossible de récupérer l'ID Discord pour l'ID interne {internal_user_id}.")
+                logger.error("Impossible de récupérer l'ID Discord pour un ban expiré.")
                 continue
 
-            # Utiliser le premier serveur où l'utilisateur est présent comme référence
-            # (unban_member s'applique maintenant sur tous les serveurs automatiquement)
-            for guild in self.bot.guilds:
-                member = guild.get_member(discord_id)
-                if member:
-                    await self.unban_member(guild, discord_id, reason="Expiration du bannissement temporaire")
-                    count += 1
-                    break  # Le unban est global, pas besoin de continuer
+            guild = self.bot.get_guild(ban.guild_id)
+            if not guild:
+                logger.warning(f"Guild introuvable pour le ban expiré: {ban.guild_id}.")
+                continue
+
+            await self.unban_member(guild, discord_id, reason="Expiration du bannissement temporaire")
+            count += 1
 
         if count > 0:
             logger.info(f"{count} bannissement(s) expiré(s) traité(s) avec succès.")
@@ -571,5 +568,9 @@ class Moderation(commands.Cog):
         await self.bot.wait_until_ready()
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(Moderation(bot))
+    moderation_service = getattr(bot, "moderation_service", None)
+    if moderation_service is None:
+        logger.error("moderation_service non initialisé dans le bot. Le cog Moderation ne sera pas chargé.")
+        return
+    await bot.add_cog(Moderation(bot, moderation_service))
     logger.info("Moderation Cog chargé avec succès.")
