@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Tuple, Any
 import discord
 from discord.ext import commands, tasks
 
-from cogs.voice_management.services.five_stack_service import MatchmakingService
+from cogs.five_stack.services.five_stack_service import MatchmakingService
 from cogs.configuration.services.channel_service import ServerChannelService
 
 # Seuil pour la différence d'ELO autorisée entre les membres d'un groupe

@@ -8,7 +8,7 @@ import discord
 from discord import ButtonStyle, Interaction
 from discord.ui import Button, Select, View
 
-from cogs.voice_management.services.five_stack_service import MatchmakingService
+from cogs.five_stack.services.five_stack_service import MatchmakingService
 from cogs.ranking.services.assign_rank_service import valorant_account_linked
 from cogs.configuration.services.channel_service import ServerChannelService
 

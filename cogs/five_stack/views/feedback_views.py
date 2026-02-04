@@ -62,7 +62,7 @@ class MatchFeedbackView(View):
     async def _handle_rating(self, interaction: discord.Interaction, rating: int):
         """Gère la soumission d'une notation."""
         # Importer ici pour éviter les imports circulaires
-        from cogs.voice_management.services.five_stack_service import MatchmakingService
+        from cogs.five_stack.services.five_stack_service import MatchmakingService
 
         # Déterminer le type de feedback
         if rating >= 4:
@@ -156,7 +156,7 @@ class DetailedFeedbackModal(discord.ui.Modal, title="Feedback détaillé"):
         self.rating = rating
 
     async def on_submit(self, interaction: discord.Interaction):
-        from cogs.voice_management.services.five_stack_service import MatchmakingService
+        from cogs.five_stack.services.five_stack_service import MatchmakingService
 
         # Parser les problèmes mentionnés
         issues_list = []
