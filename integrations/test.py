@@ -48,6 +48,12 @@ async def main():
 
             resp = await svc2.get_player_title_by_uuid(title)
             print(f"Title: {resp.data.displayName}, {resp.data.titleText}")
+
+            resp, rl = await svc.get_stored_mmr_history_by_puuid(region=region, platform=platform, puuid=puuid)
+            print(f"Stored MMR: {resp.data[0].tier.name}, {resp.data[0].rr}, Date: {resp.data[0].date}")
+ 
+            resp, rl = await svc.get_mmr_history_by_puuid(region=region, platform=platform, puuid=puuid)
+            print(f"Live MMR History for {resp.data.account.name}: Rank={resp.data.history[0].tier.name}, RR={resp.data.history[0].rr}, Date={resp.data.history[0].date}")
         
         except RateLimitError as e:
             print("Rate Limit:", e)

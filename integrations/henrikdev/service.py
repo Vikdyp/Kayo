@@ -5,7 +5,8 @@ from pydantic import ValidationError
 
 from integrations.exceptions import ApiError
 from integrations.http_client import HTTPClient
-from integrations.henrikdev.models import AccountResponseName, AccountResponsePuuid, RateLimit, MmrResponse, MatchlistResponse
+from integrations.henrikdev.models import (AccountResponseName, AccountResponsePuuid, RateLimit,
+MmrResponse, MatchlistResponse, StoredMmrHistoryV2Response, MmrHistoryV2Response )
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +99,7 @@ class HenrikDevService:
         try:
             model = MmrResponse.model_validate(resp.payload)
         except ValidationError as e:
-            logger.exception("Invalid payload for get_account (url=%s)", url)
+            logger.exception("Invalid payload for get_mmr_by_puuid (url=%s)", url)
             raise ApiError(f"Invalid API payload: {e}") from e
         
         return model, rl
@@ -125,7 +126,41 @@ class HenrikDevService:
         try:
             model = MatchlistResponse.model_validate(resp.payload)
         except ValidationError as e:
-            logger.exception("Invalid payload for get_account (url=%s)", url)
+            logger.exception("Invalid payload for get_matchlist_by_puuid (url=%s)", url)
+            raise ApiError(f"Invalid API payload: {e}") from e
+        
+        return model, rl
+
+    async def get_mmr_history_by_puuid(self, region: str, platform: str, puuid: str):
+        
+        url = f"{self.BASE_URL}/v2/by-puuid/mmr-history/{region}/{platform}/{puuid}"
+        resp = await self._client.get(url, headers=self._header)
+
+        rl = resp.ratelimit()
+        logger.debug("RateLimit: remaining=%s/%s reset=%ss bucket=%s version=%s",
+            rl.remaining, rl.limit, rl.reset_seconds, rl.bucket, rl.version)
+        
+        try:
+            model = MmrHistoryV2Response.model_validate(resp.payload)
+        except ValidationError as e:
+            logger.exception("Invalid payload for get_mmr_history_by_puuid (url=%s)", url)
+            raise ApiError(f"Invalid API payload: {e}") from e
+        
+        return model, rl
+
+    async def get_stored_mmr_history_by_puuid(self, region: str, platform: str, puuid: str):
+        
+        url = f"{self.BASE_URL}/v2/by-puuid/stored-mmr-history/{region}/{platform}/{puuid}"
+        resp = await self._client.get(url, headers=self._header)
+
+        rl = resp.ratelimit()
+        logger.debug("RateLimit: remaining=%s/%s reset=%ss bucket=%s version=%s",
+            rl.remaining, rl.limit, rl.reset_seconds, rl.bucket, rl.version)
+        
+        try:
+            model = StoredMmrHistoryV2Response.model_validate(resp.payload)
+        except ValidationError as e:
+            logger.exception("Invalid payload for get_stored_mmr_history_by_puuid (url=%s)", url)
             raise ApiError(f"Invalid API payload: {e}") from e
         
         return model, rl

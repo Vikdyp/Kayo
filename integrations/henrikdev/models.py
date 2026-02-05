@@ -4,6 +4,8 @@ from __future__ import annotations
 from typing import Any, Mapping, Optional, List, Sequence
 from pydantic import BaseModel, ConfigDict, Field
 
+from datetime import datetime
+
 
 # --------------------------------------------------------------------------------------------------------------------------
 # Model pour le rate limite en general le meme dans tout les headers                                                       |
@@ -286,3 +288,70 @@ class MatchlistResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
     status: int
     data: List[MatchItem]
+    
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Models for /valorant/v2/by-puuid/mmr-history/{region}/{platform}/{puuid}
+# ---------------------------------------------------------------------------------------------------------------------
+
+class MmrTier(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: int
+    name: str
+
+class MmrMap(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    name: str
+
+class MmrSeason(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    short: str
+
+class MmrHistoryEntry(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    tier: MmrTier
+    match_id: str
+    map: MmrMap
+    season: MmrSeason
+    rr: int
+    last_change: int
+    elo: int
+    refunded_rr: int
+    was_derank_protected: bool
+    date: datetime
+
+class MmrAccount(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    name: str
+    tag: str
+    puuid: str
+
+class MmrHistoryData(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    account: MmrAccount
+    history: List[MmrHistoryEntry]
+
+class MmrHistoryV2Response(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    status: int
+    data: MmrHistoryData
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Models for /valorant/v2/by-puuid/stored-mmr-history/{region}/{platform}/{puuid}
+# ---------------------------------------------------------------------------------------------------------------------
+
+class StoredMmrResults(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    total: int
+    returned: int
+    before: int
+    after: int
+
+class StoredMmrHistoryV2Response(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    status: int
+    results: StoredMmrResults
+    data: List[MmrHistoryEntry] # Reuses MmrHistoryEntry
