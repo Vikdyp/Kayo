@@ -11,7 +11,6 @@ from urllib.parse import urlparse
 
 from cogs.moderation.services.moderation_service import ModerationService
 from cogs.moderation.services.automod_service import AutomodService
-from database.services.guild_channels_service import ChannelConfigurationService
 
 logger = logging.getLogger(__name__)
 
@@ -238,12 +237,10 @@ class AutoMod(commands.Cog):
         self,
         bot: commands.Bot,
         moderation_service: ModerationService,
-        channel_service: ChannelConfigurationService,
         automod_service: AutomodService,
     ):
         self.bot = bot
         self._mod_svc = moderation_service
-        self._channel_svc = channel_service
         self._automod_svc = automod_service
         # Cache pour tracker les messages récents par utilisateur
         # Structure: {user_id: [(guild_id, channel_id, message_id, content_hash, timestamp), ...]}
@@ -804,7 +801,7 @@ class AutoMod(commands.Cog):
     ) -> None:
         """Envoie un log dans le salon de modération."""
         try:
-            mod_channel_id = await self._channel_svc.get_one(guild.id, "modération")
+            mod_channel_id = await self._automod_svc.get_mod_channel_id(guild.id)
             if not mod_channel_id:
                 logger.warning(f"Salon de modération non configuré pour {guild.name}")
                 return
@@ -921,7 +918,7 @@ class AutoMod(commands.Cog):
                         message_refs.append((entry[1], entry[2]))  # (channel_id, message_id)
 
             # Récupérer le salon de modération
-            mod_channel_id = await self._channel_svc.get_one(guild.id, "modération")
+            mod_channel_id = await self._automod_svc.get_mod_channel_id(guild.id)
             if not mod_channel_id:
                 logger.warning(f"Salon de modération non configuré pour {guild.name}")
                 self.pending_spam_alerts.discard(user.id)
@@ -1031,8 +1028,5 @@ async def setup(bot: commands.Bot):
         logger.error("automod_service non initialisé. AutoMod ne sera pas chargé.")
         return
 
-    # Créer le channel_service
-    channel_service = ChannelConfigurationService(bot.db)
-
-    await bot.add_cog(AutoMod(bot, moderation_service, channel_service, automod_service))
+    await bot.add_cog(AutoMod(bot, moderation_service, automod_service))
     logger.info("AutoMod Cog chargé avec succès.")

@@ -1,15 +1,11 @@
 # cogs/accueil/stalker.py
 """
 Cog de statistiques membres - UI Discord uniquement.
-La génération du graphique reste dans le cog car c'est de la présentation.
 """
 
 import discord
 from discord.ext import commands, tasks
 import logging
-import io
-from matplotlib import ticker
-import matplotlib.pyplot as plt
 from datetime import datetime, time
 from zoneinfo import ZoneInfo
 from typing import Optional, Dict
@@ -147,61 +143,12 @@ class StalkerCog(commands.Cog):
         guild: discord.Guild,
         period: str = "default",
     ) -> Optional[discord.File]:
-        """Génère un graphique de l'évolution des membres sur la période donnée."""
-        # Récupérer les données via le service
-        evolution_data = await self._service.get_evolution_data(guild.id, period)
-
-        if not evolution_data:
-            logger.info("Aucune donnée d'évolution trouvée pour la période demandée.")
+        """Génère un graphique via le service et le wrap en discord.File."""
+        buf = await self._service.generate_member_evolution_graph(
+            guild.id, period, guild.member_count
+        )
+        if buf is None:
             return None
-
-        # Construire les données pour le graphique
-        dates = [dp.date.strftime("%d-%m") for dp in evolution_data]
-        net_changes = [dp.net_change for dp in evolution_data]
-
-        # Calcul cumulatif simplifié :
-        # On part du nombre actuel de membres et on remonte dans le temps
-        current_total = guild.member_count
-
-        # cumulative[i] = nombre de membres au jour i
-        cumulative = [0] * len(net_changes)
-        cumulative[-1] = current_total
-
-        # Remonter dans le temps
-        for i in range(len(net_changes) - 2, -1, -1):
-            cumulative[i] = cumulative[i + 1] - net_changes[i + 1]
-
-        # Créer le graphique
-        plt.figure(figsize=(10, 5))
-        plt.plot(range(len(dates)), cumulative, marker="o", linestyle="-", color="#2ecc71", markersize=4)
-        plt.fill_between(range(len(dates)), cumulative, alpha=0.3, color="#2ecc71")
-        plt.title("Évolution du nombre de membres", fontsize=14, fontweight="bold")
-        plt.xlabel("Date", fontsize=10)
-        plt.ylabel("Nombre de membres", fontsize=10)
-
-        ax = plt.gca()
-        ax.set_facecolor("#f8f9fa")
-        plt.gcf().set_facecolor("#ffffff")
-
-        # Afficher moins de labels si trop de dates
-        if len(dates) > 15:
-            step = max(1, len(dates) // 10)
-            tick_positions = list(range(0, len(dates), step))
-            if len(dates) - 1 not in tick_positions:
-                tick_positions.append(len(dates) - 1)
-            ax.xaxis.set_major_locator(ticker.FixedLocator(tick_positions))
-            ax.set_xticklabels([dates[i] for i in tick_positions], rotation=45, ha="right")
-        else:
-            ax.xaxis.set_major_locator(ticker.FixedLocator(range(len(dates))))
-            ax.set_xticklabels(dates, rotation=45, ha="right")
-
-        plt.grid(True, alpha=0.3)
-        plt.tight_layout()
-
-        buf = io.BytesIO()
-        plt.savefig(buf, format="png", dpi=100)
-        buf.seek(0)
-        plt.close()
         return discord.File(fp=buf, filename="evolution_membres.png")
 
     async def update_stats_embed(

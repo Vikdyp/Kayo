@@ -20,6 +20,8 @@ from database.services.message_deletions_service import MessageDeletionsService
 from database.services.automod_config_service import AutomodConfigService
 from database.services.moderation_service import ModerationDbService
 from database.services.unban_requests_service import UnbanRequestsService
+from database.services.guild_members_service import GuildMembersService
+from database.services.valorant_info_service import ValorantInfoService
 from cogs.accueil.services import AccueilService
 from cogs.moderation.services.clean_service import CleanService
 from cogs.moderation.services.automod_service import AutomodService
@@ -75,6 +77,20 @@ COG_PATHS: list[str] = [
     "cogs.moderation.moderation",
     "cogs.moderation.automod",
     "cogs.moderation.unban_requests",
+    "cogs.rules.rules",
+    "cogs.role_management.auto_role",
+    "cogs.update.rank_up",
+    "cogs.update.online_count_updater",
+    "cogs.voice_chat.vocal_creator",
+    "cogs.role_management.game_role",
+    "cogs.role_management.language_role",
+    "cogs.role_management.role_combination",
+    "cogs.troll.quoicoubeh",
+    "cogs.twitch.twitch_notifier",
+    "cogs.file_counter.file_counter",
+    "cogs.shop.shop_notifier",
+    "cogs.ranking.assign_rank",
+    "cogs.ranking.mmr_tracker",
 ]
 
 
@@ -126,6 +142,16 @@ class KayoBot(commands.Bot):
         automod_config_svc = AutomodConfigService(self.db)
         moderation_db_svc = ModerationDbService(self.db)
         self.unban_requests_svc = UnbanRequestsService(self.db)
+        guild_members_svc = GuildMembersService(self.db)
+
+        valorant_info_svc = ValorantInfoService(self.db)
+
+        # Expose DB services needed by cogs (for injection in setup())
+        self.channel_config_svc = channel_config_svc
+        self.role_config_svc = role_config_svc
+        self.persistent_msg_svc = persistent_msg_svc
+        self.guild_members_svc = guild_members_svc
+        self.valorant_info_svc = valorant_info_svc
 
         # 3) Initialize business services
         self.accueil_service = AccueilService(
@@ -136,7 +162,7 @@ class KayoBot(commands.Bot):
         self.clean_service = CleanService(message_deletions_svc)
         logger.info("CleanService initialized.")
 
-        self.automod_service = AutomodService(automod_config_svc)
+        self.automod_service = AutomodService(automod_config_svc, channel_config_svc)
         logger.info("AutomodService initialized.")
 
         self.moderation_service = ModerationService(

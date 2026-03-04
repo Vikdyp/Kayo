@@ -1,19 +1,20 @@
-# cogs/voice_management/online_count_updater.py
+# cogs/update/online_count_updater.py
+"""
+Cog pour mettre à jour les noms de channels vocaux avec le nombre de membres en ligne par rang.
+"""
 
 import discord
 import logging
-import asyncio
 from datetime import datetime, timedelta
+from discord.ext import commands, tasks
 
-from cogs.configuration.services.role_service import ServerRoleService
-from cogs.configuration.services.channel_service import ServerChannelService
+from cogs.configuration.services.role_service import RoleConfigurationService
+from cogs.configuration.services.channel_service import ChannelConfigurationService
 
 logger = logging.getLogger(__name__)
 
-# Noms des rangs Valorant
 RANK_NAMES = {"fer", "bronze", "argent", "or", "platine", "diamant", "ascendant", "immortel", "radiant"}
 
-# Dictionnaire de correspondance pour la police spéciale
 ALPHABET_STYLE = {
     "a": "𝙖", "b": "𝙗", "c": "𝙘", "d": "𝙙", "e": "𝙚", "f": "𝙛", "g": "𝙜",
     "h": "𝙝", "i": "𝙞", "j": "𝙟", "k": "𝙠", "l": "𝙡", "m": "𝙢", "n": "𝙣",
@@ -23,15 +24,12 @@ ALPHABET_STYLE = {
 
 DIGITS_STYLE = {
     "0": "𝟬", "1": "𝟭", "2": "𝟮", "3": "𝟯", "4": "𝟰",
-    "5": "𝟱", "6": "𝟲", "7": "𝟷", "8": "𝟴", "9": "𝟵"
+    "5": "𝟱", "6": "𝟲", "7": "𝟷", "8": "𝟴", "9": "𝟵",
 }
 
+
 def stylize(text: str) -> str:
-    """
-    Transforme le texte en appliquant la police spéciale aux lettres et chiffres.
-    Pour chaque caractère, si une correspondance est trouvée, la transformation est appliquée
-    en respectant la casse pour les lettres.
-    """
+    """Transforme le texte en police spéciale Unicode."""
     result = ""
     for char in text:
         lower_char = char.lower()
@@ -45,51 +43,53 @@ def stylize(text: str) -> str:
     return result
 
 
-class RankUpdater:
-    def __init__(self, bot: discord.Client):
+class OnlineCountUpdater(commands.Cog):
+    """Met à jour les noms de channels vocaux avec le nombre de membres en ligne par rang."""
+
+    def __init__(
+        self,
+        bot: commands.Bot,
+        role_config_svc: RoleConfigurationService,
+        channel_config_svc: ChannelConfigurationService,
+    ):
         self.bot = bot
-        # Pour le rate-limit : stocke pour chaque salon la liste des timestamps d'édition
+        self._role_svc = role_config_svc
+        self._channel_svc = channel_config_svc
         self._edit_timestamps: dict[int, list[datetime]] = {}
-        # Periodic refresh to avoid stale names after restarts.
-        self._refresh_task = None
-        self._refresh_interval = 600
-        self._listener_added = False
+        self.refresh_loop.start()
 
-    async def _get_config(self, guild_id: int, guild_name: str) -> dict:
-        """Récupère la config des rôles et channels depuis les services."""
-        roles_config = await ServerRoleService.get_roles_config(guild_id, guild_name)
-        channels_config = await ServerChannelService.get_channels_config(guild_id, guild_name)
+    def cog_unload(self):
+        self.refresh_loop.cancel()
 
-        # Filtrer uniquement les rôles et channels de rang
+    async def _get_config(self, guild_id: int) -> dict:
+        """Récupère la config des rôles et channels de rang."""
+        roles_config = await self._role_svc.get_all(guild_id)
+        channels_config = await self._channel_svc.get_all(guild_id)
+
         return {
             "roles": {k: v for k, v in roles_config.items() if k in RANK_NAMES},
-            "channels": {k: v for k, v in channels_config.items() if k in RANK_NAMES}
+            "channels": {k: v for k, v in channels_config.items() if k in RANK_NAMES},
         }
 
+    @commands.Cog.listener()
     async def on_presence_update(self, before: discord.Member, after: discord.Member):
-        # Ne rien faire si le status n'a pas changé offline ↔ online
-        if ((before.status == discord.Status.offline and after.status != discord.Status.offline)
-            or (before.status != discord.Status.offline and after.status == discord.Status.offline)):
-
+        """Détecte les changements online/offline et met à jour les channels."""
+        if (before.status == discord.Status.offline) != (after.status == discord.Status.offline):
             guild = after.guild
-            guild_id = guild.id
-            guild_name = guild.name
-
-            config = await self._get_config(guild_id, guild_name)
+            config = await self._get_config(guild.id)
             roles_cfg = config.get("roles", {})
             if not roles_cfg:
                 return
 
             member_role_ids = {r.id for r in after.roles}
             only_ranks = {rank for rank, role_id in roles_cfg.items() if role_id in member_role_ids}
-            if not only_ranks:
-                return
+            if only_ranks:
+                await self._refresh_guild(guild, config=config, only_ranks=only_ranks)
 
-            await self.refresh_guild(guild, config=config, only_ranks=only_ranks)
-
-    async def refresh_guild(self, guild, config=None, only_ranks=None):
+    async def _refresh_guild(self, guild, config=None, only_ranks=None):
+        """Rafraîchit les noms de channels pour un serveur."""
         if config is None:
-            config = await self._get_config(guild.id, guild.name)
+            config = await self._get_config(guild.id)
 
         roles_cfg = config.get("roles", {})
         channels_cfg = config.get("channels", {})
@@ -115,29 +115,11 @@ class RankUpdater:
             if channel.name != new_name:
                 await self._edit_channel_name(channel, new_name)
 
-    async def refresh_all_guilds(self):
-        if not self.bot:
-            return
-        for guild in self.bot.guilds:
-            await self.refresh_guild(guild)
-
-    async def _refresh_loop(self):
-        if not self.bot:
-            return
-        await self.bot.wait_until_ready()
-        while True:
-            try:
-                await self.refresh_all_guilds()
-            except Exception as e:
-                logger.error(f"[rank_updater] Erreur refresh periodique: {e}")
-            await asyncio.sleep(self._refresh_interval)
-
-    async def _edit_channel_name(self, channel: discord.TextChannel, new_name: str):
-        """Nomme le salon en limitant à 2 edits toutes les 10 minutes par salon."""
+    async def _edit_channel_name(self, channel, new_name: str):
+        """Renomme un channel avec rate limiting (max 2 edits / 10 min)."""
         now = datetime.utcnow()
         timestamps = self._edit_timestamps.setdefault(channel.id, [])
 
-        # Conserve uniquement les timestamps des 10 dernières minutes
         ten_min_ago = now - timedelta(minutes=10)
         timestamps = [t for t in timestamps if t > ten_min_ago]
         self._edit_timestamps[channel.id] = timestamps
@@ -146,42 +128,30 @@ class RankUpdater:
             try:
                 await channel.edit(name=new_name)
                 timestamps.append(now)
-                logger.info(f"Salon {channel.id} renommé en « {new_name} »")
             except Exception as e:
-                logger.error(f"Erreur lors de l'édition du salon {channel.id} : {e}")
-        else:
-            logger.warning(f"Rate limit atteint pour le salon {channel.id} — update ignorée.")
+                logger.error(f"Erreur édition channel {channel.id}: {e}")
 
-    def start(self):
-        """Active le RankUpdater (listener de présence)."""
-        if self.bot and (self._refresh_task is None or self._refresh_task.done()):
-            self._refresh_task = self.bot.loop.create_task(self._refresh_loop())
-        logger.info("RankUpdater : écoute des mises à jour de présence activée.")
+    @tasks.loop(minutes=10)
+    async def refresh_loop(self):
+        """Rafraîchissement périodique de tous les serveurs."""
+        for guild in self.bot.guilds:
+            try:
+                await self._refresh_guild(guild)
+            except Exception as e:
+                logger.error(f"Erreur refresh guild {guild.id}: {e}")
 
-    def stop(self):
-        """Désactive le RankUpdater."""
-        if self._refresh_task and not self._refresh_task.done():
-            self._refresh_task.cancel()
-        self._refresh_task = None
-        logger.info("RankUpdater : écoute des mises à jour de présence désactivée.")
+    @refresh_loop.before_loop
+    async def before_refresh_loop(self):
+        await self.bot.wait_until_ready()
 
 
-# Singleton
-rank_updater = RankUpdater(None)
+async def setup(bot: commands.Bot):
+    role_config_svc = getattr(bot, "role_config_svc", None)
+    channel_config_svc = getattr(bot, "channel_config_svc", None)
 
+    if not role_config_svc or not channel_config_svc:
+        logger.error("Services config manquants. OnlineCountUpdater non chargé.")
+        return
 
-def setup_rank_updater(bot: discord.Client):
-    """Initialise et configure le RankUpdater avec le bot."""
-    rank_updater.bot = bot
-    # Écoute les mises à jour de présence
-    if not rank_updater._listener_added:
-        bot.add_listener(rank_updater.on_presence_update, 'on_presence_update')
-        rank_updater._listener_added = True
-    rank_updater.start()
-    logger.info("RankUpdater setup complete.")
-
-
-def teardown_rank_updater():
-    """Arrête le RankUpdater."""
-    rank_updater.stop()
-    logger.info("RankUpdater teardown complete.")
+    await bot.add_cog(OnlineCountUpdater(bot, role_config_svc, channel_config_svc))
+    logger.info("OnlineCountUpdater chargé.")

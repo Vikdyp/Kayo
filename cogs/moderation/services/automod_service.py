@@ -8,6 +8,7 @@ import logging
 from typing import Dict, Any, Optional, List
 
 from database.services.automod_config_service import AutomodConfigService, AutomodConfig
+from database.services.guild_channels_service import ChannelConfigurationService
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +19,13 @@ class AutomodService:
     Reçoit AutomodConfigService en injection.
     """
 
-    def __init__(self, automod_config_svc: AutomodConfigService):
+    def __init__(
+        self,
+        automod_config_svc: AutomodConfigService,
+        channel_config_svc: ChannelConfigurationService,
+    ):
         self._config_svc = automod_config_svc
+        self._channel_svc = channel_config_svc
 
     def _config_to_dict(self, config: AutomodConfig) -> Dict[str, Any]:
         """Convertit une config en dictionnaire pour compatibilité."""
@@ -157,3 +163,11 @@ class AutomodService:
         except Exception as e:
             logger.error(f"Erreur remove_custom_domain: {e}")
             return False
+
+    # --------------------------------------------------
+    # CHANNELS
+    # --------------------------------------------------
+
+    async def get_mod_channel_id(self, guild_id: int) -> Optional[int]:
+        """Récupère l'ID du channel de modération."""
+        return await self._channel_svc.get_one(guild_id, "modération")

@@ -1,82 +1,56 @@
-from typing import Optional, Dict, List
-from utils.database import database
+# cogs/role_management/services/game_role_service.py
+
+from __future__ import annotations
+
 import logging
-from utils.base import (
-    get_or_create_server_record,
-    store_persistent_message,
-    get_persistent_message,
-    delete_persistent_message,
+from typing import Optional
+
+from cogs.configuration.services.role_service import RoleConfigurationService
+from database.services.persistent_messages_service import (
+    PersistentMessagesService,
+    PersistentMessageInfo,
 )
 
 logger = logging.getLogger(__name__)
 
+# Clés utilisées dans guild_roles pour les rôles de jeu Valorant
+GAME_ROLE_KEYS = ["initiator", "controller", "duelist", "sentinel", "fill"]
+PERSISTENT_MSG_TYPE = "role_selection"
 
 
-# ------------------------------------------------
-# RÔLES
-# ------------------------------------------------
+class GameRoleService:
+    """Service métier pour la sélection de rôles de jeu (Valorant)."""
 
-async def get_role_id(discord_guild_id: int,
-                      role_name: str,
-                      guild_name: str = "Inconnu") -> Optional[int]:
-    """
-    Récupère l'ID du rôle Discord pour un nom d'action spécifique (ex: 'initiator'),
-    en utilisant la table roles_configurations et la FK server_id.
-    
-    :param discord_guild_id: ID Discord brut de la guilde.
-    :param role_name: Nom du rôle (ex: 'initiator').
-    :param guild_name: Nom de la guilde, par défaut "Inconnu".
-    :return: ID du rôle Discord ou None si non trouvé.
-    """
-    try:
-        server_db_id = await get_or_create_server_record(discord_guild_id, guild_name)
-        if not server_db_id:
-            return None
+    def __init__(
+        self,
+        role_config_svc: RoleConfigurationService,
+        persistent_msg_svc: PersistentMessagesService,
+    ):
+        self._role_svc = role_config_svc
+        self._persistent_msg_svc = persistent_msg_svc
 
-        query = """
-            SELECT role_id 
-              FROM roles_configurations 
-             WHERE server_id = $1
-               AND role_name = $2
-        """
-        role_id = await database.fetchval(query, server_db_id, role_name)
-        if role_id:
-            logger.debug(f"Rôle trouvé: server_db_id={server_db_id}, role_name={role_name}, role_id={role_id}")
-            return role_id
-        else:
-            logger.warning(f"Aucun rôle trouvé pour server_db_id={server_db_id}, role_name={role_name}")
-            return None
-    except Exception as e:
-        logger.error(f"[get_role_id] Erreur: {e}")
-        return None
+    async def get_role_id(self, guild_id: int, role_name: str) -> Optional[int]:
+        return await self._role_svc.get_one(guild_id, role_name)
 
-async def get_all_role_ids(discord_guild_id: int,
-                           role_names: List[str],
-                           guild_name: str = "Inconnu") -> Dict[str, int]:
-    """
-    Récupère les IDs des rôles Discord pour une liste de noms d'actions dans une guilde donnée,
-    en passant par la table roles_configurations (FK = server_id).
+    async def get_all_role_ids(self, guild_id: int) -> dict[str, int]:
+        all_roles = await self._role_svc.get_all(guild_id)
+        return {k: v for k, v in all_roles.items() if k in GAME_ROLE_KEYS}
 
-    :param discord_guild_id: ID Discord brut de la guilde.
-    :param role_names: Liste des noms d'actions (ex: ['initiator','duelist',...]).
-    :param guild_name: Nom de la guilde, par défaut "Inconnu".
-    :return: Dictionnaire {role_name -> role_id}, vide si rien n'est trouvé.
-    """
-    try:
-        server_db_id = await get_or_create_server_record(discord_guild_id, guild_name)
-        if not server_db_id:
-            return {}
+    async def get_persistent_message(
+        self, guild_id: int
+    ) -> Optional[PersistentMessageInfo]:
+        return await self._persistent_msg_svc.get(guild_id, PERSISTENT_MSG_TYPE)
 
-        query = """
-            SELECT role_name, role_id 
-              FROM roles_configurations 
-             WHERE server_id = $1
-               AND role_name = ANY($2::text[])
-        """
-        records = await database.fetch(query, server_db_id, role_names)
-        roles = {record['role_name']: record['role_id'] for record in records}
-        logger.debug(f"Rôles récupérés pour server_db_id={server_db_id}: {roles}")
-        return roles
-    except Exception as e:
-        logger.error(f"[get_all_role_ids] Erreur: {e}")
-        return {}
+    async def save_persistent_message(
+        self,
+        guild_id: int,
+        guild_name: Optional[str],
+        channel_id: int,
+        message_id: int,
+    ) -> None:
+        await self._persistent_msg_svc.save(
+            guild_id, guild_name, PERSISTENT_MSG_TYPE, channel_id, message_id
+        )
+
+    async def delete_persistent_message(self, guild_id: int) -> bool:
+        return await self._persistent_msg_svc.delete(guild_id, PERSISTENT_MSG_TYPE)
