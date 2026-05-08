@@ -1,85 +1,21 @@
 # cogs/accueil/stalker.py
 """
 Cog de statistiques membres - UI Discord uniquement.
-La génération du graphique reste dans le cog car c'est de la présentation.
 """
 
 import discord
 from discord.ext import commands, tasks
 import logging
-import io
 import asyncio
-from matplotlib import ticker
-import matplotlib.pyplot as plt
 from datetime import datetime, time
 from zoneinfo import ZoneInfo
 from typing import Optional, Dict
 
+from cogs.accueil.renderers import build_member_evolution_chart
 from cogs.accueil.services import AccueilService
+from cogs.accueil.views import StatsView
 
 logger = logging.getLogger(__name__)
-
-# Mapping période → custom_id des boutons
-PERIOD_TO_CUSTOM_ID = {
-    "7j": "stats_7j",
-    "1m": "stats_1m",
-    "default": "stats_1m",
-    "1a": "stats_1a",
-    "total": "stats_total",
-}
-
-
-# ----- VUE POUR LES BOUTONS -----
-class StatsView(discord.ui.View):
-    def __init__(self, cog: "StalkerCog", guild: discord.Guild, current_period: str = "default"):
-        super().__init__(timeout=None)  # Vue persistante
-        self.cog = cog
-        self.guild = guild
-        self.current_period = current_period
-        self._update_button_styles()
-
-    def _update_button_styles(self):
-        """Met à jour les styles des boutons pour montrer la période active."""
-        active_custom_id = PERIOD_TO_CUSTOM_ID.get(self.current_period)
-        for item in self.children:
-            if isinstance(item, discord.ui.Button):
-                if item.custom_id == active_custom_id:
-                    item.style = discord.ButtonStyle.success  # Vert = actif
-                elif item.custom_id != "stats_update":
-                    item.style = discord.ButtonStyle.secondary  # Gris = inactif
-
-    @discord.ui.button(label="Mettre à jour", style=discord.ButtonStyle.primary, custom_id="stats_update")
-    async def update_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-        await self.cog.update_stats_embed(interaction.guild, period=self.current_period)
-        await interaction.followup.send("Embed mis à jour.", ephemeral=True)
-
-    @discord.ui.button(label="7 jours", style=discord.ButtonStyle.secondary, custom_id="stats_7j")
-    async def seven_days(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-        await self.cog.update_stats_embed(interaction.guild, period="7j")
-        await interaction.followup.send("Affichage des stats sur 7 jours.", ephemeral=True)
-
-    @discord.ui.button(label="1 mois", style=discord.ButtonStyle.secondary, custom_id="stats_1m")
-    async def one_month(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-        await self.cog.update_stats_embed(interaction.guild, period="1m")
-        await interaction.followup.send("Affichage des stats sur 1 mois.", ephemeral=True)
-
-    @discord.ui.button(label="1 an", style=discord.ButtonStyle.secondary, custom_id="stats_1a")
-    async def one_year(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-        await self.cog.update_stats_embed(interaction.guild, period="1a")
-        await interaction.followup.send("Affichage des stats sur 1 an.", ephemeral=True)
-
-    @discord.ui.button(label="Total", style=discord.ButtonStyle.secondary, custom_id="stats_total")
-    async def total_stats(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-        await self.cog.update_stats_embed(interaction.guild, period="total")
-        await interaction.followup.send("Affichage des stats totales.", ephemeral=True)
-
-
-# ----- FIN VUE -----
 
 
 class StalkerCog(commands.Cog):
@@ -159,54 +95,11 @@ class StalkerCog(commands.Cog):
             logger.info("Aucune donnée d'évolution trouvée pour la période demandée.")
             return None
 
-        # Construire les données pour le graphique
-        dates = [dp.date.strftime("%d-%m") for dp in evolution_data]
-        net_changes = [dp.net_change for dp in evolution_data]
-
-        # Calcul cumulatif simplifié :
-        # On part du nombre actuel de membres et on remonte dans le temps
-        current_total = guild.member_count
-
-        # cumulative[i] = nombre de membres au jour i
-        cumulative = [0] * len(net_changes)
-        cumulative[-1] = current_total
-
-        # Remonter dans le temps
-        for i in range(len(net_changes) - 2, -1, -1):
-            cumulative[i] = cumulative[i + 1] - net_changes[i + 1]
-
-        # Créer le graphique
-        plt.figure(figsize=(10, 5))
-        plt.plot(range(len(dates)), cumulative, marker="o", linestyle="-", color="#2ecc71", markersize=4)
-        plt.fill_between(range(len(dates)), cumulative, alpha=0.3, color="#2ecc71")
-        plt.title("Évolution du nombre de membres", fontsize=14, fontweight="bold")
-        plt.xlabel("Date", fontsize=10)
-        plt.ylabel("Nombre de membres", fontsize=10)
-
-        ax = plt.gca()
-        ax.set_facecolor("#f8f9fa")
-        plt.gcf().set_facecolor("#ffffff")
-
-        # Afficher moins de labels si trop de dates
-        if len(dates) > 15:
-            step = max(1, len(dates) // 10)
-            tick_positions = list(range(0, len(dates), step))
-            if len(dates) - 1 not in tick_positions:
-                tick_positions.append(len(dates) - 1)
-            ax.xaxis.set_major_locator(ticker.FixedLocator(tick_positions))
-            ax.set_xticklabels([dates[i] for i in tick_positions], rotation=45, ha="right")
-        else:
-            ax.xaxis.set_major_locator(ticker.FixedLocator(range(len(dates))))
-            ax.set_xticklabels(dates, rotation=45, ha="right")
-
-        plt.grid(True, alpha=0.3)
-        plt.tight_layout()
-
-        buf = io.BytesIO()
-        plt.savefig(buf, format="png", dpi=100)
-        buf.seek(0)
-        plt.close()
-        return discord.File(fp=buf, filename="evolution_membres.png")
+        chart_buffer = build_member_evolution_chart(
+            evolution_data,
+            current_member_count=guild.member_count or 0,
+        )
+        return discord.File(fp=chart_buffer, filename="evolution_membres.png")
 
     async def update_stats_embed(
         self,
@@ -228,7 +121,7 @@ class StalkerCog(commands.Cog):
 
         # Récupérer les données via le service
         stats_data = await self._service.get_stats_embed_data(
-            guild.id, period, guild.member_count
+            guild.id, period, guild.member_count or 0
         )
 
         embed = discord.Embed(
@@ -384,7 +277,10 @@ class StalkerCog(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
-    # Le service est injecté via bot.accueil_service (configuré dans main.py)
-    accueil_service = bot.accueil_service
+    accueil_service = getattr(bot, "accueil_service", None)
+    if accueil_service is None:
+        logger.error("accueil_service non initialisé. StalkerCog ne sera pas chargé.")
+        return
+
     await bot.add_cog(StalkerCog(bot, accueil_service))
     logger.info("StalkerCog chargé.")
