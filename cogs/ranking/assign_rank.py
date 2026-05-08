@@ -13,6 +13,11 @@ from typing import Dict, List, Optional
 import discord
 from discord.ext import commands, tasks
 
+from cogs.ranking.presenters import (
+    build_duplicate_pseudo_tag_embed,
+    build_valorant_account_panel_embed,
+    format_valorant_update_error_message,
+)
 from cogs.ranking.services.ranking_service import RankingService
 from cogs.ranking.services.valorant_pipeline import (
     ValorantPipeline,
@@ -160,23 +165,7 @@ class EmbedCog(commands.Cog):
             except discord.NotFound:
                 pass
 
-        embed = discord.Embed(
-            title="Gestion de vos informations Valorant",
-            description=(
-                "Ce message vous permet de **renseigner**, **changer** ou **effacer** "
-                "vos donnees Valorant.\n\n"
-                "**Instructions :**\n"
-                "1. Cliquez sur le bouton bleu pour lier votre compte Valorant.\n"
-                "2. Un formulaire s'ouvrira ou vous devrez entrer :\n"
-                "   - **Pseudo** : Votre pseudo Valorant (exemple : `globeX`).\n"
-                "   - **Tag** : Votre tag Valorant sans le `#` (exemple : `meow`).\n\n"
-                "3. Pour changer de compte, utilisez le bouton gris.\n\n"
-                "*Note : Vous devez d'abord accepter le reglement.*\n"
-            ),
-            color=discord.Color.blue(),
-        )
-        embed.set_footer(text="Tenez a jour vos informations pour obtenir le role correspondant a votre rang.")
-
+        embed = build_valorant_account_panel_embed()
         view = EmbedButtonsView(self)
         try:
             message = await channel.send(embed=embed, view=view)
@@ -215,18 +204,15 @@ class EmbedCog(commands.Cog):
             logger.error(f"Salon {channel_id} introuvable dans guild {guild.id}")
             return
 
-        embed = discord.Embed(
-            title="Doublon de Pseudo Valorant Detecte",
-            description=(
-                f"Un doublon a ete detecte pour le pseudo et tag Valorant : **{pseudo}#{tag}**.\n\n"
-                f"**Utilisateur 1 :** {existing_user.mention} (ID: {existing_user.id})\n"
-                f"**Utilisateur 2 :** {current_user.mention} (ID: {current_user.id})\n\n"
-                "Veuillez resoudre ce doublon."
-            ),
-            color=discord.Color.red(),
+        embed = build_duplicate_pseudo_tag_embed(
+            existing_user_mention=existing_user.mention,
+            existing_user_id=existing_user.id,
+            current_user_mention=current_user.mention,
+            current_user_id=current_user.id,
+            pseudo=pseudo,
+            tag=tag,
             timestamp=discord.utils.utcnow(),
         )
-        embed.set_footer(text="Gestion des Doublons de Pseudo Valorant")
 
         try:
             await channel.send(embed=embed)
@@ -453,11 +439,12 @@ class EmbedCog(commands.Cog):
             channel_mention = f"<#{rank_channel_id}>" if rank_channel_id else "le salon de rang"
 
             await member.send(
-                f"La recuperation de vos informations Valorant a echoue pour "
-                f"**{state.pseudo}#{state.tag}**.\n"
-                f"Erreur: {result.error_message or 'Inconnue'}\n\n"
-                f"Veuillez verifier vos identifiants ou modifier vos informations "
-                f"dans {channel_mention}."
+                format_valorant_update_error_message(
+                    pseudo=state.pseudo,
+                    tag=state.tag,
+                    error_message=result.error_message,
+                    rank_channel_mention=channel_mention,
+                )
             )
             await self._ranking_svc.update_last_notification(state.discord_id, now)
             logger.info(f"Notification erreur envoyee a {state.discord_id}")
