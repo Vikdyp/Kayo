@@ -17,6 +17,7 @@ from cogs.configuration.services.channel_service import ChannelConfigurationServ
 from cogs.configuration.services.role_service import RoleConfigurationService
 from database.engine import Db, DbConfig
 from database.migrate import run_migrations
+from database.services.unban_requests_service import UnbanRequestsService
 from integrations.http_client import HTTPClient
 from integrations.henrikdev.service import HenrikDevService
 from cogs.accueil.services import AccueilService

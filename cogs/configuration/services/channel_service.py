@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from database.services.guild_channels_service import (
-    ChannelConfigurationService as DbChannelConfigurationService,
-)
+from database.services.guild_channels_service import ChannelConfigurationService as ChannelConfigurationDbService
 
 
 def normalize_key(k: str) -> str:
@@ -17,8 +15,8 @@ class ChannelConfigurationService:
     Orchestration legere autour du service DB.
     """
 
-    def __init__(self, db):
-        self._db_service = DbChannelConfigurationService(db)
+    def __init__(self, db_service: ChannelConfigurationDbService):
+        self._db_service = db_service
 
     async def get_all(self, guild_id: int) -> dict[str, int]:
         return await self._db_service.get_all(guild_id)
