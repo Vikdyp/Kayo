@@ -8,6 +8,7 @@ import discord
 from discord.ext import commands
 import logging
 
+from cogs.accueil.presenters import build_welcome_embed
 from cogs.accueil.services import AccueilService
 
 logger = logging.getLogger(__name__)
@@ -51,32 +52,19 @@ class WelcomeCog(commands.Cog):
             else "le canal de présentation"
         )
 
-        # Récupérer le pseudo à afficher
-        username = member.display_name
-
-        # Créer l'embed de bienvenue
-        embed = discord.Embed(
-            title="🎉 Bienvenue sur le serveur ! 🎉",
-            description=(
-                f"Salut **{username}** ! Nous sommes ravis de t'accueillir parmi nous. 🎉\n\n"
-                "Pour bien démarrer, voici quelques informations importantes :\n"
-                f"• **Règles du serveur** : Assure-toi de lire {rules_mention}.\n"
-                f"• **Découvre le serveur** : Va dans {introductions_mention} pour en apprendre davantage sur notre communauté.\n\n"
-            ),
-            color=discord.Color.blue(),
+        member_avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
+        bot_avatar_url = (
+            self.bot.user.avatar.url
+            if self.bot.user and self.bot.user.avatar
+            else None
         )
-
-        # Gérer l'image de l'avatar
-        if member.avatar:
-            embed.set_thumbnail(url=member.avatar.url)
-        else:
-            embed.set_thumbnail(url=member.default_avatar.url)
-
-        if self.bot.user.avatar:
-            embed.set_footer(
-                text="N'hésite pas à demander de l'aide si tu as des questions !",
-                icon_url=self.bot.user.avatar.url,
-            )
+        embed = build_welcome_embed(
+            username=member.display_name,
+            rules_mention=rules_mention,
+            introductions_mention=introductions_mention,
+            member_avatar_url=member_avatar_url,
+            bot_avatar_url=bot_avatar_url,
+        )
 
         try:
             await welcome_channel.send(embed=embed)

@@ -11,6 +11,7 @@ from datetime import datetime, time
 from zoneinfo import ZoneInfo
 from typing import Optional, Dict
 
+from cogs.accueil.presenters import build_member_stats_embed, detect_period_from_embed
 from cogs.accueil.renderers import build_member_evolution_chart
 from cogs.accueil.services import AccueilService
 from cogs.accueil.views import StatsView
@@ -60,27 +61,13 @@ class StalkerCog(commands.Cog):
                         msg = await channel.fetch_message(msg_info.message_id)
                         self.persistent_messages[guild.id] = msg
                         # Récupérer la période actuelle depuis l'embed
-                        current_period = self._detect_period_from_embed(msg)
+                        current_period = detect_period_from_embed(msg)
                         await msg.edit(view=StatsView(self, guild, current_period))
                         logger.info(f"Vue réattachée sur le message persistant pour guild {guild.id}.")
                     except discord.NotFound:
                         logger.warning(f"Message persistant introuvable pour guild {guild.id}, sera recréé.")
                     except Exception as e:
                         logger.error(f"Erreur lors du chargement du message persistant: {e}")
-
-    def _detect_period_from_embed(self, msg: discord.Message) -> str:
-        """Détecte la période depuis le contenu de l'embed."""
-        if msg.embeds and msg.embeds[0].description:
-            desc = msg.embeds[0].description
-            if "7 jours" in desc:
-                return "7j"
-            elif "1 mois" in desc or "30 jours" in desc:
-                return "1m"
-            elif "1 an" in desc:
-                return "1a"
-            elif "Total" in desc:
-                return "total"
-        return "default"
 
     async def generate_member_evolution_graph(
         self,
@@ -124,27 +111,13 @@ class StalkerCog(commands.Cog):
             guild.id, period, guild.member_count or 0
         )
 
-        embed = discord.Embed(
-            title="Statistiques du serveur",
-            description=f"Période : {stats_data.period_label}",
-            color=discord.Color.green(),
-        )
-
-        # Infos principales
-        embed.add_field(name="Membres actuels", value=str(stats_data.current_members), inline=False)
-        embed.add_field(name="Adhésions", value=str(stats_data.join_count), inline=True)
-        embed.add_field(name="Départs", value=str(stats_data.leave_count), inline=True)
-        embed.add_field(name="Taux Join/Leave", value=stats_data.ratio, inline=False)
-
-        # Timestamp pour savoir quand les stats ont été mises à jour
-        embed.set_footer(text="Dernière mise à jour")
-        embed.timestamp = datetime.now(ZoneInfo("Europe/Paris"))
-
         # Graphique
         graph_file = await self.generate_member_evolution_graph(guild, period=period)
-
-        if graph_file:
-            embed.set_image(url=f"attachment://{graph_file.filename}")
+        embed = build_member_stats_embed(
+            stats_data=stats_data,
+            timestamp=datetime.now(ZoneInfo("Europe/Paris")),
+            image_url=f"attachment://{graph_file.filename}" if graph_file else None,
+        )
 
         try:
             # Récupérer le message existant depuis la BDD
