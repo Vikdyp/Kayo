@@ -6,98 +6,19 @@ Aucun accès DB direct - délègue aux services.
 
 import discord
 from discord.ext import commands
-from discord.ui import View, Button, Modal, TextInput
 import logging
 import asyncio
 from datetime import datetime
 
 from cogs.moderation.constants import MSG_TYPE_UNBAN_PANEL
 from cogs.moderation.services.moderation_service import ModerationService
+from cogs.moderation.views.unban_request_views import (
+    DebanManagerView,
+    DebanRequestActionView,
+    DebanRequestModal,
+)
 
 logger = logging.getLogger(__name__)
-
-
-class DebanManagerView(View):
-    """Vue pour l'embed principal de demande de débannissement."""
-
-    def __init__(self, cog: "DebanManager"):
-        super().__init__(timeout=None)
-        self.cog = cog
-
-    @discord.ui.button(
-        label="Demander un Déban",
-        style=discord.ButtonStyle.primary,
-        custom_id="deban_manager:open_form"
-    )
-    async def open_form_button(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button
-    ):
-        await self.cog.open_deban_request_modal(interaction)
-
-
-class DebanRequestModal(Modal):
-    """Modal pour le formulaire de demande de débannissement."""
-
-    def __init__(self, cog: "DebanManager", user: discord.User):
-        super().__init__(title="Demande de Déban")
-        self.cog = cog
-        self.user = user
-
-        self.add_item(TextInput(
-            label="Raison de la demande",
-            style=discord.TextStyle.long,
-            placeholder="Expliquez pourquoi vous souhaitez être débanni.",
-            required=True,
-            max_length=1000
-        ))
-
-    async def on_submit(self, interaction: discord.Interaction):
-        reason = self.children[0].value
-        await interaction.response.defer(ephemeral=True)
-        await self.cog.handle_deban_request_submission(interaction, self.user, reason)
-
-
-class DebanRequestActionView(View):
-    """Vue pour les actions des demandes individuelles."""
-
-    def __init__(
-        self,
-        cog: "DebanManager",
-        user_id: int,
-        request_id: int,
-        channel_id: int
-    ):
-        super().__init__(timeout=None)
-        self.cog = cog
-        self.user_id = user_id
-        self.request_id = request_id
-        self.channel_id = channel_id
-
-    @discord.ui.button(
-        label="Accepter",
-        style=discord.ButtonStyle.success,
-        custom_id="deban_request:accept"
-    )
-    async def accept_button(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button
-    ):
-        await self.cog.process_accept(interaction, self.user_id, self.request_id)
-
-    @discord.ui.button(
-        label="Refuser",
-        style=discord.ButtonStyle.danger,
-        custom_id="deban_request:reject"
-    )
-    async def reject_button(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button
-    ):
-        await self.cog.process_reject(interaction, self.user_id, self.request_id)
 
 
 class DebanManager(commands.Cog):
@@ -353,7 +274,7 @@ class DebanManager(commands.Cog):
         # Envoyer l'embed (on a besoin du message_id pour créer la demande)
         try:
             # Créer une vue temporaire sans request_id
-            temp_view = View(timeout=None)
+            temp_view = discord.ui.View(timeout=None)
             message = await request_channel.send(embed=embed, view=temp_view)
         except Exception as e:
             logger.error(f"Erreur lors de l'envoi de la demande individuelle: {e}")
@@ -559,7 +480,15 @@ class DebanManager(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
-    # Le service est injecté depuis bot.py
-    moderation_service = bot.moderation_service
+    moderation_service = getattr(bot, "moderation_service", None)
+    if moderation_service is None:
+        logger.error("moderation_service non initialisé. DebanManager ne sera pas chargé.")
+        return
+
+    unban_requests_service = getattr(bot, "unban_requests_svc", None)
+    if unban_requests_service is None:
+        logger.error("unban_requests_svc non initialisé. DebanManager ne sera pas chargé.")
+        return
+
     await bot.add_cog(DebanManager(bot, moderation_service))
     logger.info("DebanManager Cog chargé avec succès.")
