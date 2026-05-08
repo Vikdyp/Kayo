@@ -7,6 +7,10 @@ import io
 from datetime import date
 from typing import Protocol, Sequence
 
+import matplotlib
+
+matplotlib.use("Agg")
+
 from matplotlib import ticker
 import matplotlib.pyplot as plt
 

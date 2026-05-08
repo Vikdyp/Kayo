@@ -7,6 +7,10 @@ import io
 from datetime import datetime
 from typing import Sequence
 
+import matplotlib
+
+matplotlib.use("Agg")
+
 from matplotlib.collections import LineCollection
 from matplotlib.patches import PathPatch
 from matplotlib.path import Path
