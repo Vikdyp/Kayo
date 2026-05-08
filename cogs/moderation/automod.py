@@ -9,12 +9,9 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Set, Tuple, Optional, Any
 
-from cogs.moderation.discord_actions import (
-    apply_ban_role_all_guilds,
-    collect_restorable_role_ids,
-)
 from cogs.moderation.services.automod_detection_service import AutomodDetectionService
 from cogs.moderation.services.automod_spam_tracker import AutomodSpamTracker
+from cogs.moderation.services.internal_ban_workflow import apply_internal_ban
 from cogs.moderation.services.moderation_service import ModerationService
 from cogs.moderation.services.automod_service import AutomodService
 from cogs.moderation.presenters import (
@@ -464,8 +461,6 @@ class AutoMod(commands.Cog):
         try:
             logger.warning(f"Scam détecté de {member.display_name} dans {guild.name}: {message.content[:100]}")
 
-            roles_to_backup = collect_restorable_role_ids(member)
-
             try:
                 await member.timeout(timedelta(seconds=60), reason="Scam détecté - traitement en cours")
                 logger.debug(f"Timeout temporaire appliqué à {member.display_name}")
@@ -480,31 +475,21 @@ class AutoMod(commands.Cog):
             except discord.NotFound:
                 pass
 
-            if roles_to_backup:
-                await self._mod_svc.update_roles_backup(
-                    guild_id=guild.id,
-                    guild_name=guild.name,
-                    discord_user_id=member.id,
-                    roles=roles_to_backup,
-                )
-
-            await self._mod_svc.add_ban(
-                guild_id=guild.id,
-                guild_name=guild.name,
-                user_id=member.id,
-                ban_type="perm",
+            bot_user_id = self.bot.user.id if self.bot.user else 0
+            result = await apply_internal_ban(
+                bot=self.bot,
+                moderation_service=self._mod_svc,
+                guild=guild,
+                member=member,
                 reason="Scam détecté (auto-modération)",
-                banned_by=self.bot.user.id,
+                banned_by_id=bot_user_id,
+                ban_type="perm",
                 ban_end=None,
+                role_reason="Scam détecté (auto-modération)",
             )
-
-            await apply_ban_role_all_guilds(
-                self.bot,
-                self._mod_svc,
-                member.id,
-                "Scam détecté (auto-modération)",
-                source_member=member,
-            )
+            if not result.ban_recorded:
+                logger.error("Impossible d'enregistrer le ban interne pour scam de %s", member.display_name)
+                return
 
             logger.info(f"Utilisateur {member.display_name} banni pour scam")
 

@@ -9,15 +9,12 @@ from datetime import datetime
 import discord
 from discord.ext import commands
 
-from cogs.moderation.discord_actions import (
-    apply_ban_role_all_guilds,
-    collect_restorable_role_ids,
-)
 from cogs.moderation.presenters import (
     build_spam_ban_dm_embed,
     mark_spam_alert_banned,
     mark_spam_alert_ignored,
 )
+from cogs.moderation.services.internal_ban_workflow import apply_internal_ban
 from cogs.moderation.services.moderation_service import ModerationService
 
 
@@ -83,33 +80,23 @@ class SpamConfirmationView(discord.ui.View):
                 logger.error("Erreur lors de la suppression du message %s: %s", msg_id, exc)
 
         try:
-            roles_to_backup = collect_restorable_role_ids(self.user)
-
-            if roles_to_backup:
-                await self._mod_svc.update_roles_backup(
-                    guild_id=self.guild.id,
-                    guild_name=self.guild.name,
-                    discord_user_id=self.user.id,
-                    roles=roles_to_backup,
-                )
-
-            await self._mod_svc.add_ban(
-                guild_id=self.guild.id,
-                guild_name=self.guild.name,
-                user_id=self.user.id,
-                ban_type="perm",
+            result = await apply_internal_ban(
+                bot=self.bot,
+                moderation_service=self._mod_svc,
+                guild=self.guild,
+                member=self.user,
                 reason="Spam multi-salons détecté (confirmé par modérateur)",
-                banned_by=interaction.user.id,
+                banned_by_id=interaction.user.id,
+                ban_type="perm",
                 ban_end=None,
+                role_reason="Spam multi-salons détecté",
             )
-
-            await apply_ban_role_all_guilds(
-                self.bot,
-                self._mod_svc,
-                self.user.id,
-                "Spam multi-salons détecté",
-                source_member=self.user,
-            )
+            if not result.ban_recorded:
+                await interaction.followup.send(
+                    "Erreur lors du bannissement: impossible d'enregistrer le ban interne.",
+                    ephemeral=True,
+                )
+                return
 
             try:
                 embed = build_spam_ban_dm_embed(

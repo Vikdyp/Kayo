@@ -7,16 +7,12 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
-from cogs.moderation.discord_actions import (
-    apply_ban_role_all_guilds,
-    collect_restorable_role_ids,
-    filter_assignable_roles,
-)
 from cogs.moderation.presenters import (
     build_ban_dm_embed,
     build_unban_dm_embed,
     format_ban_status_message,
 )
+from cogs.moderation.services.internal_ban_workflow import apply_internal_ban, remove_internal_ban
 from cogs.moderation.services.moderation_service import ModerationService
 
 logger = logging.getLogger(__name__)
@@ -237,35 +233,24 @@ class Moderation(commands.Cog):
             if ban_type == "temp" and duration_minutes:
                 ban_end = datetime.utcnow() + timedelta(minutes=duration_minutes)
 
-            # Collecter les rôles de l'utilisateur pour le backup
-            roles_to_backup = collect_restorable_role_ids(member)
-
-            # Sauvegarder les rôles pour restauration après déban
-            await self._mod_svc.update_roles_backup(
-                guild_id=guild.id,
-                guild_name=guild.name,
-                discord_user_id=member.id,
-                roles=roles_to_backup,
-            )
-
-            # Ajouter les informations de bannissement
-            await self._mod_svc.add_ban(
-                guild_id=guild.id,
-                guild_name=guild.name,
-                user_id=member.id,
-                ban_type=ban_type,
+            result = await apply_internal_ban(
+                bot=self.bot,
+                moderation_service=self._mod_svc,
+                guild=guild,
+                member=member,
                 reason=reason,
-                banned_by=banned_by.id,
+                banned_by_id=banned_by.id,
+                ban_type=ban_type,
                 ban_end=ban_end,
+                role_reason=f"Ban global: {reason}",
             )
+            if not result.ban_recorded:
+                return False
 
             logger.debug(
                 f"Ajout du bannissement : user_id={member.id}, ban_type={ban_type}, "
-                f"reason={reason}, banned_by={banned_by.id}, ban_end={ban_end}, roles_backup={roles_to_backup}"
+                f"reason={reason}, banned_by={banned_by.id}, ban_end={ban_end}, roles_backup={list(result.roles_backed_up)}"
             )
-
-            # Appliquer le ban sur TOUS les serveurs où le bot et l'utilisateur sont présents
-            await self.apply_ban_all_guilds(member.id, reason, source_member=member)
 
             deban_channel_mention = await self._get_deban_channel_mention(guild)
 
@@ -293,55 +278,16 @@ class Moderation(commands.Cog):
         """Débanni un membre et restaure ses rôles sur tous les serveurs."""
         logger.debug(f"Tentative de débannissement de l'utilisateur ID: {user_id}. Raison: {reason}")
 
-        # Récupérer les informations de bannissement (et les rôles sauvegardés)
-        ban_info = await self._mod_svc.get_ban_info(guild.id, user_id)
-        if not ban_info:
+        result = await remove_internal_ban(
+            bot=self.bot,
+            moderation_service=self._mod_svc,
+            guild=guild,
+            user_id=user_id,
+            reason=reason,
+        )
+        if not result.ban_found:
             logger.warning(f"Aucune donnée de bannissement trouvée pour l'utilisateur Discord ID {user_id}.")
             return
-
-        # Récupérer les rôles sauvegardés AVANT de supprimer le ban
-        saved_roles = await self._mod_svc.get_roles_backup(guild.id, user_id)
-
-        # Appliquer le unban sur TOUS les serveurs où le bot et l'utilisateur sont présents
-        for g in self.bot.guilds:
-            member = g.get_member(user_id)
-            if not member:
-                continue
-
-            # Retirer le rôle ban
-            ban_role_id = await self._mod_svc.get_ban_role_id(g.id)
-            if ban_role_id:
-                ban_role = g.get_role(ban_role_id)
-                if ban_role and ban_role in member.roles:
-                    try:
-                        await member.remove_roles(ban_role, reason=f"Fin de ban: {reason or 'Débannissement'}")
-                        logger.info(f"Rôle 'ban' retiré de {member.display_name} dans {g.name}.")
-                    except discord.Forbidden:
-                        logger.error(f"Impossible de retirer le rôle 'ban' de {member.display_name} dans {g.name}.")
-                    except discord.HTTPException as e:
-                        logger.error(f"Erreur HTTP lors du retrait du rôle 'ban' de {member.display_name} dans {g.name}: {e}")
-
-            # Restaurer les rôles (uniquement dans le serveur d'origine où les rôles ont été sauvegardés)
-            if g.id == guild.id and saved_roles:
-                roles_to_add = [
-                    discord.utils.get(g.roles, id=role_id)
-                    for role_id in saved_roles
-                ]
-                roles_to_add = filter_assignable_roles(g, roles_to_add)
-                if roles_to_add:
-                    try:
-                        await member.add_roles(*roles_to_add, reason="Restauration des rôles après débannissement.")
-                        logger.info(f"Rôles restaurés pour {member.display_name} dans {g.name}: {[role.name for role in roles_to_add]}")
-                    except discord.Forbidden:
-                        logger.error(f"Permission refusée pour restaurer les rôles de {member.display_name} dans {g.name}.")
-                    except discord.HTTPException as e:
-                        logger.exception(f"Erreur lors de la restauration des rôles de {member.display_name} dans {g.name}: {e}")
-
-        # Supprimer les informations de bannissement
-        await self._mod_svc.remove_ban(guild.id, user_id)
-
-        # Nettoyer le backup des rôles maintenant qu'ils ont été restaurés
-        await self._mod_svc.clear_roles_backup(guild.id, user_id)
 
         embed = build_unban_dm_embed(
             guild_name=guild.name,
@@ -359,25 +305,6 @@ class Moderation(commands.Cog):
             logger.warning(f"Impossible d'envoyer un DM à l'utilisateur Discord ID {user_id}.")
         except discord.HTTPException as e:
             logger.error(f"Erreur HTTP lors de l'envoi de l'embed de débannissement à l'utilisateur Discord ID {user_id}: {e}")
-
-    async def apply_ban_all_guilds(self, user_id: int, reason: str, source_member: Optional[discord.Member] = None) -> None:
-        """
-        Applique le rôle 'ban' à un utilisateur sur TOUS les serveurs où le bot est présent.
-        Retire les rôles avant d'ajouter le rôle ban.
-        Note: Les rôles sont sauvegardés dans la table bans lors de l'appel à add_ban().
-
-        Args:
-            user_id: ID Discord de l'utilisateur
-            reason: Raison du ban
-            source_member: Membre déjà récupéré (optionnel, évite le cache miss)
-        """
-        await apply_ban_role_all_guilds(
-            self.bot,
-            self._mod_svc,
-            user_id,
-            f"Ban global: {reason}",
-            source_member=source_member,
-        )
 
     async def _get_deban_channel_mention(self, guild: discord.Guild) -> str:
         deban_channel_id = await self._mod_svc.get_deban_channel_id(guild.id)
