@@ -17,7 +17,10 @@ from .automod_messages import (
     build_scam_ban_dm_embed,
     build_scam_log_embed,
     build_spam_alert_embed,
+    build_spam_ban_dm_embed,
     format_custom_items_message,
+    mark_spam_alert_banned,
+    mark_spam_alert_ignored,
 )
 from .clean_history import (
     DeletionHistoryEntry,
@@ -36,9 +39,12 @@ __all__ = [
     "build_scam_ban_dm_embed",
     "build_scam_log_embed",
     "build_spam_alert_embed",
+    "build_spam_ban_dm_embed",
     "build_unban_dm_embed",
     "format_deletion_history_table",
     "format_ban_status_message",
     "format_custom_items_message",
     "get_deletion_type_icon",
+    "mark_spam_alert_banned",
+    "mark_spam_alert_ignored",
 ]

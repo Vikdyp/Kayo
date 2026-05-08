@@ -169,6 +169,51 @@ def build_spam_alert_embed(
     return embed
 
 
+def build_spam_ban_dm_embed(
+    *,
+    guild_name: str,
+    timestamp: datetime,
+) -> discord.Embed:
+    embed = discord.Embed(
+        title="📛 Vous avez été banni(e)",
+        description="Vous avez été banni(e) pour spam multi-salons.",
+        color=discord.Color.red(),
+        timestamp=timestamp,
+    )
+    embed.add_field(name="Serveur", value=guild_name, inline=False)
+    embed.add_field(name="Raison", value="Spam multi-salons détecté", inline=False)
+    return embed
+
+
+def mark_spam_alert_banned(
+    embed: discord.Embed,
+    *,
+    moderator_mention: str,
+    deleted_count: int,
+) -> discord.Embed:
+    embed.color = discord.Color.red()
+    embed.add_field(
+        name="✅ Action effectuée",
+        value=f"Banni par {moderator_mention}\n{deleted_count} message(s) supprimé(s)",
+        inline=False,
+    )
+    return embed
+
+
+def mark_spam_alert_ignored(
+    embed: discord.Embed,
+    *,
+    moderator_mention: str,
+) -> discord.Embed:
+    embed.color = discord.Color.light_grey()
+    embed.add_field(
+        name="❌ Ignoré",
+        value=f"Ignoré par {moderator_mention}\nUtilisateur en whitelist pour 24h",
+        inline=False,
+    )
+    return embed
+
+
 def _truncate(content: str, limit: int) -> str:
     if len(content) <= limit:
         return content

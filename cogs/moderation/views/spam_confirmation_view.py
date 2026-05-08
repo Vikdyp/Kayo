@@ -13,6 +13,11 @@ from cogs.moderation.discord_actions import (
     apply_ban_role_all_guilds,
     collect_restorable_role_ids,
 )
+from cogs.moderation.presenters import (
+    build_spam_ban_dm_embed,
+    mark_spam_alert_banned,
+    mark_spam_alert_ignored,
+)
 from cogs.moderation.services.moderation_service import ModerationService
 
 
@@ -107,28 +112,20 @@ class SpamConfirmationView(discord.ui.View):
             )
 
             try:
-                embed = discord.Embed(
-                    title="📛 Vous avez été banni(e)",
-                    description="Vous avez été banni(e) pour spam multi-salons.",
-                    color=discord.Color.red(),
+                embed = build_spam_ban_dm_embed(
+                    guild_name=self.guild.name,
                     timestamp=datetime.utcnow(),
                 )
-                embed.add_field(name="Serveur", value=self.guild.name, inline=False)
-                embed.add_field(name="Raison", value="Spam multi-salons détecté", inline=False)
                 await self.user.send(embed=embed)
             except discord.Forbidden:
                 pass
 
             embed = interaction.message.embeds[0] if interaction.message.embeds else None
             if embed:
-                embed.color = discord.Color.red()
-                embed.add_field(
-                    name="✅ Action effectuée",
-                    value=(
-                        f"Banni par {interaction.user.mention}\n"
-                        f"{deleted_count} message(s) supprimé(s)"
-                    ),
-                    inline=False,
+                mark_spam_alert_banned(
+                    embed,
+                    moderator_mention=interaction.user.mention,
+                    deleted_count=deleted_count,
                 )
 
             for item in self.children:
@@ -171,12 +168,7 @@ class SpamConfirmationView(discord.ui.View):
 
         embed = interaction.message.embeds[0] if interaction.message.embeds else None
         if embed:
-            embed.color = discord.Color.light_grey()
-            embed.add_field(
-                name="❌ Ignoré",
-                value=f"Ignoré par {interaction.user.mention}\nUtilisateur en whitelist pour 24h",
-                inline=False,
-            )
+            mark_spam_alert_ignored(embed, moderator_mention=interaction.user.mention)
 
         for item in self.children:
             item.disabled = True

@@ -5,7 +5,10 @@ from cogs.moderation.presenters import (
     build_scam_ban_dm_embed,
     build_scam_log_embed,
     build_spam_alert_embed,
+    build_spam_ban_dm_embed,
     format_custom_items_message,
+    mark_spam_alert_banned,
+    mark_spam_alert_ignored,
 )
 
 
@@ -88,3 +91,43 @@ def test_build_spam_alert_embed_keeps_channel_links() -> None:
     assert embed.fields[0].value == "<@1> (1)"
     assert embed.fields[1].value == "same message"
     assert "• <#2>" in embed.fields[2].value
+
+
+def test_build_spam_ban_dm_embed_keeps_reason() -> None:
+    embed = build_spam_ban_dm_embed(
+        guild_name="Perfect Team",
+        timestamp=datetime(2026, 5, 8, tzinfo=timezone.utc),
+    )
+
+    assert embed.title == "📛 Vous avez été banni(e)"
+    assert embed.fields[0].value == "Perfect Team"
+    assert embed.fields[1].value == "Spam multi-salons détecté"
+
+
+def test_mark_spam_alert_banned_and_ignored_append_result_fields() -> None:
+    banned_embed = build_spam_alert_embed(
+        user_mention="<@1>",
+        user_id=1,
+        user_avatar_url="https://example.test/avatar.png",
+        content="same message",
+        channel_mentions=[],
+        timestamp=datetime(2026, 5, 8, tzinfo=timezone.utc),
+    )
+    mark_spam_alert_banned(banned_embed, moderator_mention="<@2>", deleted_count=3)
+
+    assert banned_embed.fields[-1].name == "✅ Action effectuée"
+    assert "Banni par <@2>" in banned_embed.fields[-1].value
+    assert "3 message(s)" in banned_embed.fields[-1].value
+
+    ignored_embed = build_spam_alert_embed(
+        user_mention="<@1>",
+        user_id=1,
+        user_avatar_url="https://example.test/avatar.png",
+        content="same message",
+        channel_mentions=[],
+        timestamp=datetime(2026, 5, 8, tzinfo=timezone.utc),
+    )
+    mark_spam_alert_ignored(ignored_embed, moderator_mention="<@2>")
+
+    assert ignored_embed.fields[-1].name == "❌ Ignoré"
+    assert "Ignoré par <@2>" in ignored_embed.fields[-1].value
