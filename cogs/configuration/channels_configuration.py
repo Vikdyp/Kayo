@@ -56,11 +56,11 @@ class ChannelsConfiguration(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-        db = getattr(bot, "db", None)
-        if db is None:
-            raise RuntimeError("bot.db is not set. You must attach a Db instance to the bot at startup.")
+        service = getattr(bot, "channel_configuration_service", None)
+        if service is None:
+            raise RuntimeError("bot.channel_configuration_service is not set.")
 
-        self.service = ChannelConfigurationService(db)
+        self.service = service
 
         # petit cache local pour display name
         self._display_by_key = {k: d for k, d in self.PREDEFINED_ACTIONS}

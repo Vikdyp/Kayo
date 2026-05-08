@@ -32,11 +32,11 @@ class RolesConfiguration(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-        db = getattr(bot, "db", None)
-        if db is None:
-            raise RuntimeError("bot.db is not set. Attach a Db instance at startup.")
+        service = getattr(bot, "role_configuration_service", None)
+        if service is None:
+            raise RuntimeError("bot.role_configuration_service is not set.")
 
-        self.service = RoleConfigurationService(db)
+        self.service = service
         logger.info("RolesConfiguration initialisé.")
 
     @app_commands.command(name="roles", description="Gérer la configuration des rôles.")

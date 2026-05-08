@@ -1,7 +1,10 @@
 # bot.py
 
+from __future__ import annotations
+
 import asyncio
 import logging
+import os
 from typing import Iterable
 
 import discord
@@ -10,20 +13,19 @@ from discord.ext import commands
 from logging_config import setup_logging
 from config import DISCORD_TOKEN, TEST_GUILD_ID, LOG_LEVELS, TEST_MODE, DATABASE
 
+from cogs.configuration.services.channel_service import ChannelConfigurationService
+from cogs.configuration.services.role_service import RoleConfigurationService
 from database.engine import Db, DbConfig
 from database.migrate import run_migrations
-from database.services.member_stats_service import MemberStatsService
-from database.services.persistent_messages_service import PersistentMessagesService
-from database.services.guild_channels_service import ChannelConfigurationService
-from database.services.guild_roles_service import RoleConfigurationService
-from database.services.message_deletions_service import MessageDeletionsService
-from database.services.automod_config_service import AutomodConfigService
-from database.services.moderation_service import ModerationDbService
-from database.services.unban_requests_service import UnbanRequestsService
+from integrations.http_client import HTTPClient
+from integrations.henrikdev.service import HenrikDevService
 from cogs.accueil.services import AccueilService
 from cogs.moderation.services.clean_service import CleanService
 from cogs.moderation.services.automod_service import AutomodService
 from cogs.moderation.services.moderation_service import ModerationService
+from cogs.ranking.services.ranking_service import RankingService
+from cogs.ranking.services.mmr_tracker_service import MmrTrackerService
+from core.bootstrap import ServiceContainer, build_service_container
 
 # ------------------------------------------------------------
 # Logging
@@ -75,6 +77,8 @@ COG_PATHS: list[str] = [
     "cogs.moderation.moderation",
     "cogs.moderation.automod",
     "cogs.moderation.unban_requests",
+    "cogs.ranking.assign_rank",
+    "cogs.ranking.mmr_tracker",
 ]
 
 
@@ -94,11 +98,18 @@ class KayoBot(commands.Bot):
 
         # Will be set in setup_hook()
         self.db: Db | None = None
+        self.services: ServiceContainer | None = None
+        self._http_client: HTTPClient | None = None
+        self.channel_configuration_service: ChannelConfigurationService | None = None
+        self.role_configuration_service: RoleConfigurationService | None = None
         self.accueil_service: AccueilService | None = None
         self.clean_service: CleanService | None = None
         self.automod_service: AutomodService | None = None
         self.moderation_service: ModerationService | None = None
         self.unban_requests_svc: UnbanRequestsService | None = None
+        self.ranking_service: RankingService | None = None
+        self.henrik_service: HenrikDevService | None = None
+        self.mmr_tracker_service: MmrTrackerService | None = None
 
     async def setup_hook(self) -> None:
         """
@@ -117,40 +128,30 @@ class KayoBot(commands.Bot):
         await run_migrations(self.db)
         logger.info("Migrations applied.")
 
-        # 2) Initialize DB services
-        member_stats_svc = MemberStatsService(self.db)
-        persistent_msg_svc = PersistentMessagesService(self.db)
-        channel_config_svc = ChannelConfigurationService(self.db)
-        role_config_svc = RoleConfigurationService(self.db)
-        message_deletions_svc = MessageDeletionsService(self.db)
-        automod_config_svc = AutomodConfigService(self.db)
-        moderation_db_svc = ModerationDbService(self.db)
-        self.unban_requests_svc = UnbanRequestsService(self.db)
-
-        # 3) Initialize business services
-        self.accueil_service = AccueilService(
-            member_stats_svc, persistent_msg_svc, channel_config_svc
-        )
+        # 2) Initialize services
+        henrik_api_key = os.getenv("HENRIK_VALO_KEY", "")
+        self.services = await build_service_container(self.db, henrik_api_key)
+        self._http_client = self.services.http_client
+        self.channel_configuration_service = self.services.channel_configuration_service
+        self.role_configuration_service = self.services.role_configuration_service
+        self.accueil_service = self.services.accueil_service
+        self.clean_service = self.services.clean_service
+        self.automod_service = self.services.automod_service
+        self.moderation_service = self.services.moderation_service
+        self.unban_requests_svc = self.services.unban_requests_service
+        self.ranking_service = self.services.ranking_service
+        self.henrik_service = self.services.henrik_service
+        self.mmr_tracker_service = self.services.mmr_tracker_service
         logger.info("AccueilService initialized.")
-
-        self.clean_service = CleanService(message_deletions_svc)
         logger.info("CleanService initialized.")
-
-        self.automod_service = AutomodService(automod_config_svc)
         logger.info("AutomodService initialized.")
-
-        self.moderation_service = ModerationService(
-            moderation_db_svc,
-            persistent_msg_svc,
-            role_config_svc,
-            channel_config_svc,
-        )
         logger.info("ModerationService initialized.")
+        logger.info("Ranking + MmrTracker services initialized.")
 
-        # 4) Load extensions (cogs)
+        # 3) Load extensions (cogs)
         await self._load_extensions(COG_PATHS)
 
-        # 5) Sync slash commands
+        # 4) Sync slash commands
         await self._sync_app_commands()
 
     async def close(self) -> None:
@@ -160,9 +161,15 @@ class KayoBot(commands.Bot):
         try:
             await super().close()
         finally:
+            if self._http_client is not None:
+                await self._http_client.close()
+                self._http_client = None
+                logger.info("HTTP client closed.")
             if self.db is not None:
                 await self.db.close()
+                self.db = None
                 logger.info("DB pool closed.")
+            await asyncio.sleep(0.25)
 
     async def on_ready(self) -> None:
         logger.info("Connected as %s", self.user)
@@ -182,6 +189,7 @@ class KayoBot(commands.Bot):
             pass
 
     async def _load_extensions(self, paths: Iterable[str]) -> None:
+        failures: list[str] = []
         for cog_path in paths:
             try:
                 await self.load_extension(cog_path)
@@ -190,10 +198,16 @@ class KayoBot(commands.Bot):
                 logger.warning("Cog already loaded: %s", cog_path)
             except commands.errors.ExtensionNotFound:
                 logger.error("Cog not found: %s", cog_path)
+                failures.append(cog_path)
             except commands.errors.NoEntryPointError:
                 logger.error("No setup() in cog: %s", cog_path)
+                failures.append(cog_path)
             except Exception:
                 logger.exception("Failed to load cog: %s", cog_path)
+                failures.append(cog_path)
+
+        if failures:
+            raise RuntimeError(f"Failed to load required cogs: {', '.join(failures)}")
 
     async def _sync_app_commands(self) -> None:
         """

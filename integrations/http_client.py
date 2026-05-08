@@ -43,9 +43,14 @@ class HTTPClient:
 
     async def __aexit__(self, exc_type, exc, tb):
         logger.debug("Fermeture de la session")
+        await self.close()
+
+    async def close(self) -> None:
         if self._session is not None:
             await self._session.close()
             self._session = None
+            # aiohttp recommends a short delay for SSL transports to close cleanly.
+            await asyncio.sleep(0.25)
 
     def _truncate(self, text: str, limit: int = 500) -> str:
         if len(text) <= limit:

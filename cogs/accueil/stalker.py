@@ -8,6 +8,7 @@ import discord
 from discord.ext import commands, tasks
 import logging
 import io
+import asyncio
 from matplotlib import ticker
 import matplotlib.pyplot as plt
 from datetime import datetime, time
@@ -87,15 +88,18 @@ class StalkerCog(commands.Cog):
         self._service = accueil_service
         # Multi-serveur : dictionnaire {guild_id: message}
         self.persistent_messages: Dict[int, discord.Message] = {}
+        self._load_persistent_task: asyncio.Task | None = None
 
         # Tâche de mise à jour quotidienne
         self.daily_update.start()
 
         # On essaye de recharger la vue persistante au démarrage
-        self.bot.loop.create_task(self.load_persistent_messages())
+        self._load_persistent_task = asyncio.create_task(self.load_persistent_messages())
 
     def cog_unload(self):
         self.daily_update.cancel()
+        if self._load_persistent_task:
+            self._load_persistent_task.cancel()
 
     async def get_stats_channel(self, guild: discord.Guild) -> Optional[discord.abc.GuildChannel]:
         """Récupère le channel de stats via le service."""
