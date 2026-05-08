@@ -4,8 +4,9 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import logging
-from typing import Dict, Optional, List
+from typing import Optional, List
 
+from cogs.configuration.presenters import build_roles_list_embed, build_roles_status_embed
 from cogs.configuration.services.role_service import RoleConfigurationService, normalize_key
 
 logger = logging.getLogger(__name__)
@@ -76,20 +77,14 @@ class RolesConfiguration(commands.Cog):
                     await interaction.followup.send("Aucun rôle configuré.", ephemeral=True)
                     return
 
-                embed = discord.Embed(title="Rôles configurés", color=discord.Color.green())
-                for key in sorted(roles.keys()):
-                    role_id = roles[key]
-                    guild_role = guild.get_role(role_id)
-                    value = guild_role.mention if guild_role else f"Rôle introuvable (id={role_id})"
-                    embed.add_field(name=f"`{key}`", value=value, inline=False)
-
+                embed = build_roles_list_embed(guild, roles)
                 await interaction.followup.send(embed=embed, ephemeral=True)
                 return
 
             # ---------- STATUS (configurés + manquants) ----------
             if action_value == "status":
                 roles = await self.service.get_all(guild_id)
-                embed = self.build_roles_status_embed(guild, roles)
+                embed = build_roles_status_embed(guild, roles, self.PREDEFINED_ROLES)
                 await interaction.followup.send(embed=embed, ephemeral=True)
                 return
 
@@ -160,52 +155,6 @@ class RolesConfiguration(commands.Cog):
                 "Une erreur est survenue lors du traitement.",
                 ephemeral=True,
             )
-
-    def build_roles_status_embed(self, guild: discord.Guild, roles: Dict[str, int]) -> discord.Embed:
-        roles = roles or {}
-        missing_roles = [r for r in self.PREDEFINED_ROLES if r not in roles]
-
-        embed = discord.Embed(title="Configuration des rôles", color=discord.Color.green())
-
-        configured_text = self.format_configured_roles(guild, roles) or "Aucun rôle configuré."
-        missing_text = self.format_missing_roles(missing_roles) or "Rien à configurer."
-
-        embed.add_field(name=f"Configurés ({len(roles)})", value=configured_text, inline=False)
-        embed.add_field(name=f"À configurer ({len(missing_roles)})", value=missing_text, inline=False)
-        embed.add_field(
-            name="Astuce",
-            value="`/roles action:set role_name:<cle> role:<@role>`",
-            inline=False,
-        )
-        return embed
-
-    def format_configured_roles(self, guild: discord.Guild, roles: Dict[str, int]) -> str:
-        lines: List[str] = []
-        for role_key in sorted(roles.keys()):
-            role_id = roles[role_key]
-            guild_role = guild.get_role(role_id)
-            role_mention = guild_role.mention if guild_role else f"rôle introuvable (id={role_id})"
-            lines.append(f"- `{role_key}`: {role_mention}")
-        return self.truncate_lines(lines)
-
-    def format_missing_roles(self, missing_roles: List[str]) -> str:
-        lines = [f"- `{role_key}`" for role_key in missing_roles]
-        return self.truncate_lines(lines)
-
-    def truncate_lines(self, lines: List[str], limit: int = 1024) -> str:
-        if not lines:
-            return ""
-        output: List[str] = []
-        total = 0
-        for line in lines:
-            line_len = len(line) + (1 if output else 0)
-            if total + line_len > limit - 40:
-                remaining = len(lines) - len(output)
-                output.append(f"... +{remaining} autres")
-                break
-            output.append(line)
-            total += line_len
-        return "\n".join(output)
 
     @roles_execute.autocomplete("role_name")
     async def role_name_autocomplete(

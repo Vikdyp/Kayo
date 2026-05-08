@@ -4,8 +4,13 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import logging
-from typing import Dict, List, Optional
+from typing import List, Optional
 
+from cogs.configuration.presenters import (
+    build_channels_list_embed,
+    build_channels_status_embed,
+    get_channel_display_name,
+)
 from cogs.configuration.services.channel_service import ChannelConfigurationService, normalize_key
 
 logger = logging.getLogger(__name__)
@@ -101,21 +106,19 @@ class ChannelsConfiguration(commands.Cog):
                     await interaction.followup.send("Aucun salon configuré.", ephemeral=True)
                     return
 
-                embed = discord.Embed(title="Salons configurés", color=discord.Color.green())
-                for key in sorted(channels.keys()):
-                    channel_id = channels[key]
-                    display_name = self.get_action_display_name(key)
-                    guild_channel = guild.get_channel(channel_id)
-                    value = guild_channel.mention if guild_channel else f"Salon introuvable (id={channel_id})"
-                    embed.add_field(name=f"{display_name} (`{key}`)", value=value, inline=False)
-
+                embed = build_channels_list_embed(guild, channels, self._display_by_key)
                 await interaction.followup.send(embed=embed, ephemeral=True)
                 return
 
             # ---------- STATUS ----------
             if action_lower == "status":
                 channels = await self.service.get_all(guild_id)
-                embed = self.build_channels_status_embed(guild, channels)
+                embed = build_channels_status_embed(
+                    guild,
+                    channels,
+                    self.PREDEFINED_ACTIONS,
+                    self._display_by_key,
+                )
                 await interaction.followup.send(embed=embed, ephemeral=True)
                 return
 
@@ -172,56 +175,8 @@ class ChannelsConfiguration(commands.Cog):
             # Si defer déjà fait, followup marche
             await interaction.followup.send("Une erreur est survenue.", ephemeral=True)
 
-    def build_channels_status_embed(self, guild: discord.Guild, channels: Optional[Dict[str, int]]) -> discord.Embed:
-        channels = channels or {}
-        missing_actions = [key for key, _ in self.PREDEFINED_ACTIONS if key not in channels]
-
-        embed = discord.Embed(title="Configuration des salons", color=discord.Color.green())
-        configured_text = self.format_configured_channels(guild, channels) or "Aucun salon configuré."
-        missing_text = self.format_missing_actions(missing_actions) or "Rien à configurer."
-
-        embed.add_field(name=f"Configurés ({len(channels)})", value=configured_text, inline=False)
-        embed.add_field(name=f"À configurer ({len(missing_actions)})", value=missing_text, inline=False)
-        embed.add_field(
-            name="Astuce",
-            value="`/salon action:set salon_action:<cle> channel:<salon>`",
-            inline=False,
-        )
-        return embed
-
-    def format_configured_channels(self, guild: discord.Guild, channels: Dict[str, int]) -> str:
-        lines: List[str] = []
-        for key in sorted(channels.keys()):
-            channel_id = channels[key]
-            display_name = self.get_action_display_name(key)
-            guild_channel = guild.get_channel(channel_id)
-            if guild_channel:
-                lines.append(f"- {display_name} (`{key}`): {guild_channel.mention}")
-            else:
-                lines.append(f"- {display_name} (`{key}`): salon introuvable (id={channel_id})")
-        return self.truncate_lines(lines)
-
-    def format_missing_actions(self, missing_actions: List[str]) -> str:
-        lines = [f"- {self.get_action_display_name(key)} (`{key}`)" for key in missing_actions]
-        return self.truncate_lines(lines)
-
-    def truncate_lines(self, lines: List[str], limit: int = 1024) -> str:
-        if not lines:
-            return ""
-        output: List[str] = []
-        total = 0
-        for line in lines:
-            line_len = len(line) + (1 if output else 0)
-            if total + line_len > limit - 40:
-                remaining = len(lines) - len(output)
-                output.append(f"... +{remaining} autres")
-                break
-            output.append(line)
-            total += line_len
-        return "\n".join(output)
-
     def get_action_display_name(self, action_key: str) -> str:
-        return self._display_by_key.get(action_key, action_key.replace("_", " ").capitalize())
+        return get_channel_display_name(action_key, self._display_by_key)
 
     @channels_execute.autocomplete("salon_action")
     async def salon_action_autocomplete(
