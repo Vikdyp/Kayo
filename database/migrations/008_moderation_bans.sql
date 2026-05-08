@@ -43,3 +43,58 @@ CREATE TABLE IF NOT EXISTS moderation_role_backups (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (guild_id, user_id)
 );
+
+DO $$
+BEGIN
+  IF to_regclass('public.bans') IS NOT NULL
+     AND to_regclass('public.serveur_id') IS NOT NULL
+  THEN
+    INSERT INTO moderation_bans(
+      guild_id,
+      user_id,
+      ban_type,
+      reason,
+      banned_by_user_id,
+      banned_at,
+      ban_end
+    )
+    SELECT
+      s.guild_id,
+      target.user_id,
+      CASE
+        WHEN lower(b.ban_type) IN ('temp', 'perm', 'soft') THEN lower(b.ban_type)
+        WHEN b.ban_end IS NULL THEN 'perm'
+        ELSE 'temp'
+      END,
+      b.ban_reason,
+      moderator.user_id,
+      b.banned_at::TIMESTAMPTZ,
+      b.ban_end::TIMESTAMPTZ
+    FROM bans b
+    JOIN serveur_id s ON s.id = b.server_id
+    JOIN users target ON target.user_id = b.user_id
+    JOIN users moderator ON moderator.user_id = b.banned_by
+    WHERE s.guild_id IS NOT NULL
+    ON CONFLICT (guild_id, user_id) DO UPDATE SET
+      ban_type = EXCLUDED.ban_type,
+      reason = EXCLUDED.reason,
+      banned_by_user_id = EXCLUDED.banned_by_user_id,
+      banned_at = EXCLUDED.banned_at,
+      ban_end = EXCLUDED.ban_end;
+
+    INSERT INTO moderation_role_backups(guild_id, user_id, roles, created_at)
+    SELECT
+      s.guild_id,
+      target.user_id,
+      b.roles_backup,
+      now()
+    FROM bans b
+    JOIN serveur_id s ON s.id = b.server_id
+    JOIN users target ON target.user_id = b.user_id
+    WHERE b.roles_backup IS NOT NULL
+      AND s.guild_id IS NOT NULL
+    ON CONFLICT (guild_id, user_id) DO UPDATE SET
+      roles = EXCLUDED.roles,
+      created_at = now();
+  END IF;
+END $$;

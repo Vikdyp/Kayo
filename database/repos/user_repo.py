@@ -90,3 +90,21 @@ class UserRepo:
             discord_id=row["discord_id"],
             last_seen_at=row["last_seen_at"],
         )
+
+    @staticmethod
+    async def get_discord_ids_by_user_ids(
+        conn: asyncpg.Connection,
+        user_ids: list[int],
+    ) -> dict[int, int]:
+        if not user_ids:
+            return {}
+
+        rows = await conn.fetch(
+            """
+            SELECT user_id, discord_id
+              FROM users
+             WHERE user_id = ANY($1);
+            """,
+            user_ids,
+        )
+        return {row["user_id"]: row["discord_id"] for row in rows}

@@ -154,10 +154,4 @@ class MessageDeletionsService:
         if not user_ids:
             return {}
 
-        rows = await conn.fetch(
-            """
-            SELECT user_id, discord_id FROM users WHERE user_id = ANY($1);
-            """,
-            list(user_ids),
-        )
-        return {r["user_id"]: r["discord_id"] for r in rows}
+        return await UserRepo.get_discord_ids_by_user_ids(conn, list(user_ids))

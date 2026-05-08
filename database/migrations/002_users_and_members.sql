@@ -12,6 +12,23 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_users_discord_id
   ON users(discord_id);
 
+DO $$
+BEGIN
+  IF to_regclass('public.user_id') IS NOT NULL THEN
+    INSERT INTO users(user_id, discord_id)
+    SELECT id::BIGINT, discord_id
+      FROM user_id
+     WHERE discord_id IS NOT NULL
+    ON CONFLICT (discord_id) DO NOTHING;
+
+    PERFORM setval(
+      pg_get_serial_sequence('users', 'user_id'),
+      GREATEST((SELECT COALESCE(MAX(user_id), 1) FROM users), 1),
+      TRUE
+    );
+  END IF;
+END $$;
+
 
 -- Membership per guild
 CREATE TABLE IF NOT EXISTS guild_members (
