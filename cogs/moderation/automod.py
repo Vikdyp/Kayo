@@ -125,209 +125,289 @@ class AutoMod(commands.Cog):
             await self._show_status(interaction)
             return
 
-        # ===== TOGGLE SCAM =====
-        if action.value == "enable_scam":
-            success = await self._automod_svc.set_scam_detection(guild_id, guild_name, True)
-            self.invalidate_cache(guild_id)
-            if success:
-                await interaction.followup.send("✅ Détection de scam **activée**.", ephemeral=True)
-            else:
-                await interaction.followup.send("❌ Une erreur est survenue.", ephemeral=True)
+        if action.value in ("enable_scam", "disable_scam"):
+            await self._handle_detection_toggle(
+                interaction,
+                guild_id,
+                guild_name,
+                detection_type="scam",
+                enabled=action.value == "enable_scam",
+            )
             return
 
-        if action.value == "disable_scam":
-            success = await self._automod_svc.set_scam_detection(guild_id, guild_name, False)
-            self.invalidate_cache(guild_id)
-            if success:
-                await interaction.followup.send("✅ Détection de scam **désactivée**.", ephemeral=True)
-            else:
-                await interaction.followup.send("❌ Une erreur est survenue.", ephemeral=True)
+        if action.value in ("enable_spam", "disable_spam"):
+            await self._handle_detection_toggle(
+                interaction,
+                guild_id,
+                guild_name,
+                detection_type="spam",
+                enabled=action.value == "enable_spam",
+            )
             return
 
-        # ===== TOGGLE SPAM =====
-        if action.value == "enable_spam":
-            success = await self._automod_svc.set_spam_detection(guild_id, guild_name, True)
-            self.invalidate_cache(guild_id)
-            if success:
-                await interaction.followup.send("✅ Détection de spam multi-salons **activée**.", ephemeral=True)
-            else:
-                await interaction.followup.send("❌ Une erreur est survenue.", ephemeral=True)
-            return
-
-        if action.value == "disable_spam":
-            success = await self._automod_svc.set_spam_detection(guild_id, guild_name, False)
-            self.invalidate_cache(guild_id)
-            if success:
-                await interaction.followup.send("✅ Détection de spam multi-salons **désactivée**.", ephemeral=True)
-            else:
-                await interaction.followup.send("❌ Une erreur est survenue.", ephemeral=True)
-            return
-
-        # ===== SPAM CONFIG =====
         if action.value == "spam_config":
-            if spam_threshold is None and spam_time_window is None:
-                await interaction.followup.send(
-                    "❌ Veuillez spécifier `spam_threshold` et/ou `spam_time_window`.",
-                    ephemeral=True
-                )
-                return
-
-            messages = []
-
-            if spam_threshold is not None:
-                if spam_threshold < 2 or spam_threshold > 10:
-                    await interaction.followup.send("❌ Le seuil doit être entre 2 et 10.", ephemeral=True)
-                    return
-                success = await self._automod_svc.set_spam_threshold(guild_id, guild_name, spam_threshold)
-                if success:
-                    messages.append(f"Seuil: **{spam_threshold}** salons")
-
-            if spam_time_window is not None:
-                if spam_time_window < 10 or spam_time_window > 300:
-                    await interaction.followup.send("❌ La fenêtre doit être entre 10 et 300 secondes.", ephemeral=True)
-                    return
-                success = await self._automod_svc.set_spam_time_window(guild_id, guild_name, spam_time_window)
-                if success:
-                    messages.append(f"Fenêtre: **{spam_time_window}** secondes")
-
-            self.invalidate_cache(guild_id)
-
-            if messages:
-                await interaction.followup.send(f"✅ Configuration spam mise à jour:\n" + "\n".join(messages), ephemeral=True)
-            else:
-                await interaction.followup.send("❌ Une erreur est survenue.", ephemeral=True)
+            await self._handle_spam_config(
+                interaction,
+                guild_id,
+                guild_name,
+                spam_threshold,
+                spam_time_window,
+            )
             return
 
-        # ===== WHITELIST ROLE =====
-        if action.value == "add_role":
-            if not role:
-                await interaction.followup.send("❌ Veuillez spécifier un rôle.", ephemeral=True)
-                return
-            success = await self._automod_svc.add_whitelisted_role(guild_id, guild_name, role.id)
-            self.invalidate_cache(guild_id)
-            if success:
-                await interaction.followup.send(f"✅ Rôle {role.mention} ajouté à la whitelist.", ephemeral=True)
-            else:
-                await interaction.followup.send("❌ Une erreur est survenue.", ephemeral=True)
+        if action.value in ("add_role", "remove_role"):
+            await self._handle_whitelisted_role(
+                interaction,
+                guild_id,
+                guild_name,
+                role,
+                add=action.value == "add_role",
+            )
             return
 
-        if action.value == "remove_role":
-            if not role:
-                await interaction.followup.send("❌ Veuillez spécifier un rôle.", ephemeral=True)
-                return
-            success = await self._automod_svc.remove_whitelisted_role(guild_id, guild_name, role.id)
-            self.invalidate_cache(guild_id)
-            if success:
-                await interaction.followup.send(f"✅ Rôle {role.mention} retiré de la whitelist.", ephemeral=True)
-            else:
-                await interaction.followup.send("❌ Une erreur est survenue.", ephemeral=True)
+        if action.value in ("add_channel", "remove_channel"):
+            await self._handle_whitelisted_channel(
+                interaction,
+                guild_id,
+                guild_name,
+                channel,
+                add=action.value == "add_channel",
+            )
             return
 
-        # ===== WHITELIST CHANNEL =====
-        if action.value == "add_channel":
-            if not channel:
-                await interaction.followup.send("❌ Veuillez spécifier un salon.", ephemeral=True)
-                return
-            success = await self._automod_svc.add_whitelisted_channel(guild_id, guild_name, channel.id)
-            self.invalidate_cache(guild_id)
-            if success:
-                await interaction.followup.send(f"✅ Salon {channel.mention} ajouté à la whitelist.", ephemeral=True)
-            else:
-                await interaction.followup.send("❌ Une erreur est survenue.", ephemeral=True)
-            return
-
-        if action.value == "remove_channel":
-            if not channel:
-                await interaction.followup.send("❌ Veuillez spécifier un salon.", ephemeral=True)
-                return
-            success = await self._automod_svc.remove_whitelisted_channel(guild_id, guild_name, channel.id)
-            self.invalidate_cache(guild_id)
-            if success:
-                await interaction.followup.send(f"✅ Salon {channel.mention} retiré de la whitelist.", ephemeral=True)
-            else:
-                await interaction.followup.send("❌ Une erreur est survenue.", ephemeral=True)
-            return
-
-        # ===== PATTERNS =====
         if action.value == "list_patterns":
-            config = await self.get_guild_config(guild_id, guild_name)
-            patterns = config.get('custom_scam_patterns', []) or []
+            await self._list_custom_items(
+                interaction,
+                guild_id,
+                guild_name,
+                config_key="custom_scam_patterns",
+                label="Patterns personnalisés",
+                empty_message="Aucun pattern personnalisé configuré.",
+            )
+            return
+
+        if action.value in ("add_pattern", "remove_pattern"):
+            await self._handle_custom_pattern(
+                interaction,
+                guild_id,
+                guild_name,
+                pattern,
+                add=action.value == "add_pattern",
+            )
+            return
+
+        if action.value == "list_domains":
+            await self._list_custom_items(
+                interaction,
+                guild_id,
+                guild_name,
+                config_key="custom_scam_domains",
+                label="Domaines personnalisés",
+                empty_message="Aucun domaine personnalisé configuré.",
+            )
+            return
+
+        if action.value in ("add_domain", "remove_domain"):
+            await self._handle_custom_domain(
+                interaction,
+                guild_id,
+                guild_name,
+                domain,
+                add=action.value == "add_domain",
+            )
+            return
+
+    async def _send_success_or_error(
+        self,
+        interaction: discord.Interaction,
+        success: bool,
+        success_message: str,
+    ) -> None:
+        await interaction.followup.send(
+            success_message if success else "❌ Une erreur est survenue.",
+            ephemeral=True,
+        )
+
+    async def _handle_detection_toggle(
+        self,
+        interaction: discord.Interaction,
+        guild_id: int,
+        guild_name: str,
+        *,
+        detection_type: str,
+        enabled: bool,
+    ) -> None:
+        if detection_type == "scam":
+            success = await self._automod_svc.set_scam_detection(guild_id, guild_name, enabled)
+            label = "Détection de scam"
+        else:
+            success = await self._automod_svc.set_spam_detection(guild_id, guild_name, enabled)
+            label = "Détection de spam multi-salons"
+
+        self.invalidate_cache(guild_id)
+        state = "activée" if enabled else "désactivée"
+        await self._send_success_or_error(interaction, success, f"✅ {label} **{state}**.")
+
+    async def _handle_spam_config(
+        self,
+        interaction: discord.Interaction,
+        guild_id: int,
+        guild_name: str,
+        spam_threshold: Optional[int],
+        spam_time_window: Optional[int],
+    ) -> None:
+        if spam_threshold is None and spam_time_window is None:
             await interaction.followup.send(
-                format_custom_items_message(
-                    label="Patterns personnalisés",
-                    items=patterns,
-                    empty_message="Aucun pattern personnalisé configuré.",
-                ),
+                "❌ Veuillez spécifier `spam_threshold` et/ou `spam_time_window`.",
                 ephemeral=True,
             )
             return
 
-        if action.value == "add_pattern":
-            if not pattern:
-                await interaction.followup.send("❌ Veuillez spécifier un pattern.", ephemeral=True)
+        messages = []
+
+        if spam_threshold is not None:
+            if spam_threshold < 2 or spam_threshold > 10:
+                await interaction.followup.send("❌ Le seuil doit être entre 2 et 10.", ephemeral=True)
                 return
+            success = await self._automod_svc.set_spam_threshold(guild_id, guild_name, spam_threshold)
+            if success:
+                messages.append(f"Seuil: **{spam_threshold}** salons")
+
+        if spam_time_window is not None:
+            if spam_time_window < 10 or spam_time_window > 300:
+                await interaction.followup.send("❌ La fenêtre doit être entre 10 et 300 secondes.", ephemeral=True)
+                return
+            success = await self._automod_svc.set_spam_time_window(guild_id, guild_name, spam_time_window)
+            if success:
+                messages.append(f"Fenêtre: **{spam_time_window}** secondes")
+
+        self.invalidate_cache(guild_id)
+
+        if messages:
+            await interaction.followup.send(
+                "✅ Configuration spam mise à jour:\n" + "\n".join(messages),
+                ephemeral=True,
+            )
+        else:
+            await interaction.followup.send("❌ Une erreur est survenue.", ephemeral=True)
+
+    async def _handle_whitelisted_role(
+        self,
+        interaction: discord.Interaction,
+        guild_id: int,
+        guild_name: str,
+        role: Optional[discord.Role],
+        *,
+        add: bool,
+    ) -> None:
+        if not role:
+            await interaction.followup.send("❌ Veuillez spécifier un rôle.", ephemeral=True)
+            return
+
+        if add:
+            success = await self._automod_svc.add_whitelisted_role(guild_id, guild_name, role.id)
+            success_message = f"✅ Rôle {role.mention} ajouté à la whitelist."
+        else:
+            success = await self._automod_svc.remove_whitelisted_role(guild_id, guild_name, role.id)
+            success_message = f"✅ Rôle {role.mention} retiré de la whitelist."
+
+        self.invalidate_cache(guild_id)
+        await self._send_success_or_error(interaction, success, success_message)
+
+    async def _handle_whitelisted_channel(
+        self,
+        interaction: discord.Interaction,
+        guild_id: int,
+        guild_name: str,
+        channel: Optional[discord.TextChannel],
+        *,
+        add: bool,
+    ) -> None:
+        if not channel:
+            await interaction.followup.send("❌ Veuillez spécifier un salon.", ephemeral=True)
+            return
+
+        if add:
+            success = await self._automod_svc.add_whitelisted_channel(guild_id, guild_name, channel.id)
+            success_message = f"✅ Salon {channel.mention} ajouté à la whitelist."
+        else:
+            success = await self._automod_svc.remove_whitelisted_channel(guild_id, guild_name, channel.id)
+            success_message = f"✅ Salon {channel.mention} retiré de la whitelist."
+
+        self.invalidate_cache(guild_id)
+        await self._send_success_or_error(interaction, success, success_message)
+
+    async def _list_custom_items(
+        self,
+        interaction: discord.Interaction,
+        guild_id: int,
+        guild_name: str,
+        *,
+        config_key: str,
+        label: str,
+        empty_message: str,
+    ) -> None:
+        config = await self.get_guild_config(guild_id, guild_name)
+        items = config.get(config_key, []) or []
+        await interaction.followup.send(
+            format_custom_items_message(
+                label=label,
+                items=items,
+                empty_message=empty_message,
+            ),
+            ephemeral=True,
+        )
+
+    async def _handle_custom_pattern(
+        self,
+        interaction: discord.Interaction,
+        guild_id: int,
+        guild_name: str,
+        pattern: Optional[str],
+        *,
+        add: bool,
+    ) -> None:
+        if not pattern:
+            await interaction.followup.send("❌ Veuillez spécifier un pattern.", ephemeral=True)
+            return
+
+        if add:
             try:
                 re.compile(pattern)
             except re.error as e:
                 await interaction.followup.send(f"❌ Pattern regex invalide: {e}", ephemeral=True)
                 return
             success = await self._automod_svc.add_custom_pattern(guild_id, guild_name, pattern)
-            self.invalidate_cache(guild_id)
-            if success:
-                await interaction.followup.send(f"✅ Pattern `{pattern}` ajouté.", ephemeral=True)
-            else:
-                await interaction.followup.send("❌ Une erreur est survenue.", ephemeral=True)
-            return
-
-        if action.value == "remove_pattern":
-            if not pattern:
-                await interaction.followup.send("❌ Veuillez spécifier un pattern.", ephemeral=True)
-                return
+            success_message = f"✅ Pattern `{pattern}` ajouté."
+        else:
             success = await self._automod_svc.remove_custom_pattern(guild_id, guild_name, pattern)
-            self.invalidate_cache(guild_id)
-            if success:
-                await interaction.followup.send(f"✅ Pattern `{pattern}` retiré.", ephemeral=True)
-            else:
-                await interaction.followup.send("❌ Une erreur est survenue.", ephemeral=True)
+            success_message = f"✅ Pattern `{pattern}` retiré."
+
+        self.invalidate_cache(guild_id)
+        await self._send_success_or_error(interaction, success, success_message)
+
+    async def _handle_custom_domain(
+        self,
+        interaction: discord.Interaction,
+        guild_id: int,
+        guild_name: str,
+        domain: Optional[str],
+        *,
+        add: bool,
+    ) -> None:
+        if not domain:
+            await interaction.followup.send("❌ Veuillez spécifier un domaine.", ephemeral=True)
             return
 
-        # ===== DOMAINS =====
-        if action.value == "list_domains":
-            config = await self.get_guild_config(guild_id, guild_name)
-            domains = config.get('custom_scam_domains', []) or []
-            await interaction.followup.send(
-                format_custom_items_message(
-                    label="Domaines personnalisés",
-                    items=domains,
-                    empty_message="Aucun domaine personnalisé configuré.",
-                ),
-                ephemeral=True,
-            )
-            return
-
-        if action.value == "add_domain":
-            if not domain:
-                await interaction.followup.send("❌ Veuillez spécifier un domaine.", ephemeral=True)
-                return
+        if add:
             success = await self._automod_svc.add_custom_domain(guild_id, guild_name, domain)
-            self.invalidate_cache(guild_id)
-            if success:
-                await interaction.followup.send(f"✅ Domaine `{domain}` ajouté.", ephemeral=True)
-            else:
-                await interaction.followup.send("❌ Une erreur est survenue.", ephemeral=True)
-            return
-
-        if action.value == "remove_domain":
-            if not domain:
-                await interaction.followup.send("❌ Veuillez spécifier un domaine.", ephemeral=True)
-                return
+            success_message = f"✅ Domaine `{domain}` ajouté."
+        else:
             success = await self._automod_svc.remove_custom_domain(guild_id, guild_name, domain)
-            self.invalidate_cache(guild_id)
-            if success:
-                await interaction.followup.send(f"✅ Domaine `{domain}` retiré.", ephemeral=True)
-            else:
-                await interaction.followup.send("❌ Une erreur est survenue.", ephemeral=True)
-            return
+            success_message = f"✅ Domaine `{domain}` retiré."
+
+        self.invalidate_cache(guild_id)
+        await self._send_success_or_error(interaction, success, success_message)
 
     async def _show_status(self, interaction: discord.Interaction) -> None:
         """Affiche la configuration actuelle de l'automod."""
