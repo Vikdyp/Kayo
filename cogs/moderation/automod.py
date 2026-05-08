@@ -8,210 +8,17 @@ from discord import app_commands
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Set, Tuple, Optional, Any
-from urllib.parse import urlparse
 
 from cogs.moderation.discord_actions import (
     apply_ban_role_all_guilds,
     collect_restorable_role_ids,
 )
+from cogs.moderation.services.automod_detection_service import AutomodDetectionService
 from cogs.moderation.services.moderation_service import ModerationService
 from cogs.moderation.services.automod_service import AutomodService
+from cogs.moderation.views.spam_confirmation_view import SpamConfirmationView
 
 logger = logging.getLogger(__name__)
-
-
-# Patterns de scam connus
-SCAM_PATTERNS = [
-    r"free\s*nitro",
-    r"discord\s*nitro\s*(for\s*)?free",
-    r"steam\s*gift",
-    r"@everyone.*free",
-    r"claim\s*your\s*(free\s*)?gift",
-    r"airdrop",
-    r"free\s*discord\s*nitro",
-    r"nitro\s*gratuit",
-    r"get\s*free\s*nitro",
-    r"discord\.gift",
-    r"steamcommunity\.com.*gift",
-]
-
-# Domaines de scam connus
-SCAM_DOMAINS = [
-    "discordgift.site",
-    "discord-nitro.gift",
-    "discordnitro.gift",
-    "steamcommunity.ru",
-    "steampowered.ru",
-    "dicsord.gift",  # typosquatting
-    "discorrd.gift",
-    "dlscord.gift",
-    "disc0rd.gift",
-    "discordapp.gift",
-    "discord-app.gift",
-    "discordgiveaway.com",
-    "free-nitro.com",
-    "nitro-discord.com",
-    "steamgifts.ru",
-]
-
-
-class SpamConfirmationView(discord.ui.View):
-    """Vue avec boutons pour confirmer ou ignorer un spam détecté."""
-
-    def __init__(
-        self,
-        bot: commands.Bot,
-        user: discord.Member,
-        message_refs: List[Tuple[int, int]],  # [(channel_id, message_id), ...]
-        content: str,
-        guild: discord.Guild,
-        moderation_service: ModerationService,
-        timeout: float = 3600  # 1 heure
-    ):
-        super().__init__(timeout=timeout)
-        self.bot = bot
-        self.user = user
-        self.message_refs = message_refs
-        self.content = content
-        self.guild = guild
-        self._mod_svc = moderation_service
-        self.resolved = False
-
-    @discord.ui.button(label="Bannir", style=discord.ButtonStyle.danger, emoji="🔨")
-    async def ban_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Bannit l'utilisateur et supprime ses messages."""
-        if self.resolved:
-            await interaction.response.send_message("Cette action a déjà été traitée.", ephemeral=True)
-            return
-
-        self.resolved = True
-        await interaction.response.defer()
-
-        # Supprimer les messages
-        deleted_count = 0
-        for channel_id, msg_id in self.message_refs:
-            try:
-                channel = self.bot.get_channel(channel_id)
-                if channel:
-                    msg = await channel.fetch_message(msg_id)
-                    await msg.delete()
-                    deleted_count += 1
-            except discord.NotFound:
-                pass  # Message déjà supprimé
-            except discord.Forbidden:
-                logger.warning(f"Pas de permission pour supprimer le message {msg_id} dans {channel_id}")
-            except Exception as e:
-                logger.error(f"Erreur lors de la suppression du message {msg_id}: {e}")
-
-        # Bannir l'utilisateur via ModerationService
-        try:
-            # Sauvegarder les rôles
-            roles_to_backup = collect_restorable_role_ids(self.user)
-
-            # Sauvegarder les rôles avant le ban
-            if roles_to_backup:
-                await self._mod_svc.update_roles_backup(
-                    guild_id=self.guild.id,
-                    guild_name=self.guild.name,
-                    discord_user_id=self.user.id,
-                    roles=roles_to_backup,
-                )
-
-            await self._mod_svc.add_ban(
-                guild_id=self.guild.id,
-                guild_name=self.guild.name,
-                user_id=self.user.id,
-                ban_type="perm",
-                reason="Spam multi-salons détecté (confirmé par modérateur)",
-                banned_by=interaction.user.id,
-                ban_end=None,
-            )
-
-            # Appliquer le ban sur tous les serveurs
-            await apply_ban_role_all_guilds(
-                self.bot,
-                self._mod_svc,
-                self.user.id,
-                "Spam multi-salons détecté",
-                source_member=self.user,
-            )
-
-            # Envoyer un DM à l'utilisateur
-            try:
-                embed = discord.Embed(
-                    title="📛 Vous avez été banni(e)",
-                    description="Vous avez été banni(e) pour spam multi-salons.",
-                    color=discord.Color.red(),
-                    timestamp=datetime.utcnow()
-                )
-                embed.add_field(name="Serveur", value=self.guild.name, inline=False)
-                embed.add_field(name="Raison", value="Spam multi-salons détecté", inline=False)
-                await self.user.send(embed=embed)
-            except discord.Forbidden:
-                pass
-
-            # Mettre à jour l'embed
-            embed = interaction.message.embeds[0] if interaction.message.embeds else None
-            if embed:
-                embed.color = discord.Color.red()
-                embed.add_field(
-                    name="✅ Action effectuée",
-                    value=f"Banni par {interaction.user.mention}\n{deleted_count} message(s) supprimé(s)",
-                    inline=False
-                )
-
-            # Désactiver les boutons
-            for item in self.children:
-                item.disabled = True
-
-            await interaction.message.edit(embed=embed, view=self)
-            logger.info(f"Spam confirmé: {self.user.display_name} banni par {interaction.user.display_name}")
-
-        except Exception as e:
-            logger.exception(f"Erreur lors du ban pour spam: {e}")
-            await interaction.followup.send(f"Erreur lors du bannissement: {e}", ephemeral=True)
-
-    @discord.ui.button(label="Ignorer", style=discord.ButtonStyle.secondary, emoji="❌")
-    async def ignore_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Ignore l'alerte et ajoute l'utilisateur à une whitelist temporaire."""
-        if self.resolved:
-            await interaction.response.send_message("Cette action a déjà été traitée.", ephemeral=True)
-            return
-
-        self.resolved = True
-        await interaction.response.defer()
-
-        # Ajouter à la whitelist temporaire (géré par le cog AutoMod)
-        automod_cog = self.bot.get_cog("AutoMod")
-        if automod_cog:
-            automod_cog.add_to_spam_whitelist(self.user.id, self.guild.id)
-
-        # Mettre à jour l'embed
-        embed = interaction.message.embeds[0] if interaction.message.embeds else None
-        if embed:
-            embed.color = discord.Color.light_grey()
-            embed.add_field(
-                name="❌ Ignoré",
-                value=f"Ignoré par {interaction.user.mention}\nUtilisateur en whitelist pour 24h",
-                inline=False
-            )
-
-        # Désactiver les boutons
-        for item in self.children:
-            item.disabled = True
-
-        await interaction.message.edit(embed=embed, view=self)
-        logger.info(f"Spam ignoré pour {self.user.display_name} par {interaction.user.display_name}")
-
-    async def on_timeout(self):
-        """Appelé quand la vue expire."""
-        if not self.resolved:
-            # Mettre à jour l'embed pour indiquer l'expiration
-            try:
-                # On ne peut pas accéder au message directement ici
-                logger.info(f"Vue de confirmation spam expirée pour {self.user.display_name}")
-            except Exception:
-                pass
 
 
 class AutoMod(commands.Cog):
@@ -235,8 +42,7 @@ class AutoMod(commands.Cog):
         # Set pour éviter les alertes en double
         self.pending_spam_alerts: Set[Tuple[int, int]] = set()
         self._pending_cleanup_tasks: Set[asyncio.Task] = set()
-        # Compiler les patterns regex de base
-        self.scam_patterns = [re.compile(pattern, re.IGNORECASE) for pattern in SCAM_PATTERNS]
+        self._detection_svc = AutomodDetectionService()
         # Cache des configurations par serveur
         self.config_cache: Dict[int, Dict[str, Any]] = {}
         logger.info("AutoMod initialisé.")
@@ -591,91 +397,27 @@ class AutoMod(commands.Cog):
 
     async def is_member_whitelisted(self, member: discord.Member, config: Dict[str, Any]) -> bool:
         """Vérifie si un membre est exempté de l'automod (admin, modo, rôle whitelisté)."""
-        if member.bot:
-            return True
-        if member.guild_permissions.administrator:
-            return True
-        if member.guild_permissions.manage_messages:
-            return True
-        if member.guild_permissions.ban_members:
-            return True
-
-        # Vérifier les rôles whitelistés depuis la config
-        whitelisted_roles = config.get('whitelisted_roles', []) or []
-        member_role_ids = [role.id for role in member.roles]
-        for role_id in whitelisted_roles:
-            if role_id in member_role_ids:
-                return True
-
-        return False
+        return self._detection_svc.is_member_whitelisted(member, config)
 
     def is_channel_whitelisted(self, channel_id: int, config: Dict[str, Any]) -> bool:
         """Vérifie si un salon est exempté de l'automod."""
-        whitelisted_channels = config.get('whitelisted_channels', []) or []
-        return channel_id in whitelisted_channels
+        return self._detection_svc.is_channel_whitelisted(channel_id, config)
 
     def extract_urls(self, content: str) -> List[str]:
         """Extrait les URLs d'un message."""
-        url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]+'
-        return re.findall(url_pattern, content)
+        return self._detection_svc.extract_urls(content)
 
     def is_scam_domain(self, url: str, config: Dict[str, Any]) -> bool:
         """Vérifie si une URL appartient à un domaine de scam."""
-        try:
-            parsed = urlparse(url)
-            domain = parsed.netloc.lower()
-
-            # Vérifier les domaines de base
-            for scam_domain in SCAM_DOMAINS:
-                if domain == scam_domain or domain.endswith("." + scam_domain):
-                    return True
-
-            # Vérifier les domaines personnalisés
-            custom_domains = config.get('custom_scam_domains', []) or []
-            for scam_domain in custom_domains:
-                if domain == scam_domain or domain.endswith("." + scam_domain):
-                    return True
-
-        except Exception:
-            pass
-        return False
+        return self._detection_svc.is_scam_domain(url, config)
 
     def is_scam_content(self, content: str, config: Dict[str, Any]) -> bool:
         """Vérifie si le contenu du message correspond à un pattern de scam."""
-        content_lower = content.lower()
-
-        # Vérifier les patterns de base
-        for pattern in self.scam_patterns:
-            if pattern.search(content_lower):
-                return True
-
-        # Vérifier les patterns personnalisés
-        custom_patterns = config.get('custom_scam_patterns', []) or []
-        for pattern_str in custom_patterns:
-            try:
-                pattern = re.compile(pattern_str, re.IGNORECASE)
-                if pattern.search(content_lower):
-                    return True
-            except re.error:
-                continue  # Ignorer les patterns invalides
-
-        return False
+        return self._detection_svc.is_scam_content(content, config)
 
     async def is_scam_message(self, message: discord.Message, config: Dict[str, Any]) -> bool:
         """Vérifie si un message est un scam."""
-        content = message.content
-
-        # Vérifier les patterns de scam dans le contenu
-        if self.is_scam_content(content, config):
-            return True
-
-        # Vérifier les URLs
-        urls = self.extract_urls(content)
-        for url in urls:
-            if self.is_scam_domain(url, config):
-                return True
-
-        return False
+        return self._detection_svc.is_scam_message_content(message.content, config)
 
     async def handle_scam(self, message: discord.Message) -> None:
         """Gère un message scam détecté: supprime, ban, et log."""
