@@ -12,6 +12,7 @@ import logging
 from typing import Any, Callable, Optional
 import re
 
+from cogs.moderation.presenters import DeletionHistoryEntry, format_deletion_history_table
 from cogs.moderation.views.confirmation_view import ConfirmationView
 from cogs.moderation.services.clean_service import CleanService
 
@@ -103,20 +104,6 @@ class Clean(commands.Cog):
         message_id: Optional[str] = None,
     ):
         """Exécute une action de nettoyage basée sur les choix de l'utilisateur."""
-        def get_type_icon(deletion_type: str) -> str:
-            """Retourne un émoji correspondant au type de suppression."""
-            icons = {
-                "all": "🧹",
-                "user": "👤",
-                "links": "🔗",
-                "image": "📷",
-                "gif": "🎞️",
-                "condition": "⚙️",
-                "from": "➡️",
-                "number": "🔢",
-            }
-            return icons.get(deletion_type, "❓")
-
         channel = interaction.channel
         if not isinstance(channel, discord.TextChannel):
             logger.warning("Commande utilisée en dehors d'un salon texte.")
@@ -240,30 +227,21 @@ class Clean(commands.Cog):
                         await interaction.followup.send("Aucune suppression trouvée.", ephemeral=True)
                         return
 
-                    table_header = (
-                        "╔════╦══════════════╦═════════════╦══════════════╦═══════╦══════════════════╗\n"
-                        "║ ID ║ Supprimé par ║ Salon       ║ Type         ║ Nb.   ║ Date             ║\n"
-                        "╠════╬══════════════╬═════════════╬══════════════╬═══════╬══════════════════╣\n"
-                    )
-
-                    rows = []
+                    history_entries = []
                     for d in deletions:
                         user_name = await self.get_user_name_or_mention(d.deleted_by_discord_id)
-                        channel_name = d.channel_name or "?"
-                        row = (
-                            f"║ {d.id:<2} ║ {user_name:<12} ║ #{channel_name:<10} ║ "
-                            f"{get_type_icon(d.deletion_type)} {d.deletion_type:<9} ║ "
-                            f"{d.message_count:<5} ║ {d.created_at.strftime('%d/%m/%Y %H:%M'):<15} ║"
+                        history_entries.append(
+                            DeletionHistoryEntry(
+                                id=d.id,
+                                deleted_by_name=user_name,
+                                channel_name=d.channel_name or "?",
+                                deletion_type=d.deletion_type,
+                                message_count=d.message_count,
+                                created_at=d.created_at,
+                            )
                         )
-                        rows.append(row)
 
-                    table_rows = "\n".join(rows)
-
-                    table_footer = (
-                        "\n╚════╩══════════════╩═════════════╩══════════════╩═══════╩══════════════════╝"
-                    )
-
-                    history_text = f"{table_header}{table_rows}{table_footer}"
+                    history_text = format_deletion_history_table(history_entries)
 
                     if len(history_text) > 2000:
                         history_file = io.BytesIO(history_text.encode("utf-8"))
