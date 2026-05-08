@@ -1,20 +1,13 @@
-import io
 import logging
 import re
 from datetime import datetime, date, timedelta, timezone
-from matplotlib.collections import LineCollection
-from matplotlib.patches import PathPatch
-from matplotlib.path import Path
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 import discord
 from discord import File
 from discord.ext import commands, tasks
 from discord import app_commands
 from typing import List, Optional
 
-import numpy as np
-
+from cogs.ranking.renderers import build_mmr_history_chart, get_mmr_period_title
 from cogs.ranking.services.mmr_tracker_service import MmrTrackerService
 
 logger = logging.getLogger(__name__)
@@ -141,91 +134,11 @@ class MMRTracker(commands.Cog):
         dates_plot = [row.recorded_at for row in history if not start_date or row.recorded_at.date() >= start_date]
         elos_plot  = [row.elo         for row in history if not start_date or row.recorded_at.date() >= start_date]
 
-        # Conversion pour Matplotlib
-        mpl_dates = mdates.date2num(dates_plot)
+        if len(dates_plot) < 2:
+            return await interaction.followup.send(f"Aucune partie enregistrée pour la période '{period}'.")
 
-        # Choix du fill degrade global (vert si dernier > premier, rouge sinon)
-        cmap_fill = 'Greens' if elos_plot[-1] > elos_plot[0] else 'Reds'
-
-        # Preparation des segments colores (vert/rouge selon progression locale)
-        points   = np.array([mpl_dates, elos_plot]).T.reshape(-1, 1, 2)
-        segments = np.concatenate([points[:-1], points[1:]], axis=1)
-        seg_colors = [
-            'green' if elos_plot[i+1] > elos_plot[i] else 'red'
-            for i in range(len(elos_plot)-1)
-        ]
-
-        # Creation du plot
-        buf = io.BytesIO()
-        plt.style.use('dark_background')
-        fig, ax = plt.subplots(figsize=(10, 4), dpi=150)
-
-        #  — Degrade clipe sous la courbe —
-        ymin = min(elos_plot) - 10
-        gradient = np.linspace(1, 0, 256).reshape(256, 1)  # opaque->transparent
-        im = ax.imshow(
-            gradient,
-            extent=[mpl_dates.min(), mpl_dates.max(), ymin, max(elos_plot)],
-            origin='lower',
-            cmap=plt.get_cmap(cmap_fill),
-            alpha=0.5,
-            aspect='auto',
-            zorder=1
-        )
-        poly = np.vstack([
-            [mpl_dates[0], ymin],
-            np.column_stack([mpl_dates, elos_plot]),
-            [mpl_dates[-1], ymin],
-            [mpl_dates[0], ymin]
-        ])
-        im.set_clip_path(PathPatch(Path(poly), transform=ax.transData))
-
-        #  — Segments colores —
-        lc = LineCollection(segments, colors=seg_colors, linewidths=2.5, zorder=3)
-        ax.add_collection(lc)
-
-        #  — Glow « maison » sous chaque segment —
-        for seg, col in zip(segments, seg_colors):
-            ax.plot(seg[:,0], seg[:,1],
-                    linewidth=8,
-                    solid_capstyle='round',
-                    color=col,
-                    alpha=0.2,
-                    zorder=2)
-
-        #  — Axes et formatage des dates —
-        if period == 'today':
-            fmt = '%H:%M'
-            xlabel = "Heure"
-        else:
-            fmt = '%Y-%m-%d'
-            xlabel = "Date"
-        ax.xaxis.set_major_formatter(mdates.DateFormatter(fmt))
-        ax.xaxis.set_major_locator(mdates.AutoDateLocator())
-        ax.set_xlabel(xlabel, fontsize=12)
-
-        #  — Pas de grille verticale —
-        ax.grid(False)
-        ax.xaxis.grid(False)
-
-        #  — Titres et labels —
-        title = {
-            'today': "Aujourd'hui",
-            'week': "7 derniers jours",
-            'all':   "Total"
-        }.get(period, f"Episode {season_num} • Act {act_num}")
-        ax.set_title(f"Évolution MMR ({title})", fontsize=14, fontweight='bold')
-        ax.set_xlabel("Heure" if period != 'all' else "Date", fontsize=12)
-        ax.set_ylabel("ELO", fontsize=12)
-
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.set_ylim(ymin, max(elos_plot) + 10)
-
-        plt.tight_layout()
-        plt.savefig(buf, format="png")
-        buf.seek(0)
-        plt.close(fig)
+        title = get_mmr_period_title(period, season_num, act_num)
+        buf = build_mmr_history_chart(dates_plot, elos_plot, period=period, title=title)
 
         # 5) Construction et envoi de l'embed
         embed = discord.Embed(
