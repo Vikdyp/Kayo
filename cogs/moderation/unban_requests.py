@@ -11,6 +11,11 @@ import asyncio
 from datetime import datetime
 
 from cogs.moderation.constants import MSG_TYPE_UNBAN_PANEL
+from cogs.moderation.presenters import (
+    build_deban_panel_embed,
+    build_deban_request_channel_name,
+    build_deban_request_embed,
+)
 from cogs.moderation.services.moderation_service import ModerationService
 from cogs.moderation.views.unban_request_views import (
     DebanManagerView,
@@ -93,17 +98,7 @@ class DebanManager(commands.Cog):
             await ctx.send("Salon de demande-deban introuvable. Veuillez contacter un administrateur.", delete_after=10)
             return
 
-        # Créer l'embed principal
-        embed = discord.Embed(
-            title="🎫 Demande de Déban",
-            description=(
-                "Cliquez sur le bouton ci-dessous pour soumettre une demande de débannissement.\n"
-                "Vous serez informé lors du traitement de votre demande."
-            ),
-            color=discord.Color.blue(),
-            timestamp=datetime.utcnow()
-        )
-        embed.set_footer(text="Déban Manager")
+        embed = build_deban_panel_embed(timestamp=datetime.utcnow())
 
         view = DebanManagerView(self)
 
@@ -197,9 +192,7 @@ class DebanManager(commands.Cog):
             )
             return
 
-        # Créer le salon spécifique pour cette demande
-        sanitized_username = discord.utils.escape_markdown(user.name).replace(" ", "-").lower()[:20]
-        channel_name = f"deban-{sanitized_username}"
+        channel_name = build_deban_request_channel_name(user.name)
 
         try:
             category = guild.get_channel(category_id)
@@ -241,34 +234,21 @@ class DebanManager(commands.Cog):
             )
             return
 
-        # Créer l'embed de demande individuelle
         banned_by_mention = "Utilisateur inconnu"
         if ban_info.moderator_discord_id:
             banned_by_user = guild.get_member(ban_info.moderator_discord_id)
             if banned_by_user:
                 banned_by_mention = banned_by_user.mention
 
-        embed = discord.Embed(
-            title="📄 Nouvelle Demande de Déban",
-            color=discord.Color.green(),
-            timestamp=datetime.utcnow()
-        )
-        embed.add_field(name="Utilisateur", value=f"{user.mention} (`{user.id}`)", inline=False)
-        embed.add_field(name="Raison de la Demande", value=reason, inline=False)
-        embed.add_field(
-            name="Détails du Bannissement",
-            value=(
-                f"**Type :** {ban_info.ban_type}\n"
-                f"**Raison :** {ban_info.reason or 'Aucune raison fournie'}\n"
-                f"**Banni(e) le :** {ban_info.banned_at}\n"
-                f"**Fin du ban :** {ban_info.ban_end or 'Permanent'}\n"
-                f"**Banni(e) par :** {banned_by_mention}"
-            ),
-            inline=False
-        )
-        embed.set_footer(
-            text=f"Demande par {interaction.user}",
-            icon_url=interaction.user.avatar.url if interaction.user.avatar else None
+        embed = build_deban_request_embed(
+            user_mention=user.mention,
+            user_id=user.id,
+            reason=reason,
+            ban_info=ban_info,
+            banned_by_mention=banned_by_mention,
+            requester_label=str(interaction.user),
+            requester_avatar_url=interaction.user.avatar.url if interaction.user.avatar else None,
+            timestamp=datetime.utcnow(),
         )
 
         # Envoyer l'embed (on a besoin du message_id pour créer la demande)
