@@ -1,5 +1,6 @@
 # cogs/moderation/automod.py
 
+import asyncio
 import re
 import discord
 from discord.ext import commands
@@ -9,9 +10,12 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Set, Tuple, Optional, Any
 from urllib.parse import urlparse
 
+from cogs.moderation.discord_actions import (
+    apply_ban_role_all_guilds,
+    collect_restorable_role_ids,
+)
 from cogs.moderation.services.moderation_service import ModerationService
 from cogs.moderation.services.automod_service import AutomodService
-from database.services.guild_channels_service import ChannelConfigurationService
 
 logger = logging.getLogger(__name__)
 
@@ -102,10 +106,7 @@ class SpamConfirmationView(discord.ui.View):
         # Bannir l'utilisateur via ModerationService
         try:
             # Sauvegarder les rôles
-            roles_to_backup = [
-                role.id for role in self.user.roles
-                if role != self.guild.default_role and role.name.lower() != "ban"
-            ]
+            roles_to_backup = collect_restorable_role_ids(self.user)
 
             # Sauvegarder les rôles avant le ban
             if roles_to_backup:
@@ -127,7 +128,13 @@ class SpamConfirmationView(discord.ui.View):
             )
 
             # Appliquer le ban sur tous les serveurs
-            await self._apply_ban_all_guilds(self.user.id, "Spam multi-salons détecté")
+            await apply_ban_role_all_guilds(
+                self.bot,
+                self._mod_svc,
+                self.user.id,
+                "Spam multi-salons détecté",
+                source_member=self.user,
+            )
 
             # Envoyer un DM à l'utilisateur
             try:
@@ -196,30 +203,6 @@ class SpamConfirmationView(discord.ui.View):
         await interaction.message.edit(embed=embed, view=self)
         logger.info(f"Spam ignoré pour {self.user.display_name} par {interaction.user.display_name}")
 
-    async def _apply_ban_all_guilds(self, user_id: int, reason: str) -> None:
-        """Applique le rôle ban sur tous les serveurs."""
-        for guild in self.bot.guilds:
-            member = guild.get_member(user_id)
-            if not member:
-                continue
-
-            ban_role_id = await self._mod_svc.get_ban_role_id(guild.id)
-            if not ban_role_id:
-                continue
-
-            ban_role = guild.get_role(ban_role_id)
-            if not ban_role or ban_role in member.roles:
-                continue
-
-            try:
-                roles_to_remove = [role for role in member.roles if role != guild.default_role]
-                if roles_to_remove:
-                    await member.remove_roles(*roles_to_remove, reason=reason)
-                await member.add_roles(ban_role, reason=reason)
-                logger.info(f"Rôle ban appliqué à {member.display_name} dans {guild.name}")
-            except (discord.Forbidden, discord.HTTPException) as e:
-                logger.error(f"Erreur ban {member.display_name} dans {guild.name}: {e}")
-
     async def on_timeout(self):
         """Appelé quand la vue expire."""
         if not self.resolved:
@@ -238,12 +221,10 @@ class AutoMod(commands.Cog):
         self,
         bot: commands.Bot,
         moderation_service: ModerationService,
-        channel_service: ChannelConfigurationService,
         automod_service: AutomodService,
     ):
         self.bot = bot
         self._mod_svc = moderation_service
-        self._channel_svc = channel_service
         self._automod_svc = automod_service
         # Cache pour tracker les messages récents par utilisateur
         # Structure: {user_id: [(guild_id, channel_id, message_id, content_hash, timestamp), ...]}
@@ -252,12 +233,18 @@ class AutoMod(commands.Cog):
         # Structure: {(user_id, guild_id): expiration_datetime}
         self.spam_whitelist: Dict[Tuple[int, int], datetime] = {}
         # Set pour éviter les alertes en double
-        self.pending_spam_alerts: Set[int] = set()
+        self.pending_spam_alerts: Set[Tuple[int, int]] = set()
+        self._pending_cleanup_tasks: Set[asyncio.Task] = set()
         # Compiler les patterns regex de base
         self.scam_patterns = [re.compile(pattern, re.IGNORECASE) for pattern in SCAM_PATTERNS]
         # Cache des configurations par serveur
         self.config_cache: Dict[int, Dict[str, Any]] = {}
         logger.info("AutoMod initialisé.")
+
+    def cog_unload(self) -> None:
+        for task in self._pending_cleanup_tasks:
+            task.cancel()
+        self._pending_cleanup_tasks.clear()
 
     async def get_guild_config(self, guild_id: int, guild_name: str) -> Dict[str, Any]:
         """Récupère la configuration du serveur (avec cache)."""
@@ -709,10 +696,7 @@ class AutoMod(commands.Cog):
         # 2. Bannir l'utilisateur
         try:
             # Sauvegarder les rôles
-            roles_to_backup = [
-                role.id for role in member.roles
-                if role != guild.default_role and role.name.lower() != "ban"
-            ]
+            roles_to_backup = collect_restorable_role_ids(member)
 
             # Sauvegarder les rôles avant le ban
             if roles_to_backup:
@@ -734,7 +718,13 @@ class AutoMod(commands.Cog):
             )
 
             # Appliquer le ban sur tous les serveurs
-            await self._apply_ban_all_guilds(member.id, "Scam détecté (auto-modération)")
+            await apply_ban_role_all_guilds(
+                self.bot,
+                self._mod_svc,
+                member.id,
+                "Scam détecté (auto-modération)",
+                source_member=member,
+            )
 
             logger.info(f"Utilisateur {member.display_name} banni pour scam")
 
@@ -769,30 +759,6 @@ class AutoMod(commands.Cog):
             channel=message.channel
         )
 
-    async def _apply_ban_all_guilds(self, user_id: int, reason: str) -> None:
-        """Applique le rôle ban sur tous les serveurs."""
-        for guild in self.bot.guilds:
-            member = guild.get_member(user_id)
-            if not member:
-                continue
-
-            ban_role_id = await self._mod_svc.get_ban_role_id(guild.id)
-            if not ban_role_id:
-                continue
-
-            ban_role = guild.get_role(ban_role_id)
-            if not ban_role or ban_role in member.roles:
-                continue
-
-            try:
-                roles_to_remove = [role for role in member.roles if role != guild.default_role]
-                if roles_to_remove:
-                    await member.remove_roles(*roles_to_remove, reason=reason)
-                await member.add_roles(ban_role, reason=reason)
-                logger.info(f"Rôle ban appliqué à {member.display_name} dans {guild.name}")
-            except (discord.Forbidden, discord.HTTPException) as e:
-                logger.error(f"Erreur ban {member.display_name} dans {guild.name}: {e}")
-
     async def _log_automod_action(
         self,
         guild: discord.Guild,
@@ -804,7 +770,7 @@ class AutoMod(commands.Cog):
     ) -> None:
         """Envoie un log dans le salon de modération."""
         try:
-            mod_channel_id = await self._channel_svc.get_one(guild.id, "modération")
+            mod_channel_id = await self._mod_svc.get_moderation_channel_id(guild.id)
             if not mod_channel_id:
                 logger.warning(f"Salon de modération non configuré pour {guild.name}")
                 return
@@ -853,6 +819,20 @@ class AutoMod(commands.Cog):
             ]
             if not self.message_cache[user_id]:
                 del self.message_cache[user_id]
+
+    def _schedule_pending_alert_cleanup(
+        self,
+        alert_key: Tuple[int, int],
+        *,
+        delay_seconds: int = 30,
+    ) -> None:
+        task = asyncio.create_task(self._clear_pending_alert(alert_key, delay_seconds))
+        self._pending_cleanup_tasks.add(task)
+        task.add_done_callback(self._pending_cleanup_tasks.discard)
+
+    async def _clear_pending_alert(self, alert_key: Tuple[int, int], delay_seconds: int) -> None:
+        await asyncio.sleep(delay_seconds)
+        self.pending_spam_alerts.discard(alert_key)
 
     async def check_cross_channel_spam(self, message: discord.Message, config: Dict[str, Any]) -> bool:
         """
@@ -904,10 +884,12 @@ class AutoMod(commands.Cog):
         user = message.author
         guild = message.guild
 
-        # Éviter les alertes en double
-        if user.id in self.pending_spam_alerts:
+        # Éviter les alertes en double par utilisateur et serveur
+        alert_key = (user.id, guild.id)
+        if alert_key in self.pending_spam_alerts:
             return
-        self.pending_spam_alerts.add(user.id)
+        self.pending_spam_alerts.add(alert_key)
+        keep_pending = False
 
         try:
             # Récupérer les messages à signaler
@@ -921,16 +903,14 @@ class AutoMod(commands.Cog):
                         message_refs.append((entry[1], entry[2]))  # (channel_id, message_id)
 
             # Récupérer le salon de modération
-            mod_channel_id = await self._channel_svc.get_one(guild.id, "modération")
+            mod_channel_id = await self._mod_svc.get_moderation_channel_id(guild.id)
             if not mod_channel_id:
                 logger.warning(f"Salon de modération non configuré pour {guild.name}")
-                self.pending_spam_alerts.discard(user.id)
                 return
 
             mod_channel = guild.get_channel(mod_channel_id)
             if not mod_channel:
                 logger.warning(f"Salon de modération introuvable pour {guild.name}")
-                self.pending_spam_alerts.discard(user.id)
                 return
 
             # Construire la liste des salons
@@ -975,14 +955,16 @@ class AutoMod(commands.Cog):
             )
 
             await mod_channel.send(embed=embed, view=view)
+            keep_pending = True
             logger.info(f"Alerte spam envoyée pour {user.display_name} dans {guild.name}")
 
         except Exception as e:
             logger.exception(f"Erreur lors de l'envoi de l'alerte spam: {e}")
         finally:
-            # Retirer de la liste après un délai pour éviter le spam d'alertes
-            await discord.utils.sleep_until(datetime.utcnow() + timedelta(seconds=30))
-            self.pending_spam_alerts.discard(user.id)
+            if keep_pending:
+                self._schedule_pending_alert_cleanup(alert_key)
+            else:
+                self.pending_spam_alerts.discard(alert_key)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -1031,8 +1013,5 @@ async def setup(bot: commands.Bot):
         logger.error("automod_service non initialisé. AutoMod ne sera pas chargé.")
         return
 
-    # Créer le channel_service
-    channel_service = ChannelConfigurationService(bot.db)
-
-    await bot.add_cog(AutoMod(bot, moderation_service, channel_service, automod_service))
+    await bot.add_cog(AutoMod(bot, moderation_service, automod_service))
     logger.info("AutoMod Cog chargé avec succès.")

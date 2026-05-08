@@ -12,6 +12,8 @@ from database.services.message_deletions_service import MessageDeletionsService,
 
 logger = logging.getLogger(__name__)
 
+MAX_PURGE_SCAN = 1000
+
 
 class CleanService:
     """
@@ -21,6 +23,7 @@ class CleanService:
 
     def __init__(self, message_deletions_svc: MessageDeletionsService):
         self._deletions_svc = message_deletions_svc
+        self.max_purge_scan = MAX_PURGE_SCAN
 
     async def delete_all_messages(
         self,
@@ -29,7 +32,7 @@ class CleanService:
     ) -> int:
         """Supprime tous les messages d'un salon et enregistre l'action."""
         try:
-            deleted = await channel.purge(limit=None)
+            deleted = await channel.purge(limit=MAX_PURGE_SCAN)
             count = len(deleted)
             logger.info(f"{count} messages supprimés dans {channel.name} par {deleted_by}.")
 
@@ -61,7 +64,10 @@ class CleanService:
     ) -> int:
         """Supprime les messages d'un utilisateur spécifique et enregistre l'action."""
         try:
-            deleted = await channel.purge(limit=None, check=lambda m: m.author.id == user.id)
+            deleted = await channel.purge(
+                limit=MAX_PURGE_SCAN,
+                check=lambda m: m.author.id == user.id,
+            )
             count = len(deleted)
             logger.info(f"{count} messages de {user.display_name} supprimés dans {channel.name} par {deleted_by}.")
 
@@ -93,6 +99,7 @@ class CleanService:
     ) -> int:
         """Supprime un nombre spécifique de messages et enregistre l'action."""
         try:
+            count = min(count, MAX_PURGE_SCAN)
             deleted = await channel.purge(limit=count)
             actual_count = len(deleted)
             logger.info(f"{actual_count} messages supprimés dans {channel.name} par {deleted_by} (demandé: {count}).")
@@ -126,7 +133,10 @@ class CleanService:
         """Supprime les messages après un message spécifique et enregistre l'action."""
         try:
             message = await channel.fetch_message(message_id)
-            deleted = await channel.purge(limit=None, check=lambda m: m.created_at > message.created_at)
+            deleted = await channel.purge(
+                limit=MAX_PURGE_SCAN,
+                check=lambda m: m.created_at > message.created_at,
+            )
             count = len(deleted)
             logger.info(f"{count} messages supprimés après le message {message.id} dans {channel.name} par {deleted_by}.")
 
@@ -162,7 +172,7 @@ class CleanService:
     ) -> int:
         """Supprime les messages répondant à une condition spécifique et enregistre l'action."""
         try:
-            deleted = await channel.purge(limit=None, check=condition)
+            deleted = await channel.purge(limit=MAX_PURGE_SCAN, check=condition)
             count = len(deleted)
             logger.info(f"{count} messages supprimés ({deletion_type}) dans {channel.name} par {deleted_by}.")
 

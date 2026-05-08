@@ -7,10 +7,17 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
+from cogs.moderation.discord_actions import (
+    apply_ban_role_all_guilds,
+    collect_restorable_role_ids,
+    filter_assignable_roles,
+)
 from cogs.moderation.services.moderation_service import ModerationService
 from cogs.moderation.views.confirmation_view import ConfirmationView
 
 logger = logging.getLogger(__name__)
+
+MAX_BAN_PURGE_SCAN_PER_CHANNEL = 1000
 
 class Moderation(commands.Cog):
     """Cog pour gérer les bannissements, débannissements, avertissements et vérifications."""
@@ -246,10 +253,7 @@ class Moderation(commands.Cog):
                 ban_end = datetime.utcnow() + timedelta(minutes=duration_minutes)
 
             # Collecter les rôles de l'utilisateur pour le backup
-            roles_to_backup = [
-                role.id for role in member.roles
-                if role != guild.default_role and role.name.lower() != "ban"
-            ]
+            roles_to_backup = collect_restorable_role_ids(member)
 
             # Sauvegarder les rôles pour restauration après déban
             await self._mod_svc.update_roles_backup(
@@ -358,7 +362,7 @@ class Moderation(commands.Cog):
                     discord.utils.get(g.roles, id=role_id)
                     for role_id in saved_roles
                 ]
-                roles_to_add = [role for role in roles_to_add if role is not None]
+                roles_to_add = filter_assignable_roles(g, roles_to_add)
                 if roles_to_add:
                     try:
                         await member.add_roles(*roles_to_add, reason="Restauration des rôles après débannissement.")
@@ -426,48 +430,13 @@ class Moderation(commands.Cog):
             reason: Raison du ban
             source_member: Membre déjà récupéré (optionnel, évite le cache miss)
         """
-        for guild in self.bot.guilds:
-            # Utiliser source_member si c'est le même serveur, sinon chercher dans le cache
-            if source_member and guild.id == source_member.guild.id:
-                member = source_member
-            else:
-                member = guild.get_member(user_id)
-
-            if not member:
-                logger.debug(f"Membre {user_id} non trouvé dans le cache de {guild.name}.")
-                continue
-
-            # Récupérer le rôle ban pour ce serveur
-            ban_role_id = await self._mod_svc.get_ban_role_id(guild.id)
-            if not ban_role_id:
-                logger.debug(f"Rôle 'ban' non configuré pour le serveur {guild.name}.")
-                continue
-
-            ban_role = guild.get_role(ban_role_id)
-            if not ban_role:
-                logger.warning(f"Rôle 'ban' avec ID {ban_role_id} introuvable dans {guild.name}.")
-                continue
-
-            # Vérifier si l'utilisateur a déjà le rôle ban
-            if ban_role in member.roles:
-                logger.debug(f"Utilisateur {member.display_name} a déjà le rôle ban dans {guild.name}.")
-                continue
-
-            try:
-                # Retirer tous les rôles (sauf le rôle par défaut)
-                roles_to_remove = [role for role in member.roles if role != guild.default_role]
-                if roles_to_remove:
-                    await member.remove_roles(*roles_to_remove, reason=f"Ban global: {reason}")
-                    logger.info(f"Rôles supprimés pour {member.display_name} dans {guild.name}.")
-
-                # Ajouter le rôle ban
-                await member.add_roles(ban_role, reason=f"Ban global: {reason}")
-                logger.info(f"Rôle 'ban' appliqué à {member.display_name} dans {guild.name}.")
-
-            except discord.Forbidden:
-                logger.error(f"Permissions insuffisantes pour bannir {member.display_name} dans {guild.name}.")
-            except discord.HTTPException as e:
-                logger.error(f"Erreur HTTP lors du ban de {member.display_name} dans {guild.name}: {e}")
+        await apply_ban_role_all_guilds(
+            self.bot,
+            self._mod_svc,
+            user_id,
+            f"Ban global: {reason}",
+            source_member=source_member,
+        )
 
     async def delete_user_messages(
         self,
@@ -522,7 +491,7 @@ class Moderation(commands.Cog):
                         return msg.author.id == user_id
 
                     deleted = await channel.purge(
-                        limit=None,
+                        limit=MAX_BAN_PURGE_SCAN_PER_CHANNEL,
                         check=check,
                         after=after_date,
                         reason=f"Suppression des messages suite à un ban"

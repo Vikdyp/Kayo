@@ -8,6 +8,7 @@ import discord
 from discord.ext import commands
 from discord.ui import View, Button, Modal, TextInput
 import logging
+import asyncio
 from datetime import datetime
 
 from cogs.moderation.constants import MSG_TYPE_UNBAN_PANEL
@@ -109,8 +110,13 @@ class DebanManager(commands.Cog):
     ):
         self.bot = bot
         self._mod_svc = moderation_service
+        self._reload_views_task: asyncio.Task | None = None
         logger.info("DebanManager Cog initialisé.")
-        self.bot.loop.create_task(self.reload_persistent_views())
+        self._reload_views_task = asyncio.create_task(self.reload_persistent_views())
+
+    def cog_unload(self):
+        if self._reload_views_task:
+            self._reload_views_task.cancel()
 
     @property
     def _unban_requests_svc(self):

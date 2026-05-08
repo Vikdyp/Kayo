@@ -4,7 +4,7 @@ Cog pour les commandes de nettoyage de messages.
 Aucun accès DB direct - utilise CleanService.
 """
 
-import os
+import io
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -70,11 +70,13 @@ class Clean(commands.Cog):
         await view.wait()
         return view.value
 
-    async def get_user_name_or_mention(self, discord_id: int) -> str:
+    async def get_user_name_or_mention(self, discord_id: Optional[int]) -> str:
         """
         Récupère le nom d'utilisateur ou mention pour un discord_id.
         Si l'utilisateur est introuvable, retourne simplement `<@ID>`.
         """
+        if discord_id is None:
+            return "Automatique"
         try:
             user = self.bot.get_user(discord_id) or await self.bot.fetch_user(discord_id)
             return f"@{user.display_name}" if user else f"<@{discord_id}>"
@@ -131,7 +133,7 @@ class Clean(commands.Cog):
                     if value:
                         deleted_count = await self._clean_svc.delete_all_messages(channel, interaction.user)
                         await interaction.followup.send(
-                            f"Tous les messages dans {channel.mention} ont été supprimés ({deleted_count}).",
+                            f"{deleted_count} messages ont été supprimés dans {channel.mention}.",
                             ephemeral=True,
                         )
                     else:
@@ -139,7 +141,7 @@ class Clean(commands.Cog):
 
                 await self.ask_confirmation(
                     interaction,
-                    f"Confirmez-vous la suppression de **tous** les messages dans {channel.mention} ?",
+                    f"Confirmez-vous la suppression des {self._clean_svc.max_purge_scan} derniers messages maximum dans {channel.mention} ?",
                     confirmation_callback,
                     confirm_label="Supprimer",
                     confirm_style=discord.ButtonStyle.red,
@@ -173,6 +175,12 @@ class Clean(commands.Cog):
             elif action.value == "number":
                 if not count or count <= 0:
                     await interaction.followup.send("Veuillez spécifier un nombre de messages valide.", ephemeral=True)
+                    return
+                if count > self._clean_svc.max_purge_scan:
+                    await interaction.followup.send(
+                        f"Le maximum autorisé est {self._clean_svc.max_purge_scan} messages.",
+                        ephemeral=True,
+                    )
                     return
 
                 async def confirmation_callback(value: Optional[bool]):
@@ -258,14 +266,12 @@ class Clean(commands.Cog):
                     history_text = f"{table_header}{table_rows}{table_footer}"
 
                     if len(history_text) > 2000:
-                        with open("history.txt", "w", encoding="utf-8") as file:
-                            file.write(history_text)
+                        history_file = io.BytesIO(history_text.encode("utf-8"))
                         await interaction.followup.send(
                             "L'historique est trop long pour être affiché. Voici un fichier contenant les données :",
-                            file=discord.File("history.txt"),
+                            file=discord.File(history_file, filename="history.txt"),
                             ephemeral=True,
                         )
-                        os.remove("history.txt")
                     else:
                         await interaction.followup.send(f"```{history_text}```", ephemeral=True)
 
