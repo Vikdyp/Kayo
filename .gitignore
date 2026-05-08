@@ -15,6 +15,7 @@ __pycache__/
 data/*.json
 backup.dump
 *.sql
+!database/migrations/*.sql
 
 restore_database.py
 restore_database2.py
@@ -30,3 +31,4 @@ SQL_test.py
 testss.py
 
 internal_auth.py
+.idx/dev.nix

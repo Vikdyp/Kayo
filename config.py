@@ -1,100 +1,50 @@
 # config.py
-
 import os
+import logging
 from dotenv import load_dotenv
 
-# Charger les variables d'environnement depuis le fichier .env
 load_dotenv()
 
 def _env_bool(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
     if value is None:
         return default
-    return value.strip().lower() in ["true", "1", "t", "yes", "y", "on"]
+    return value.strip().lower() in {"true", "1", "t", "yes", "y", "on"}
 
-# Activer le mode test (défini avant DATABASE pour pouvoir l'utiliser)
 TEST_MODE = _env_bool("TEST_MODE", False)
 
 DATABASE = {
-    'user': os.getenv('DATABASE_USER'),
-    'password': os.getenv('DATABASE_PASSWORD'),
-    'database': os.getenv('DATABASE_TEST_NAME' if TEST_MODE else 'DATABASE_NAME'),
-    'host': os.getenv('DATABASE_HOST'),
-    'port': int(os.getenv('DATABASE_PORT', 5432)),
-    'ssl': os.getenv('DATABASE_SSL', 'false').lower() in ['true', '1', 't']
+    "user": os.getenv("DATABASE_USER"),
+    "password": os.getenv("DATABASE_PASSWORD"),
+    "database": os.getenv("DATABASE_TEST_NAME" if TEST_MODE else "DATABASE_NAME"),
+    "host": os.getenv("DATABASE_HOST"),
+    "port": int(os.getenv("DATABASE_PORT", 5432)),
+    "ssl": os.getenv("DATABASE_SSL", "false").lower() in {"true", "1", "t"},
 }
+
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN_TEST" if TEST_MODE else "DISCORD_TOKEN")
-TEST_GUILD_ID = os.getenv('TEST_GUILD_ID')
+TEST_GUILD_ID = os.getenv("TEST_GUILD_ID")
 
-# Configuration des logs
-LOGGING = {
-    
-    'bot': True,
+# Logging: clés = noms de loggers (idéalement __name__)
+LOG_LEVELS = {
+    # Ton entrypoint
+    "bot": logging.INFO,
 
-    # CONFIGURATION
-    'roles_configuration': False,
-    'channels_configuration': False,
+    # Discord.py est verbeux
+    "discord": logging.INFO,
+    "discord.http": logging.INFO,
 
-    # UTILS
-    'database': False,
-    'request_manager': False,
+    # Cogs (règle globale)
+    "cogs": logging.INFO,
 
-    # OTHER
-    'rank_updater': False,
+    # Tu peux affiner un sous-module si besoin
+    "cogs.moderation": logging.INFO,
+    "cogs.twitch": logging.INFO,
 
-    # ADMIN
-    'admin': True,
+    # Intégrations / services
+    "integrations": logging.INFO,
+    "integrations.henrikdev": logging.DEBUG,
 
-    # MODERATION
-    'moderation' : True,
-    'moderation_service': True,
-    'automod': True,
-    'services.automod_service': True,
-    'clean': False,
-    'deban_manager' : False,
-
-    # RANKING
-    'valorant_service' : False,
-    'assign_rank' : False,
-    'rank_service' : False,
-    'valorant_mmr' : False,
-    'tracker_service' : False,
-
-
-    # REPUTATION
-    'reputation' : True,
-    'profil' : True,
-
-    # RULES
-    'rules' : False,
-    'rules_service' : False,
-
-    # VOICE MANAGEMENT
-    'five_stack' : False,
-    'voice_cleaner' : False,
-
-    # ???
-    'rank_roles' : False,
-
-    # OTHER
-    'vocal.services' : False,
-    'vocal.creator' : False,
-    'invite_tracker' : False,
-    'event_cog' : False,
-
-    # ACCUEIL
-    'accueil.services' : False,
-
-    # SCRIMS
-    'scrims.services' : False,
-    'scrims' : False,
-
-    # TWITCH
-    'twitch' : True,
-    'twitch.service' : True,
-
-    # SHOP
-    'shop_notif' : True,
-    'valorant.shop_service' : True,
-
+    # Utils
+    "utils": logging.INFO,
 }

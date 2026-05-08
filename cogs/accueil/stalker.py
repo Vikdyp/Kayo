@@ -1,33 +1,37 @@
 # cogs/accueil/stalker.py
+"""
+Cog de statistiques membres - UI Discord uniquement.
+La génération du graphique reste dans le cog car c'est de la présentation.
+"""
+
 import discord
 from discord.ext import commands, tasks
 import logging
 import io
+import asyncio
 from matplotlib import ticker
 import matplotlib.pyplot as plt
-from datetime import datetime, time, timedelta
+from datetime import datetime, time
 from zoneinfo import ZoneInfo
 from typing import Optional, Dict
 
-from cogs.accueil.services import accueil_services
+from cogs.accueil.services import AccueilService
 
-logger = logging.getLogger("accueil.stalker")
+logger = logging.getLogger(__name__)
 
-STATS_EMBED_ACTIONS = ("stat_embed", "stats_embed")
-
-# Mapping période -> custom_id des boutons
+# Mapping période → custom_id des boutons
 PERIOD_TO_CUSTOM_ID = {
     "7j": "stats_7j",
     "1m": "stats_1m",
     "default": "stats_1m",
     "1a": "stats_1a",
-    "total": "stats_total"
+    "total": "stats_total",
 }
 
 
 # ----- VUE POUR LES BOUTONS -----
 class StatsView(discord.ui.View):
-    def __init__(self, cog, guild: discord.Guild, current_period: str = "default"):
+    def __init__(self, cog: "StalkerCog", guild: discord.Guild, current_period: str = "default"):
         super().__init__(timeout=None)  # Vue persistante
         self.cog = cog
         self.guild = guild
@@ -73,105 +77,54 @@ class StatsView(discord.ui.View):
         await interaction.response.defer()
         await self.cog.update_stats_embed(interaction.guild, period="total")
         await interaction.followup.send("Affichage des stats totales.", ephemeral=True)
+
+
 # ----- FIN VUE -----
 
 
-def _fill_missing_days(data: list, days: Optional[int]) -> list:
-    """
-    Remplit les jours manquants entre la première et dernière date avec join_count=0, leave_count=0.
-    Si days est spécifié, s'assure que la période couvre exactement ce nombre de jours.
-    """
-    if not data:
-        return data
-
-    # Convertir en dict pour accès rapide
-    data_by_date = {record['date']: record for record in data}
-
-    # Déterminer la plage de dates
-    paris_tz = ZoneInfo("Europe/Paris")
-    today = datetime.now(paris_tz).date()
-
-    if days is not None:
-        start_date = today - timedelta(days=days)
-        end_date = today
-    else:
-        # Pour "total", on prend la première date des données jusqu'à aujourd'hui
-        start_date = min(record['date'] for record in data)
-        end_date = today
-
-    # Remplir les jours manquants
-    filled_data = []
-    current_date = start_date
-    while current_date <= end_date:
-        if current_date in data_by_date:
-            filled_data.append(data_by_date[current_date])
-        else:
-            filled_data.append({
-                'date': current_date,
-                'join_count': 0,
-                'leave_count': 0
-            })
-        current_date += timedelta(days=1)
-
-    return filled_data
-
-
 class StalkerCog(commands.Cog):
-    def __init__(self, bot: commands.Bot):
+    def __init__(self, bot: commands.Bot, accueil_service: AccueilService):
         self.bot = bot
+        self._service = accueil_service
         # Multi-serveur : dictionnaire {guild_id: message}
         self.persistent_messages: Dict[int, discord.Message] = {}
+        self._load_persistent_task: asyncio.Task | None = None
 
         # Tâche de mise à jour quotidienne
         self.daily_update.start()
 
         # On essaye de recharger la vue persistante au démarrage
-        self.bot.loop.create_task(self.load_persistent_messages())
+        self._load_persistent_task = asyncio.create_task(self.load_persistent_messages())
 
     def cog_unload(self):
         self.daily_update.cancel()
+        if self._load_persistent_task:
+            self._load_persistent_task.cancel()
 
     async def get_stats_channel(self, guild: discord.Guild) -> Optional[discord.abc.GuildChannel]:
-        actions = list(STATS_EMBED_ACTIONS)
-        channels = await accueil_services.get_channel_ids(guild.id, actions)
-        channel_id = None
-        for action in actions:
-            channel_id = channels.get(action)
-            if channel_id:
-                break
+        """Récupère le channel de stats via le service."""
+        channel_id = await self._service.get_stats_channel_id(guild.id)
         if not channel_id:
-            logger.warning("Aucun salon stats_embed configure pour la guilde %s.", guild.id)
+            logger.warning(f"Aucun salon stats_embed configuré pour la guilde {guild.id}.")
             return None
         channel = guild.get_channel(channel_id) or self.bot.get_channel(channel_id)
         if not channel:
-            logger.error("Salon stats_embed introuvable pour la guilde %s (id=%s).", guild.id, channel_id)
-            return None
+            logger.error(f"Salon stats_embed introuvable pour la guilde {guild.id} (id={channel_id}).")
         return channel
 
     async def load_persistent_messages(self):
         """Récupère les messages persistants depuis la base et réattache les vues (multi-serveur)."""
         await self.bot.wait_until_ready()
         for guild in self.bot.guilds:
-            result = await accueil_services.get_persistent_message(guild.id, "stats_embed")
-            if result:
-                channel_id, message_id = result
-                channel = self.bot.get_channel(channel_id)
+            msg_info = await self._service.get_stats_embed_message(guild.id)
+            if msg_info:
+                channel = self.bot.get_channel(msg_info.channel_id)
                 if channel:
                     try:
-                        msg = await channel.fetch_message(message_id)
+                        msg = await channel.fetch_message(msg_info.message_id)
                         self.persistent_messages[guild.id] = msg
                         # Récupérer la période actuelle depuis l'embed
-                        current_period = "default"
-                        if msg.embeds and msg.embeds[0].description:
-                            desc = msg.embeds[0].description
-                            if "7 jours" in desc:
-                                current_period = "7j"
-                            elif "1 mois" in desc or "30 jours" in desc:
-                                current_period = "1m"
-                            elif "1 an" in desc:
-                                current_period = "1a"
-                            elif "Total" in desc:
-                                current_period = "total"
+                        current_period = self._detect_period_from_embed(msg)
                         await msg.edit(view=StatsView(self, guild, current_period))
                         logger.info(f"Vue réattachée sur le message persistant pour guild {guild.id}.")
                     except discord.NotFound:
@@ -179,62 +132,60 @@ class StalkerCog(commands.Cog):
                     except Exception as e:
                         logger.error(f"Erreur lors du chargement du message persistant: {e}")
 
-    async def generate_member_evolution_graph(self, guild: discord.Guild, period: str = "default") -> Optional[discord.File]:
-        """
-        Génère un graphique de l'évolution des membres sur la période donnée.
-        Interpole les jours manquants et utilise une logique de calcul simplifiée.
-        """
-        if period == "7j":
-            days = 7
-        elif period == "1m":
-            days = 30
-        elif period == "1a":
-            days = 365
-        elif period == "total":
-            days = None
-        else:
-            days = 30  # par défaut, 30 jours
+    def _detect_period_from_embed(self, msg: discord.Message) -> str:
+        """Détecte la période depuis le contenu de l'embed."""
+        if msg.embeds and msg.embeds[0].description:
+            desc = msg.embeds[0].description
+            if "7 jours" in desc:
+                return "7j"
+            elif "1 mois" in desc or "30 jours" in desc:
+                return "1m"
+            elif "1 an" in desc:
+                return "1a"
+            elif "Total" in desc:
+                return "total"
+        return "default"
 
-        data = await accueil_services.get_member_evolution(guild.id, days=days)
+    async def generate_member_evolution_graph(
+        self,
+        guild: discord.Guild,
+        period: str = "default",
+    ) -> Optional[discord.File]:
+        """Génère un graphique de l'évolution des membres sur la période donnée."""
+        # Récupérer les données via le service
+        evolution_data = await self._service.get_evolution_data(guild.id, period)
 
-        # Interpoler les jours manquants
-        data = _fill_missing_days(data, days)
-
-        if not data:
+        if not evolution_data:
             logger.info("Aucune donnée d'évolution trouvée pour la période demandée.")
             return None
 
-        # Trier par date ASC
-        data.sort(key=lambda x: x['date'])
-
-        # Construire les changements nets par jour
-        net_changes = [record['join_count'] - record['leave_count'] for record in data]
-        dates = [record['date'].strftime('%d-%m') for record in data]
+        # Construire les données pour le graphique
+        dates = [dp.date.strftime("%d-%m") for dp in evolution_data]
+        net_changes = [dp.net_change for dp in evolution_data]
 
         # Calcul cumulatif simplifié :
         # On part du nombre actuel de membres et on remonte dans le temps
         current_total = guild.member_count
 
-        # Calculer le cumul en partant de la fin (aujourd'hui = current_total)
         # cumulative[i] = nombre de membres au jour i
         cumulative = [0] * len(net_changes)
         cumulative[-1] = current_total
 
-        # Remonter dans le temps : membres[jour_precedent] = membres[jour_suivant] - changement_du_jour_suivant
+        # Remonter dans le temps
         for i in range(len(net_changes) - 2, -1, -1):
             cumulative[i] = cumulative[i + 1] - net_changes[i + 1]
 
         # Créer le graphique
         plt.figure(figsize=(10, 5))
-        plt.plot(range(len(dates)), cumulative, marker='o', linestyle='-', color='#2ecc71', markersize=4)
-        plt.fill_between(range(len(dates)), cumulative, alpha=0.3, color='#2ecc71')
-        plt.title("Évolution du nombre de membres", fontsize=14, fontweight='bold')
+        plt.plot(range(len(dates)), cumulative, marker="o", linestyle="-", color="#2ecc71", markersize=4)
+        plt.fill_between(range(len(dates)), cumulative, alpha=0.3, color="#2ecc71")
+        plt.title("Évolution du nombre de membres", fontsize=14, fontweight="bold")
         plt.xlabel("Date", fontsize=10)
         plt.ylabel("Nombre de membres", fontsize=10)
 
         ax = plt.gca()
-        ax.set_facecolor('#f8f9fa')
-        plt.gcf().set_facecolor('#ffffff')
+        ax.set_facecolor("#f8f9fa")
+        plt.gcf().set_facecolor("#ffffff")
 
         # Afficher moins de labels si trop de dates
         if len(dates) > 15:
@@ -243,10 +194,10 @@ class StalkerCog(commands.Cog):
             if len(dates) - 1 not in tick_positions:
                 tick_positions.append(len(dates) - 1)
             ax.xaxis.set_major_locator(ticker.FixedLocator(tick_positions))
-            ax.set_xticklabels([dates[i] for i in tick_positions], rotation=45, ha='right')
+            ax.set_xticklabels([dates[i] for i in tick_positions], rotation=45, ha="right")
         else:
             ax.xaxis.set_major_locator(ticker.FixedLocator(range(len(dates))))
-            ax.set_xticklabels(dates, rotation=45, ha='right')
+            ax.set_xticklabels(dates, rotation=45, ha="right")
 
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
@@ -257,7 +208,12 @@ class StalkerCog(commands.Cog):
         plt.close()
         return discord.File(fp=buf, filename="evolution_membres.png")
 
-    async def update_stats_embed(self, guild: discord.Guild, period: str = "default", force_new: bool = False):
+    async def update_stats_embed(
+        self,
+        guild: discord.Guild,
+        period: str = "default",
+        force_new: bool = False,
+    ):
         """
         Construit et met à jour l'embed de statistiques dans le salon configuré.
 
@@ -266,46 +222,26 @@ class StalkerCog(commands.Cog):
             period: La période à afficher (7j, 1m, 1a, total, default)
             force_new: Si True, crée un nouveau message même s'il en existe un
         """
-        await accueil_services.ensure_today_member_stats(guild.id)
         channel = await self.get_stats_channel(guild)
         if channel is None:
             return
 
-        # Récupère les stats selon la période
-        if period == "7j":
-            days = 7
-            period_label = "7 jours"
-        elif period == "1m":
-            days = 30
-            period_label = "1 mois"
-        elif period == "1a":
-            days = 365
-            period_label = "1 an"
-        elif period == "total":
-            days = None
-            period_label = "Total"
-        else:
-            days = 30
-            period_label = "30 jours"
-
-        stats_period = await accueil_services.get_period_stats(guild.id, days)
-        current_members = guild.member_count
+        # Récupérer les données via le service
+        stats_data = await self._service.get_stats_embed_data(
+            guild.id, period, guild.member_count
+        )
 
         embed = discord.Embed(
             title="Statistiques du serveur",
-            description=f"Période : {period_label}",
-            color=discord.Color.green()
+            description=f"Période : {stats_data.period_label}",
+            color=discord.Color.green(),
         )
 
         # Infos principales
-        embed.add_field(name="Membres actuels", value=str(current_members), inline=False)
-        embed.add_field(name="Adhésions", value=str(stats_period["join_count"]), inline=True)
-        embed.add_field(name="Départs", value=str(stats_period["leave_count"]), inline=True)
-        embed.add_field(
-            name="Taux Join/Leave",
-            value=str(stats_period["join_leave_ratio"]),
-            inline=False
-        )
+        embed.add_field(name="Membres actuels", value=str(stats_data.current_members), inline=False)
+        embed.add_field(name="Adhésions", value=str(stats_data.join_count), inline=True)
+        embed.add_field(name="Départs", value=str(stats_data.leave_count), inline=True)
+        embed.add_field(name="Taux Join/Leave", value=stats_data.ratio, inline=False)
 
         # Timestamp pour savoir quand les stats ont été mises à jour
         embed.set_footer(text="Dernière mise à jour")
@@ -318,38 +254,36 @@ class StalkerCog(commands.Cog):
             embed.set_image(url=f"attachment://{graph_file.filename}")
 
         try:
-            # Récupérer le message existant depuis la BDD (plus fiable que recherche par titre)
+            # Récupérer le message existant depuis la BDD
             bot_message = None
             if not force_new:
-                persistent = await accueil_services.get_persistent_message(guild.id, "stats_embed")
-                if persistent:
-                    _, message_id = persistent
+                msg_info = await self._service.get_stats_embed_message(guild.id)
+                if msg_info:
                     try:
-                        bot_message = await channel.fetch_message(message_id)
+                        bot_message = await channel.fetch_message(msg_info.message_id)
                     except discord.NotFound:
                         bot_message = None  # Message supprimé, on en créera un nouveau
 
-            # S'il existe déjà un message -> on l'édite
+            # S'il existe déjà un message → on l'édite
             if bot_message and not force_new:
                 if graph_file:
                     await bot_message.edit(
                         embed=embed,
                         attachments=[graph_file],
-                        view=StatsView(self, guild, period)
+                        view=StatsView(self, guild, period),
                     )
                 else:
                     await bot_message.edit(
                         embed=embed,
-                        view=StatsView(self, guild, period)
+                        view=StatsView(self, guild, period),
                     )
                 self.persistent_messages[guild.id] = bot_message
                 logger.info(f"Embed de statistiques mis à jour via édition pour guild {guild.id}.")
             else:
                 # Archiver l'ancien thread s'il existe
-                old_thread_data = await accueil_services.get_persistent_message(guild.id, "stats_thread")
-                if old_thread_data:
-                    old_thread_id = old_thread_data[1]
-                    old_thread = self.bot.get_channel(old_thread_id)
+                old_thread_info = await self._service.get_stats_thread(guild.id)
+                if old_thread_info:
+                    old_thread = self.bot.get_channel(old_thread_info.channel_id)
                     if old_thread:
                         try:
                             await old_thread.edit(archived=True)
@@ -366,15 +300,17 @@ class StalkerCog(commands.Cog):
                 self.persistent_messages[guild.id] = msg
 
                 # Sauvegarder le message persistant en BDD
-                await accueil_services.save_persistent_message(
-                    guild.id, "stats_embed", channel.id, msg.id, requester_id=None
+                await self._service.save_stats_embed_message(
+                    guild.id, guild.name, channel.id, msg.id
                 )
 
                 # Créer un nouveau thread attaché au message
                 try:
                     thread = await msg.create_thread(name="Notifications départs")
-                    await accueil_services.save_persistent_message(
-                        guild.id, "stats_thread", channel.id, thread.id, requester_id=None
+                    # Poster un message placeholder pour avoir un message_id valide
+                    placeholder_msg = await thread.send("📊 Thread de notifications des départs.")
+                    await self._service.save_stats_thread(
+                        guild.id, guild.name, thread.id, placeholder_msg.id
                     )
                     logger.info(f"Thread de notifications créé pour guild {guild.id}.")
                 except Exception as e:
@@ -407,7 +343,7 @@ class StalkerCog(commands.Cog):
         try:
             channel = await self.get_stats_channel(ctx.guild)
             if channel is None:
-                await ctx.send("Aucun salon stats_embed configure pour cette guilde.", delete_after=10)
+                await ctx.send("Aucun salon stats_embed configuré pour cette guilde.", delete_after=10)
                 return
 
             # Force la création d'un nouveau message
@@ -420,24 +356,25 @@ class StalkerCog(commands.Cog):
     # ----- Listeners pour les événements de membres -----
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
-        await accueil_services.log_member_event_aggregated(member.guild.id, "join")
+        await self._service.on_member_join(member.guild.id, member.guild.name)
         logger.info(f"{member.name} a rejoint le serveur {member.guild.name}.")
 
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member):
-        await accueil_services.log_member_event_aggregated(member.guild.id, "leave")
+        await self._service.on_member_leave(member.guild.id, member.guild.name)
         logger.info(f"{member.name} a quitté le serveur {member.guild.name}.")
 
         # Récupérer le thread dynamiquement depuis la BDD
-        thread_data = await accueil_services.get_persistent_message(member.guild.id, "stats_thread")
-        if not thread_data:
+        thread_info = await self._service.get_stats_thread(member.guild.id)
+        if not thread_info:
             logger.debug(f"Pas de thread de notifications configuré pour guild {member.guild.id}.")
             return
 
-        thread_id = thread_data[1]
-        thread = self.bot.get_channel(thread_id)
+        thread = self.bot.get_channel(thread_info.channel_id)
         if thread is None:
-            logger.warning(f"Thread de notifications introuvable (id={thread_id}) pour guild {member.guild.id}.")
+            logger.warning(
+                f"Thread de notifications introuvable (id={thread_info.channel_id}) pour guild {member.guild.id}."
+            )
             return
 
         try:
@@ -447,5 +384,7 @@ class StalkerCog(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(StalkerCog(bot))
+    # Le service est injecté via bot.accueil_service (configuré dans main.py)
+    accueil_service = bot.accueil_service
+    await bot.add_cog(StalkerCog(bot, accueil_service))
     logger.info("StalkerCog chargé.")
