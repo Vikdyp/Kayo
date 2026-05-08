@@ -15,3 +15,7 @@ PyNaCl==1.5.0
 tzdata==2024.1
 uvloop==0.19.0
 yarl==1.9.4
+matplotlib==3.9.4
+numpy==2.0.2
+pytest==8.3.4
+pytest-asyncio==0.25.0

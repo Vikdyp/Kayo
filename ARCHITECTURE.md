@@ -53,6 +53,13 @@ Le but est d’obtenir un code maintenable, testable et scalable.
 - Gestion des erreurs API
 - Aucun accès DB
 
+### core/
+
+- Assemblage runtime
+- Injection des services
+- Aucun SQL
+- Aucun code Discord UI
+
 ---
 
 ## Règles clés
