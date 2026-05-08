@@ -175,5 +175,15 @@ class MMRTracker(commands.Cog):
         return [c for c in choices if current.lower() in c.value.lower()][:25]
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(MMRTracker(bot, bot.mmr_tracker_service))
+    tracker_service = getattr(bot, "mmr_tracker_service", None)
+    if tracker_service is None:
+        logger.error("mmr_tracker_service non initialisé. MMRTracker ne sera pas chargé.")
+        return
+
+    ranking_service = getattr(bot, "ranking_service", None)
+    if ranking_service is None:
+        logger.error("ranking_service non initialisé. MMRTracker ne sera pas chargé.")
+        return
+
+    await bot.add_cog(MMRTracker(bot, tracker_service))
     logger.info("MMRTracker Cog chargé.")

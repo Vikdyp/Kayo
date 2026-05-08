@@ -86,7 +86,10 @@ class WelcomeCog(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
-    # Le service est injecté via bot.accueil_service (configuré dans main.py)
-    accueil_service = bot.accueil_service
+    accueil_service = getattr(bot, "accueil_service", None)
+    if accueil_service is None:
+        logger.error("accueil_service non initialisé. WelcomeCog ne sera pas chargé.")
+        return
+
     await bot.add_cog(WelcomeCog(bot, accueil_service))
     logger.info("WelcomeCog chargé.")

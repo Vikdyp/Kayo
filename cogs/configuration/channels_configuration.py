@@ -238,5 +238,11 @@ class ChannelsConfiguration(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(ChannelsConfiguration(bot))
+    try:
+        cog = ChannelsConfiguration(bot)
+    except RuntimeError as exc:
+        logger.error("ChannelsConfiguration non chargé: %s", exc)
+        return
+
+    await bot.add_cog(cog)
     logger.info("ChannelsConfiguration Cog chargé.")

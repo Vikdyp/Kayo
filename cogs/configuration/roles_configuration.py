@@ -236,5 +236,11 @@ class RolesConfiguration(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(RolesConfiguration(bot))
+    try:
+        cog = RolesConfiguration(bot)
+    except RuntimeError as exc:
+        logger.error("RolesConfiguration non chargé: %s", exc)
+        return
+
+    await bot.add_cog(cog)
     logger.info("RolesConfiguration Cog chargé.")
