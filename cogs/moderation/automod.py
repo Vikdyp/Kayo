@@ -16,6 +16,14 @@ from cogs.moderation.discord_actions import (
 from cogs.moderation.services.automod_detection_service import AutomodDetectionService
 from cogs.moderation.services.moderation_service import ModerationService
 from cogs.moderation.services.automod_service import AutomodService
+from cogs.moderation.presenters import (
+    build_automod_status_embed,
+    build_generic_automod_log_embed,
+    build_scam_ban_dm_embed,
+    build_scam_log_embed,
+    build_spam_alert_embed,
+    format_custom_items_message,
+)
 from cogs.moderation.views.spam_confirmation_view import SpamConfirmationView
 
 logger = logging.getLogger(__name__)
@@ -248,11 +256,14 @@ class AutoMod(commands.Cog):
         if action.value == "list_patterns":
             config = await self.get_guild_config(guild_id, guild_name)
             patterns = config.get('custom_scam_patterns', []) or []
-            if patterns:
-                patterns_text = "\n".join([f"• `{p}`" for p in patterns])
-                await interaction.followup.send(f"📋 **Patterns personnalisés ({len(patterns)}):**\n{patterns_text}", ephemeral=True)
-            else:
-                await interaction.followup.send("Aucun pattern personnalisé configuré.", ephemeral=True)
+            await interaction.followup.send(
+                format_custom_items_message(
+                    label="Patterns personnalisés",
+                    items=patterns,
+                    empty_message="Aucun pattern personnalisé configuré.",
+                ),
+                ephemeral=True,
+            )
             return
 
         if action.value == "add_pattern":
@@ -288,11 +299,14 @@ class AutoMod(commands.Cog):
         if action.value == "list_domains":
             config = await self.get_guild_config(guild_id, guild_name)
             domains = config.get('custom_scam_domains', []) or []
-            if domains:
-                domains_text = "\n".join([f"• `{d}`" for d in domains])
-                await interaction.followup.send(f"📋 **Domaines personnalisés ({len(domains)}):**\n{domains_text}", ephemeral=True)
-            else:
-                await interaction.followup.send("Aucun domaine personnalisé configuré.", ephemeral=True)
+            await interaction.followup.send(
+                format_custom_items_message(
+                    label="Domaines personnalisés",
+                    items=domains,
+                    empty_message="Aucun domaine personnalisé configuré.",
+                ),
+                ephemeral=True,
+            )
             return
 
         if action.value == "add_domain":
@@ -322,62 +336,7 @@ class AutoMod(commands.Cog):
     async def _show_status(self, interaction: discord.Interaction) -> None:
         """Affiche la configuration actuelle de l'automod."""
         config = await self.get_guild_config(interaction.guild.id, interaction.guild.name)
-
-        embed = discord.Embed(
-            title="⚙️ Configuration AutoMod",
-            color=discord.Color.blue(),
-            timestamp=datetime.utcnow()
-        )
-
-        # Statut des détections
-        scam_status = "✅ Activé" if config.get('scam_detection_enabled', True) else "❌ Désactivé"
-        spam_status = "✅ Activé" if config.get('spam_detection_enabled', True) else "❌ Désactivé"
-
-        embed.add_field(
-            name="📊 Détections",
-            value=f"**Scam:** {scam_status}\n**Spam multi-salons:** {spam_status}",
-            inline=False
-        )
-
-        # Paramètres spam
-        threshold = config.get('spam_channel_threshold', 3)
-        time_window = config.get('spam_time_window', 60)
-        embed.add_field(
-            name="⚡ Paramètres Spam",
-            value=f"Seuil: **{threshold}** salons\nFenêtre: **{time_window}** secondes",
-            inline=True
-        )
-
-        # Whitelist rôles
-        whitelisted_roles = config.get('whitelisted_roles', []) or []
-        if whitelisted_roles:
-            roles_text = "\n".join([f"<@&{r}>" for r in whitelisted_roles[:5]])
-            if len(whitelisted_roles) > 5:
-                roles_text += f"\n... +{len(whitelisted_roles) - 5} autres"
-        else:
-            roles_text = "Aucun"
-        embed.add_field(name="👥 Rôles exemptés", value=roles_text, inline=True)
-
-        # Whitelist salons
-        whitelisted_channels = config.get('whitelisted_channels', []) or []
-        if whitelisted_channels:
-            channels_text = "\n".join([f"<#{c}>" for c in whitelisted_channels[:5]])
-            if len(whitelisted_channels) > 5:
-                channels_text += f"\n... +{len(whitelisted_channels) - 5} autres"
-        else:
-            channels_text = "Aucun"
-        embed.add_field(name="📝 Salons exemptés", value=channels_text, inline=True)
-
-        # Patterns personnalisés
-        custom_patterns = config.get('custom_scam_patterns', []) or []
-        custom_domains = config.get('custom_scam_domains', []) or []
-        embed.add_field(
-            name="🔧 Personnalisations",
-            value=f"**Patterns:** {len(custom_patterns)}\n**Domaines:** {len(custom_domains)}",
-            inline=True
-        )
-
-        embed.set_footer(text="Utilisez /automod action:... pour modifier la configuration")
+        embed = build_automod_status_embed(config=config, timestamp=datetime.utcnow())
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     def add_to_spam_whitelist(self, user_id: int, guild_id: int) -> None:
@@ -482,18 +441,9 @@ class AutoMod(commands.Cog):
             logger.info(f"Utilisateur {member.display_name} banni pour scam")
 
             try:
-                embed = discord.Embed(
-                    title="📛 Vous avez été banni(e) automatiquement",
-                    description="Votre message a été détecté comme un scam.",
-                    color=discord.Color.red(),
-                    timestamp=datetime.utcnow()
-                )
-                embed.add_field(name="Serveur", value=guild.name, inline=False)
-                embed.add_field(name="Raison", value="Message de scam détecté", inline=False)
-                embed.add_field(
-                    name="Contestation",
-                    value="Si vous pensez qu'il s'agit d'une erreur, contactez un administrateur.",
-                    inline=False
+                embed = build_scam_ban_dm_embed(
+                    guild_name=guild.name,
+                    timestamp=datetime.utcnow(),
                 )
                 await member.send(embed=embed)
             except discord.Forbidden:
@@ -534,28 +484,20 @@ class AutoMod(commands.Cog):
                 return
 
             if action_type == "scam":
-                embed = discord.Embed(
-                    title="🚨 Scam détecté - Ban automatique",
-                    color=discord.Color.red(),
-                    timestamp=datetime.utcnow()
+                embed = build_scam_log_embed(
+                    user_mention=user.mention,
+                    user_id=user.id,
+                    user_avatar_url=user.display_avatar.url,
+                    channel_mention=channel.mention,
+                    content=content,
+                    timestamp=datetime.utcnow(),
                 )
-                embed.add_field(name="Utilisateur", value=f"{user.mention} ({user.id})", inline=False)
-                embed.add_field(name="Salon", value=channel.mention, inline=True)
-                embed.add_field(name="Action", value="Ban permanent", inline=True)
-                embed.add_field(
-                    name="Contenu du message",
-                    value=content[:1000] if len(content) <= 1000 else content[:997] + "...",
-                    inline=False
-                )
-                embed.set_thumbnail(url=user.display_avatar.url)
             else:
-                embed = discord.Embed(
-                    title="⚠️ Auto-modération",
-                    description=extra_info or "Action automatique effectuée",
-                    color=discord.Color.orange(),
-                    timestamp=datetime.utcnow()
+                embed = build_generic_automod_log_embed(
+                    user_mention=user.mention,
+                    description=extra_info,
+                    timestamp=datetime.utcnow(),
                 )
-                embed.add_field(name="Utilisateur", value=f"{user.mention}", inline=True)
 
             await mod_channel.send(embed=embed)
 
@@ -685,26 +627,14 @@ class AutoMod(commands.Cog):
                         f"• {channel.mention} ([message](https://discord.com/channels/{guild.id}/{ch_id}/{msg_id}))"
                     )
 
-            # Créer l'embed
-            embed = discord.Embed(
-                title="⚠️ Spam multi-salons détecté",
-                description="Un utilisateur a envoyé le même message dans plusieurs salons.",
-                color=discord.Color.orange(),
-                timestamp=datetime.utcnow()
+            embed = build_spam_alert_embed(
+                user_mention=user.mention,
+                user_id=user.id,
+                user_avatar_url=user.display_avatar.url,
+                content=message.content,
+                channel_mentions=channel_mentions,
+                timestamp=datetime.utcnow(),
             )
-            embed.add_field(name="Utilisateur", value=f"{user.mention} ({user.id})", inline=False)
-            embed.add_field(
-                name="Contenu du message",
-                value=message.content[:500] if len(message.content) <= 500 else message.content[:497] + "...",
-                inline=False
-            )
-            embed.add_field(
-                name=f"Salons concernés ({len(channel_mentions)})",
-                value="\n".join(channel_mentions[:10]) if channel_mentions else "Aucun",
-                inline=False
-            )
-            embed.set_thumbnail(url=user.display_avatar.url)
-            embed.set_footer(text="Cliquez sur un bouton pour agir")
 
             # Créer la vue avec les boutons
             view = SpamConfirmationView(
