@@ -8,6 +8,7 @@ Pipeline de résolution Valorant en 4 étapes:
 """
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum, auto
@@ -71,6 +72,10 @@ class PipelineResult:
     elo: Optional[int] = None
     error_message: Optional[str] = None
     should_notify_user: bool = False
+    api_name: Optional[str] = None
+    api_tag: Optional[str] = None
+    current_season: Optional[int] = None
+    current_act: Optional[int] = None
 
 
 class ValorantPipeline:
@@ -247,7 +252,9 @@ class ValorantPipeline:
             success=True,
             step=PipelineStep.ACCOUNT_RESOLUTION,
             puuid=data.puuid,
-            region=data.region
+            region=data.region,
+            api_name=data.name,
+            api_tag=data.tag,
         ), rate_limit
 
     async def _detect_platform(
@@ -345,14 +352,33 @@ class ValorantPipeline:
         rank_name = current_data.tier.name if current_data.tier else "Unrated"
         elo = current_data.elo
 
+        # Extraire name/tag depuis account
+        account = mmr_resp.data.account
+        api_name = account.name
+        api_tag = account.tag
+
+        # Extraire season/act depuis seasonal
+        current_season: Optional[int] = None
+        current_act: Optional[int] = None
+        if mmr_resp.data.seasonal:
+            latest = mmr_resp.data.seasonal[0]
+            short = latest.season.short
+            m = re.match(r"e(\d+)a(\d+)", short, re.I)
+            if m:
+                current_season, current_act = map(int, m.groups())
+
         logger.info(
             f"[Pipeline] Rank retrieved: {state.pseudo}#{state.tag} -> "
-            f"{rank_name} (elo={elo})"
+            f"{rank_name} (elo={elo}, season=e{current_season}a{current_act})"
         )
 
         return PipelineResult(
             success=True,
             step=PipelineStep.RANK_RETRIEVAL,
             rank=rank_name,
-            elo=elo
+            elo=elo,
+            api_name=api_name,
+            api_tag=api_tag,
+            current_season=current_season,
+            current_act=current_act,
         ), rate_limit
