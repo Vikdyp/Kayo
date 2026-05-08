@@ -23,6 +23,13 @@ Le but est d’obtenir un code maintenable, testable et scalable.
 - Aucun appel SQL
 - Appelle uniquement des services métier
 
+### cogs/_legacy/
+
+- Domaines non chargés par `bot.py`
+- Aucune dépendance depuis le noyau actif
+- Migration obligatoire avant réactivation
+- Interdit dans `bot.COG_PATHS`
+
 ### cogs/<domaine>/services/
 
 - Logique métier du domaine

@@ -9,14 +9,14 @@ Le refactor en cours garde uniquement le noyau actif charge par `bot.py`:
 - moderation, automod et demandes d'unban
 - ranking Valorant et suivi MMR
 
-Les anciens domaines (`rules`, `role_management`, `five_stack`, `scrims`, `twitch`,
-`shop`, `tournaments`, `voice_chat`, `reputation`, `economy`, etc.) restent hors
-chargement tant qu'ils ne respectent pas la nouvelle architecture.
+Les anciens domaines sont places dans `cogs/_legacy/`. Ils restent hors chargement
+tant qu'ils ne respectent pas la nouvelle architecture.
 
 ## Architecture Cible
 
 - `cogs/`: commandes, permissions, embeds, vues et interactions Discord.
 - `cogs/*/services/`: logique metier, validation, orchestration fonctionnelle.
+- `cogs/_legacy/`: anciens domaines non charges par le bot.
 - `database/services/`: transactions, mapping Discord ID vers IDs internes,
   orchestration multi-repos.
 - `database/repos/`: SQL pur et mapping row vers dataclass.
