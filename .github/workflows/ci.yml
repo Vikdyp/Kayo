@@ -24,7 +24,7 @@ jobs:
           python -m pip install -r requirements.txt
 
       - name: Compile
-        run: python -m compileall -q bot.py core cogs database integrations tests
+        run: python -m compileall -q bot.py core cogs database integrations tests tools
 
       - name: Tests
         run: python -m pytest -q
