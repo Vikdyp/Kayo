@@ -1,14 +1,15 @@
 import logging
-import re
-from datetime import datetime, date, timedelta, timezone
+from datetime import datetime, timezone
 import discord
 from discord import File
 from discord.ext import commands, tasks
 from discord import app_commands
 from typing import List, Optional
 
+from cogs.ranking.presenters import build_mmr_stats_embed
 from cogs.ranking.renderers import build_mmr_history_chart, get_mmr_period_title
 from cogs.ranking.services.mmr_tracker_service import MmrTrackerService
+from cogs.ranking.services.mmr_stats_service import calculate_mmr_stats, parse_mmr_period
 
 logger = logging.getLogger(__name__)
 
@@ -85,75 +86,37 @@ class MMRTracker(commands.Cog):
         # AFFICHER LES STATS
         await interaction.response.defer(thinking=True, ephemeral=False)
 
-        # 1) Determination du filtre
-        period = periode or "today"
-        season_num: Optional[int] = None
-        act_num:    Optional[int] = None
-        start_date: Optional[date] = date.today()
-
-        if period == "today":
-            start_date = date.today()
-        elif period == "week":
-            start_date = date.today() - timedelta(days=7)
-        elif period == "all":
-            start_date = None
-        else:
-            m = re.match(r"e(\d+)a(\d+)", period)
-            if m:
-                season_num, act_num = map(int, m.groups())
-                start_date = None
-            else:
-                start_date = date.today()
+        selection = parse_mmr_period(periode)
 
         # 2) Recuperation de l'historique filtre (retourne des EloHistoryRow)
-        history = await self._tracker_svc.get_history(discord_id, season_num, act_num)
+        history = await self._tracker_svc.get_history(
+            discord_id,
+            selection.season_num,
+            selection.act_num,
+        )
         if len(history) < 2:
             return await interaction.followup.send("Aucun historique disponible.")
 
-        # 3) Calcul des diffs
-        diffs: List[tuple[datetime, int]] = []
-        for i in range(1, len(history)):
-            t = history[i].recorded_at
-            if start_date and t.date() < start_date:
-                continue
-            diff = history[i].elo - history[i-1].elo
-            diffs.append((t, diff))
+        stats = calculate_mmr_stats(history, start_date=selection.start_date)
+        if not stats:
+            return await interaction.followup.send(
+                f"Aucune partie enregistrée pour la période '{selection.period}'."
+            )
 
-        if not diffs:
-            return await interaction.followup.send(f"Aucune partie enregistrée pour la période '{period}'.")
+        title = get_mmr_period_title(selection.period, selection.season_num, selection.act_num)
+        buf = build_mmr_history_chart(
+            stats.dates_plot,
+            stats.elos_plot,
+            period=selection.period,
+            title=title,
+        )
 
-        total_games  = len(diffs)
-        total_change = sum(d for _, d in diffs)
-        wins   = [d for _, d in diffs if d > 0]
-        losses = [d for _, d in diffs if d < 0]
-        avg_win  = round(sum(wins)/len(wins)) if wins else 0
-        avg_loss = round(sum(losses)/len(losses)) if losses else 0
-        last_diff = diffs[-1][1]
-
-        # 4) Generation du graphique
-        dates_plot = [row.recorded_at for row in history if not start_date or row.recorded_at.date() >= start_date]
-        elos_plot  = [row.elo         for row in history if not start_date or row.recorded_at.date() >= start_date]
-
-        if len(dates_plot) < 2:
-            return await interaction.followup.send(f"Aucune partie enregistrée pour la période '{period}'.")
-
-        title = get_mmr_period_title(period, season_num, act_num)
-        buf = build_mmr_history_chart(dates_plot, elos_plot, period=period, title=title)
-
-        # 5) Construction et envoi de l'embed
-        embed = discord.Embed(
-            title=f"📊 Stats MMR – {title}",
-            description=(
-                f"Total games: **{total_games}**\n"
-                f"Total {title.lower()}: **{total_change:+d}**\n"
-                f"Moyenne win: **{avg_win:+d}**\n"
-                f"Moyenne loss: **{avg_loss:+d}**\n"
-                f"Dernière game: **{last_diff:+d}**"
-            ),
-            timestamp=datetime.now(timezone.utc)
+        embed = build_mmr_stats_embed(
+            title=title,
+            stats=stats,
+            timestamp=datetime.now(timezone.utc),
         )
         file = File(buf, filename="mmr_history.png")
-        embed.set_image(url="attachment://mmr_history.png")
         await interaction.followup.send(embed=embed, file=file)
 
     @mmr_track.autocomplete("periode")
