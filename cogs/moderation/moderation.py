@@ -12,8 +12,12 @@ from cogs.moderation.discord_actions import (
     collect_restorable_role_ids,
     filter_assignable_roles,
 )
+from cogs.moderation.presenters import (
+    build_ban_dm_embed,
+    build_unban_dm_embed,
+    format_ban_status_message,
+)
 from cogs.moderation.services.moderation_service import ModerationService
-from cogs.moderation.views.confirmation_view import ConfirmationView
 
 logger = logging.getLogger(__name__)
 
@@ -202,27 +206,8 @@ class Moderation(commands.Cog):
                     )
                     return
 
-                # Détails du bannissement
-                ban_type_str = ban_info.ban_type or "Inconnu"
-                ban_reason = ban_info.reason or "Aucune raison fournie"
-                ban_end = ban_info.ban_end or "Permanent"
-                banned_at = ban_info.banned_at or "Inconnu"
-
-                # Récupération de l'utilisateur qui a banni
-                banned_by_mention = "Inconnu"
-                if ban_info.moderator_discord_id:
-                    banned_by_mention = f"<@{ban_info.moderator_discord_id}>"
-
-                # Mention cliquable de l'utilisateur banni
-                banned_user_mention = f"<@{user.id}>"
-
                 await interaction.followup.send(
-                    f"**Statut de {banned_user_mention}** :\n"  # Mention cliquable pour le banni
-                    f"Type : {ban_type_str}\n"
-                    f"Raison : {ban_reason}\n"
-                    f"Banni(e) le : {banned_at}\n"
-                    f"Fin de ban : {ban_end}\n"
-                    f"Banni(e) par : {banned_by_mention}",  # Mention cliquable pour celui qui a banni
+                    format_ban_status_message(ban_info, user.id),
                     ephemeral=True
                 )
 
@@ -282,36 +267,16 @@ class Moderation(commands.Cog):
             # Appliquer le ban sur TOUS les serveurs où le bot et l'utilisateur sont présents
             await self.apply_ban_all_guilds(member.id, reason, source_member=member)
 
-            # Récupérer l'ID du salon de demande-deban
-            deban_channel_id = await self._mod_svc.get_deban_channel_id(guild.id)
-            if deban_channel_id:
-                deban_channel = guild.get_channel(deban_channel_id)
-                if deban_channel:
-                    deban_channel_mention = deban_channel.mention
-                else:
-                    deban_channel_mention = "le salon de débannissement n'est pas configuré correctement."
-                    logger.warning(f"Salon de débannissement avec l'ID {deban_channel_id} introuvable dans le serveur {guild.name}.")
-            else:
-                deban_channel_mention = "le salon de débannissement n'est pas configuré."
+            deban_channel_mention = await self._get_deban_channel_mention(guild)
 
-            # Créer l'embed de bannissement
-            embed = discord.Embed(
-                title="📛 Vous avez été banni(e) du serveur",
-                color=discord.Color.red(),
-                timestamp=datetime.utcnow()
+            embed = build_ban_dm_embed(
+                guild_name=guild.name,
+                reason=reason,
+                duration_label="Permanente" if ban_end is None else f"Jusqu'à {ban_end}",
+                banned_by_display_name=banned_by.display_name,
+                deban_channel_mention=deban_channel_mention,
+                timestamp=datetime.utcnow(),
             )
-            embed.add_field(name="Serveur", value=f"**{guild.name}**", inline=False)
-            embed.add_field(name="Raison", value=reason, inline=False)
-            embed.add_field(name="Durée", value="Permanente" if ban_end is None else f"Jusqu'à {ban_end}", inline=False)
-            embed.add_field(name="Banni(e) par", value=banned_by.display_name, inline=False)
-            embed.add_field(
-                name="Demande de Débannissement",
-                value=(
-                    f"Si vous souhaitez être débanni(e), veuillez soumettre une demande dans {deban_channel_mention}."
-                ),
-                inline=False
-            )
-            embed.set_footer(text="Si vous avez des questions, veuillez contacter l'administration.")
 
             # Envoyer un DM à l'utilisateur avec l'embed
             try:
@@ -378,35 +343,11 @@ class Moderation(commands.Cog):
         # Nettoyer le backup des rôles maintenant qu'ils ont été restaurés
         await self._mod_svc.clear_roles_backup(guild.id, user_id)
 
-        # Récupérer l'ID du salon de demande-deban
-        deban_channel_id = await self._mod_svc.get_deban_channel_id(guild.id)
-        if deban_channel_id:
-            deban_channel = guild.get_channel(deban_channel_id)
-            if deban_channel:
-                deban_channel_mention = deban_channel.mention
-            else:
-                deban_channel_mention = "le salon de débannissement n'est pas configuré correctement."
-                logger.warning(f"Salon de débannissement avec l'ID {deban_channel_id} introuvable dans le serveur {guild.name}.")
-        else:
-            deban_channel_mention = "le salon de débannissement n'est pas configuré."
-
-        # Créer l'embed de débannissement
-        embed = discord.Embed(
-            title="✅ Vous avez été débanni(e) du serveur",
-            color=discord.Color.green(),
-            timestamp=datetime.utcnow()
+        embed = build_unban_dm_embed(
+            guild_name=guild.name,
+            reason=reason or "Expiration du bannissement temporaire ou décision du staff.",
+            timestamp=datetime.utcnow(),
         )
-        embed.add_field(name="Serveur", value=f"**{guild.name}**", inline=False)
-        embed.add_field(name="Raison", value=reason or "Expiration du bannissement temporaire ou décision du staff.", inline=False)
-        embed.add_field(name="Débanni(e) par", value="Administration", inline=False)
-        embed.add_field(
-            name="C'est fini",
-            value=(
-                f"Bonne nouvelle, vous êtes libre comme l’air. On est content de vous revoir parmi nous, mais faites gaffe cette fois, hein ? 😉 Profitez bien et bon retour !"
-            ),
-            inline=False
-        )
-        embed.set_footer(text="Si vous avez des questions, veuillez contacter l'administration.")
 
         # Informer l'utilisateur via DM avec l'embed
         try:
@@ -437,6 +378,20 @@ class Moderation(commands.Cog):
             f"Ban global: {reason}",
             source_member=source_member,
         )
+
+    async def _get_deban_channel_mention(self, guild: discord.Guild) -> str:
+        deban_channel_id = await self._mod_svc.get_deban_channel_id(guild.id)
+        if not deban_channel_id:
+            return "le salon de débannissement n'est pas configuré."
+
+        deban_channel = guild.get_channel(deban_channel_id)
+        if deban_channel:
+            return deban_channel.mention
+
+        logger.warning(
+            f"Salon de débannissement avec l'ID {deban_channel_id} introuvable dans le serveur {guild.name}."
+        )
+        return "le salon de débannissement n'est pas configuré correctement."
 
     async def delete_user_messages(
         self,
