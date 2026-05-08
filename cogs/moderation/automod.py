@@ -14,6 +14,7 @@ from cogs.moderation.discord_actions import (
     collect_restorable_role_ids,
 )
 from cogs.moderation.services.automod_detection_service import AutomodDetectionService
+from cogs.moderation.services.automod_spam_tracker import AutomodSpamTracker
 from cogs.moderation.services.moderation_service import ModerationService
 from cogs.moderation.services.automod_service import AutomodService
 from cogs.moderation.presenters import (
@@ -41,12 +42,7 @@ class AutoMod(commands.Cog):
         self.bot = bot
         self._mod_svc = moderation_service
         self._automod_svc = automod_service
-        # Cache pour tracker les messages récents par utilisateur
-        # Structure: {user_id: [(guild_id, channel_id, message_id, content_hash, timestamp), ...]}
-        self.message_cache: Dict[int, List[Tuple[int, int, int, int, datetime]]] = {}
-        # Whitelist temporaire pour le spam (utilisateurs ignorés)
-        # Structure: {(user_id, guild_id): expiration_datetime}
-        self.spam_whitelist: Dict[Tuple[int, int], datetime] = {}
+        self._spam_tracker = AutomodSpamTracker()
         # Set pour éviter les alertes en double
         self.pending_spam_alerts: Set[Tuple[int, int]] = set()
         self._pending_cleanup_tasks: Set[asyncio.Task] = set()
@@ -341,20 +337,12 @@ class AutoMod(commands.Cog):
 
     def add_to_spam_whitelist(self, user_id: int, guild_id: int) -> None:
         """Ajoute un utilisateur à la whitelist temporaire (24h)."""
-        expiration = datetime.utcnow() + timedelta(hours=24)
-        self.spam_whitelist[(user_id, guild_id)] = expiration
+        expiration = self._spam_tracker.add_to_whitelist(user_id, guild_id)
         logger.debug(f"Utilisateur {user_id} ajouté à la whitelist spam jusqu'à {expiration}")
 
     def is_spam_whitelisted(self, user_id: int, guild_id: int) -> bool:
         """Vérifie si un utilisateur est dans la whitelist spam."""
-        key = (user_id, guild_id)
-        if key in self.spam_whitelist:
-            if datetime.utcnow() < self.spam_whitelist[key]:
-                return True
-            else:
-                # Expirée, la supprimer
-                del self.spam_whitelist[key]
-        return False
+        return self._spam_tracker.is_whitelisted(user_id, guild_id)
 
     async def is_member_whitelisted(self, member: discord.Member, config: Dict[str, Any]) -> bool:
         """Vérifie si un membre est exempté de l'automod (admin, modo, rôle whitelisté)."""
@@ -504,17 +492,6 @@ class AutoMod(commands.Cog):
         except Exception as e:
             logger.exception(f"Erreur lors du log automod: {e}")
 
-    def _cleanup_message_cache(self) -> None:
-        """Nettoie le cache des messages anciens (> 2 minutes)."""
-        cutoff = datetime.utcnow() - timedelta(minutes=2)
-        for user_id in list(self.message_cache.keys()):
-            self.message_cache[user_id] = [
-                entry for entry in self.message_cache[user_id]
-                if entry[4] > cutoff
-            ]
-            if not self.message_cache[user_id]:
-                del self.message_cache[user_id]
-
     def _schedule_pending_alert_cleanup(
         self,
         alert_key: Tuple[int, int],
@@ -547,41 +524,20 @@ class AutoMod(commands.Cog):
         guild_id = message.guild.id
         channel_id = message.channel.id
         message_id = message.id
-        content_hash = hash(message.content.lower().strip())
-        now = datetime.utcnow()
 
         # Récupérer les paramètres de la config
         threshold = config.get('spam_channel_threshold', 3)
         time_window = config.get('spam_time_window', 60)
 
-        # Nettoyer le cache périodiquement
-        self._cleanup_message_cache()
-
-        # Ajouter ce message au cache
-        if user_id not in self.message_cache:
-            self.message_cache[user_id] = []
-
-        self.message_cache[user_id].append((guild_id, channel_id, message_id, content_hash, now))
-
-        # Vérifier le spam multi-salons avec la fenêtre de temps configurée
-        cutoff = now - timedelta(seconds=time_window)
-        recent_messages = [
-            entry for entry in self.message_cache[user_id]
-            if entry[4] > cutoff and entry[0] == guild_id  # Même serveur
-        ]
-
-        # Trouver les salons différents avec le même contenu
-        channels_with_same_content = set()
-
-        for entry in recent_messages:
-            if entry[3] == content_hash:  # Même hash de contenu
-                channels_with_same_content.add(entry[1])
-
-        # Vérifier selon le seuil configuré
-        if len(channels_with_same_content) >= threshold:
-            return True
-
-        return False
+        return self._spam_tracker.record_and_detect(
+            user_id=user_id,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            message_id=message_id,
+            content=message.content,
+            threshold=threshold,
+            time_window_seconds=time_window,
+        )
 
     async def request_spam_confirmation(self, message: discord.Message) -> None:
         """Envoie une demande de confirmation aux modérateurs pour un spam détecté."""
@@ -596,15 +552,11 @@ class AutoMod(commands.Cog):
         keep_pending = False
 
         try:
-            # Récupérer les messages à signaler
-            content_hash = hash(message.content.lower().strip())
-            cutoff = datetime.utcnow() - timedelta(seconds=60)
-            message_refs = []
-
-            if user.id in self.message_cache:
-                for entry in self.message_cache[user.id]:
-                    if entry[3] == content_hash and entry[4] > cutoff and entry[0] == guild.id:
-                        message_refs.append((entry[1], entry[2]))  # (channel_id, message_id)
+            message_refs = self._spam_tracker.get_matching_message_refs(
+                user_id=user.id,
+                guild_id=guild.id,
+                content=message.content,
+            )
 
             # Récupérer le salon de modération
             mod_channel_id = await self._mod_svc.get_moderation_channel_id(guild.id)
