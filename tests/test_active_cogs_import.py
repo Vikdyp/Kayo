@@ -21,7 +21,6 @@ ACTIVE_COGS = [
     "cogs.rules.rules",
     "cogs.role_management.game_role",
     "cogs.role_management.language_role",
-    "cogs.role_management.role_combination",
     "cogs.twitch.twitch",
     "cogs.voice_chat.temp_voice",
     "cogs.ranking.assign_rank",

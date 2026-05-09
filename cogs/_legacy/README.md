@@ -14,6 +14,7 @@ Domaines encore en quarantaine:
 - `economy`
 - `five_stack`
 - `role_management/auto_role`
+- `role_management/role_combination`
 - `scrims`
 - `shop`
 - `tournaments`
@@ -28,7 +29,6 @@ ici temporairement comme archive de comparaison jusqu'au nettoyage final:
 - `rules`
 - `role_management/game_role`
 - `role_management/language_role`
-- `role_management/role_combination`
 - `twitch`
 - `update/permissions_report`
 - `update/rank_up`
