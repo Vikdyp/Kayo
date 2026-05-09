@@ -14,7 +14,6 @@ Domaines encore en quarantaine:
 - `five_stack`
 - `scrims`
 - `shop`
-- `tournaments`
 
 Domaines supprimes du legacy car remplaces dans le noyau actif:
 
@@ -26,6 +25,7 @@ Domaines supprimes du legacy car remplaces dans le noyau actif:
 - `update/test`: ancien rapport de permissions remplace par `cogs.admin.permissions_report`.
 - `update/online_count_updater`: migre vers `cogs.ranking.online_count`.
 - `economy`: migre vers `cogs.economy.economy`.
+- `tournaments`: migre vers `cogs.tournaments.tournament`.
 
 Domaines deja migres vers le noyau actif:
 
@@ -35,6 +35,7 @@ Domaines deja migres vers le noyau actif:
 - `rules`
 - `role_management/game_role`
 - `role_management/language_role`
+- `tournaments`
 - `twitch`
 - `update/permissions_report`
 - `update/online_count_updater`

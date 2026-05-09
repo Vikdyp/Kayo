@@ -46,6 +46,8 @@ EXPECTED_TABLES = frozenset(
         "reputation_events",
         "role_combinations",
         "schema_migrations",
+        "tournament_teams",
+        "tournaments",
         "twitch_streamers",
         "unban_requests",
         "users",
@@ -211,6 +213,37 @@ EXPECTED_COLUMNS: Mapping[str, frozenset[str]] = {
             "updated_at",
         }
     ),
+    "tournaments": frozenset(
+        {
+            "id",
+            "guild_id",
+            "tournament_name",
+            "max_teams",
+            "registration_start",
+            "registration_end",
+            "tournament_date",
+            "status",
+            "registration_channel_id",
+            "registration_message_id",
+            "created_at",
+            "updated_at",
+            "closed_at",
+        }
+    ),
+    "tournament_teams": frozenset(
+        {
+            "id",
+            "tournament_id",
+            "guild_id",
+            "captain_user_id",
+            "team_name",
+            "player_discord_ids",
+            "substitute_discord_ids",
+            "coach_discord_id",
+            "created_at",
+            "updated_at",
+        }
+    ),
     "valorant_info": frozenset(
         {
             "user_id",
@@ -262,6 +295,10 @@ EXPECTED_INDEXES = frozenset(
         "idx_reputation_events_reporter_target",
         "idx_reputation_events_target",
         "idx_role_combinations_guild_id",
+        "idx_tournaments_one_active_per_guild",
+        "idx_tournaments_guild_status",
+        "idx_tournament_teams_tournament_id",
+        "idx_tournament_teams_guild_id",
         "idx_twitch_streamers_guild_id",
         "idx_valorant_info_active_pipeline",
         "idx_valorant_info_tracking",
