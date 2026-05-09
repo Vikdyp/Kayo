@@ -25,6 +25,7 @@ from cogs.moderation.services.clean_service import CleanService
 from cogs.moderation.services.automod_service import AutomodService
 from cogs.moderation.services.moderation_service import ModerationService
 from cogs.economy.services import EconomyService
+from cogs.five_stack.services import FiveStackService
 from cogs.file_counter.services import FileCounterService
 from cogs.reputation.services import ReputationService
 from cogs.role_management.services import RoleSelectionService
@@ -92,6 +93,7 @@ COG_PATHS: list[str] = [
     "cogs.moderation.automod",
     "cogs.moderation.unban_requests",
     "cogs.economy.economy",
+    "cogs.five_stack.five_stack",
     "cogs.file_counter.file_counter",
     "cogs.fun.quoi_feur",
     "cogs.reputation.reputation",
@@ -136,6 +138,7 @@ class KayoBot(commands.Bot):
         self.moderation_service: ModerationService | None = None
         self.unban_requests_svc: UnbanRequestsService | None = None
         self.economy_service: EconomyService | None = None
+        self.five_stack_service: FiveStackService | None = None
         self.file_counter_service: FileCounterService | None = None
         self.reputation_service: ReputationService | None = None
         self.rules_service: RulesService | None = None
@@ -185,6 +188,7 @@ class KayoBot(commands.Bot):
         self.moderation_service = self.services.moderation_service
         self.unban_requests_svc = self.services.unban_requests_service
         self.economy_service = self.services.economy_service
+        self.five_stack_service = self.services.five_stack_service
         self.file_counter_service = self.services.file_counter_service
         self.reputation_service = self.services.reputation_service
         self.rules_service = self.services.rules_service
@@ -204,6 +208,7 @@ class KayoBot(commands.Bot):
         logger.info("AutomodService initialized.")
         logger.info("ModerationService initialized.")
         logger.info("EconomyService initialized.")
+        logger.info("FiveStackService initialized.")
         logger.info("FileCounterService initialized.")
         logger.info("ReputationService initialized.")
         logger.info("Rules + role selection services initialized.")

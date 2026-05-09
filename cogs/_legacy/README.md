@@ -11,7 +11,7 @@ Regles:
 
 Domaines encore en quarantaine:
 
-- `five_stack`
+- aucun domaine Python chargeable
 
 Domaines supprimes du legacy car remplaces dans le noyau actif:
 
@@ -23,12 +23,14 @@ Domaines supprimes du legacy car remplaces dans le noyau actif:
 - `update/test`: ancien rapport de permissions remplace par `cogs.admin.permissions_report`.
 - `update/online_count_updater`: migre vers `cogs.ranking.online_count`.
 - `economy`: migre vers `cogs.economy.economy`.
+- `five_stack`: migre vers `cogs.five_stack.five_stack`.
 - `tournaments`: migre vers `cogs.tournaments.tournament`.
 
 Domaines deja migres vers le noyau actif:
 
 - `file_counter`
 - `economy`
+- `five_stack`
 - `reputation`
 - `rules`
 - `scrims`

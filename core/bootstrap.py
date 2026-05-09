@@ -13,6 +13,7 @@ from cogs.moderation.services.automod_service import AutomodService
 from cogs.moderation.services.clean_service import CleanService
 from cogs.moderation.services.moderation_service import ModerationService
 from cogs.economy.services import EconomyService
+from cogs.five_stack.services import FiveStackService
 from cogs.file_counter.services import FileCounterService
 from cogs.reputation.services import ReputationService
 from cogs.role_management.services import RoleSelectionService
@@ -29,6 +30,7 @@ from database.engine import Db
 from database.services.automod_config_service import AutomodConfigService
 from database.services.economy_service import EconomyDbService
 from database.services.file_counters_service import FileCountersService
+from database.services.five_stack_service import FiveStackDbService
 from database.services.guild_channels_service import ChannelConfigurationService as ChannelConfigurationDbService
 from database.services.guild_members_service import GuildMembersService
 from database.services.guild_roles_service import RoleConfigurationService as RoleConfigurationDbService
@@ -60,6 +62,7 @@ class ServiceContainer:
     moderation_service: ModerationService
     unban_requests_service: UnbanRequestsService
     economy_service: EconomyService
+    five_stack_service: FiveStackService
     file_counter_service: FileCounterService
     reputation_service: ReputationService
     rules_service: RulesService
@@ -91,6 +94,7 @@ async def build_service_container(
     guild_members_db_service = GuildMembersService(db)
     message_deletions_db_service = MessageDeletionsService(db)
     economy_db_service = EconomyDbService(db)
+    five_stack_db_service = FiveStackDbService(db)
     file_counters_db_service = FileCountersService(db)
     automod_config_db_service = AutomodConfigService(db)
     moderation_db_service = ModerationDbService(db)
@@ -128,6 +132,13 @@ async def build_service_container(
         channel_config_db_service,
     )
     economy_service = EconomyService(economy_db_service)
+    five_stack_service = FiveStackService(
+        five_stack_db_service,
+        channel_config_db_service,
+        role_config_db_service,
+        persistent_messages_db_service,
+        valorant_db_service,
+    )
     file_counter_service = FileCounterService(
         file_counters_db_service,
         channel_config_db_service,
@@ -187,6 +198,7 @@ async def build_service_container(
         moderation_service=moderation_service,
         unban_requests_service=unban_requests_db_service,
         economy_service=economy_service,
+        five_stack_service=five_stack_service,
         file_counter_service=file_counter_service,
         reputation_service=reputation_service,
         rules_service=rules_service,

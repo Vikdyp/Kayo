@@ -39,6 +39,7 @@ async def run_smoke(*, apply_migrations: bool = True) -> dict[str, object]:
         bot.moderation_service = services.moderation_service
         bot.unban_requests_svc = services.unban_requests_service
         bot.economy_service = services.economy_service
+        bot.five_stack_service = services.five_stack_service
         bot.file_counter_service = services.file_counter_service
         bot.reputation_service = services.reputation_service
         bot.rules_service = services.rules_service
