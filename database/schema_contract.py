@@ -42,6 +42,7 @@ EXPECTED_TABLES = frozenset(
         "moderation_warnings",
         "persistent_messages",
         "reputation_events",
+        "role_combinations",
         "schema_migrations",
         "twitch_streamers",
         "unban_requests",
@@ -126,6 +127,17 @@ EXPECTED_COLUMNS: Mapping[str, frozenset[str]] = {
             "event_date",
             "count",
             "reason",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "role_combinations": frozenset(
+        {
+            "id",
+            "guild_id",
+            "primary_role_id",
+            "secondary_role_id",
+            "combined_role_id",
             "created_at",
             "updated_at",
         }
@@ -225,6 +237,7 @@ EXPECTED_INDEXES = frozenset(
         "idx_unban_requests_message_id",
         "idx_reputation_events_reporter_target",
         "idx_reputation_events_target",
+        "idx_role_combinations_guild_id",
         "idx_twitch_streamers_guild_id",
         "idx_valorant_info_active_pipeline",
         "idx_valorant_info_tracking",

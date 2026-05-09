@@ -14,7 +14,7 @@ from cogs.moderation.services.clean_service import CleanService
 from cogs.moderation.services.moderation_service import ModerationService
 from cogs.file_counter.services import FileCounterService
 from cogs.reputation.services import ReputationService
-from cogs.role_management.services import RoleSelectionService
+from cogs.role_management.services import RoleCombinationService, RoleSelectionService
 from cogs.rules.services import RulesService
 from cogs.twitch.services import TwitchNotificationService
 from cogs.voice_chat.services import TempVoiceService
@@ -32,6 +32,7 @@ from database.services.message_deletions_service import MessageDeletionsService
 from database.services.moderation_service import ModerationDbService
 from database.services.persistent_messages_service import PersistentMessagesService
 from database.services.reputation_service import ReputationDbService
+from database.services.role_combinations_service import RoleCombinationsDbService
 from database.services.twitch_streamers_service import TwitchStreamersDbService
 from database.services.unban_requests_service import UnbanRequestsService
 from database.services.valorant_db_service import ValorantDbService
@@ -54,6 +55,7 @@ class ServiceContainer:
     reputation_service: ReputationService
     rules_service: RulesService
     role_selection_service: RoleSelectionService
+    role_combination_service: RoleCombinationService
     twitch_notification_service: TwitchNotificationService
     twitch_api_service: TwitchApiService | None
     temp_voice_service: TempVoiceService
@@ -81,6 +83,7 @@ async def build_service_container(
     moderation_db_service = ModerationDbService(db)
     unban_requests_db_service = UnbanRequestsService(db)
     reputation_db_service = ReputationDbService(db)
+    role_combinations_db_service = RoleCombinationsDbService(db)
     twitch_streamers_db_service = TwitchStreamersDbService(db)
     valorant_db_service = ValorantDbService(db)
     channel_configuration_service = ChannelConfigurationWorkflowService(channel_config_db_service)
@@ -125,6 +128,7 @@ async def build_service_container(
         role_config_db_service,
         persistent_messages_db_service,
     )
+    role_combination_service = RoleCombinationService(role_combinations_db_service)
     twitch_notification_service = TwitchNotificationService(
         twitch_streamers_db_service,
         channel_config_db_service,
@@ -155,6 +159,7 @@ async def build_service_container(
         reputation_service=reputation_service,
         rules_service=rules_service,
         role_selection_service=role_selection_service,
+        role_combination_service=role_combination_service,
         twitch_notification_service=twitch_notification_service,
         twitch_api_service=twitch_api_service,
         temp_voice_service=temp_voice_service,
