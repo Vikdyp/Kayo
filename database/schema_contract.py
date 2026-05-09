@@ -54,6 +54,7 @@ EXPECTED_TABLES = frozenset(
         "user_profiles",
         "valorant_elo_history_parent",
         "valorant_info",
+        "valorant_sent_bundles",
     }
 )
 
@@ -266,6 +267,7 @@ EXPECTED_COLUMNS: Mapping[str, frozenset[str]] = {
         }
     ),
     "valorant_elo_history_parent": frozenset({"season", "act", "user_id", "recorded_at", "elo", "is_win"}),
+    "valorant_sent_bundles": frozenset({"guild_id", "bundle_uuid", "notified_at"}),
 }
 
 
@@ -304,6 +306,7 @@ EXPECTED_INDEXES = frozenset(
         "idx_valorant_info_tracking",
         "idx_valorant_info_pseudo_tag",
         "idx_valorant_info_puuid",
+        "idx_valorant_sent_bundles_guild_id",
     }
 )
 

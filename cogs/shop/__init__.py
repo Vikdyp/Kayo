@@ -1,0 +1,1 @@
+"""Valorant shop notification domain."""

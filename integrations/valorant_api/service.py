@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from integrations.exceptions import ApiError
 from integrations.http_client import HTTPClient
-from integrations.valorant_api.models import CardResponseUuid, TitleResponseUuid
+from integrations.valorant_api.models import BundleResponseUuid, CardResponseUuid, TitleResponseUuid
 
 logger = logging.getLogger(__name__)
 
@@ -41,4 +41,16 @@ class ValorantApiService:
             logger.exception("Invalid payload for get_account_by_name (url=%s)", url)
             raise ApiError(f"Invalid API payload: {e}") from e
         
+        return model
+
+    async def get_bundle_by_uuid(self, bundle_uuid: str) -> BundleResponseUuid:
+        url = f"{self.BASE_URL}/v1/bundles/{bundle_uuid}"
+        resp = await self._client.get(url)
+
+        try:
+            model = BundleResponseUuid.model_validate(resp.payload)
+        except ValidationError as e:
+            logger.exception("Invalid payload for get_bundle_by_uuid (url=%s)", url)
+            raise ApiError(f"Invalid API payload: {e}") from e
+
         return model

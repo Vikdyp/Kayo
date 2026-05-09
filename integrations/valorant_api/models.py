@@ -47,3 +47,29 @@ class TitleResponseUuid(BaseModel):
 
     status : int
     data : TitleDataUuid
+
+
+# --------------------------------------------------------------------------------------------------------------------------
+# Model pour bundle avec UUID https://valorant-api.com/v1/bundles/{bundleUuid}
+# --------------------------------------------------------------------------------------------------------------------------
+
+class BundleDataUuid(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    uuid: str
+    displayName: str
+    displayNameSubText: Optional[str] = None
+    description: Optional[str] = None
+    extraDescription: Optional[str] = None
+    promoDescription: Optional[str] = None
+    displayIcon: Optional[str] = None
+    displayIcon2: Optional[str] = None
+    verticalPromoImage: Optional[str] = None
+    assetPath: Optional[str] = None
+
+
+class BundleResponseUuid(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    status: int
+    data: BundleDataUuid

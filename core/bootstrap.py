@@ -17,6 +17,7 @@ from cogs.file_counter.services import FileCounterService
 from cogs.reputation.services import ReputationService
 from cogs.role_management.services import RoleSelectionService
 from cogs.rules.services import RulesService
+from cogs.shop.services import ValorantShopService
 from cogs.tournaments.services import TournamentService
 from cogs.twitch.services import TwitchNotificationService
 from cogs.voice_chat.services import TempVoiceService
@@ -39,9 +40,11 @@ from database.services.twitch_streamers_service import TwitchStreamersDbService
 from database.services.tournaments_service import TournamentsDbService
 from database.services.unban_requests_service import UnbanRequestsService
 from database.services.valorant_db_service import ValorantDbService
+from database.services.valorant_shop_service import ValorantShopDbService
 from integrations.henrikdev.service import HenrikDevService
 from integrations.http_client import HTTPClient
 from integrations.twitch.service import TwitchService as TwitchApiService
+from integrations.valorant_api.service import ValorantApiService
 
 
 @dataclass(slots=True)
@@ -59,9 +62,11 @@ class ServiceContainer:
     reputation_service: ReputationService
     rules_service: RulesService
     role_selection_service: RoleSelectionService
+    valorant_shop_service: ValorantShopService
     tournament_service: TournamentService
     twitch_notification_service: TwitchNotificationService
     twitch_api_service: TwitchApiService | None
+    valorant_api_service: ValorantApiService
     temp_voice_service: TempVoiceService
     ranking_service: RankingService
     rank_notification_service: RankNotificationService
@@ -91,12 +96,14 @@ async def build_service_container(
     tournaments_db_service = TournamentsDbService(db)
     twitch_streamers_db_service = TwitchStreamersDbService(db)
     valorant_db_service = ValorantDbService(db)
+    valorant_shop_db_service = ValorantShopDbService(db)
     channel_configuration_service = ChannelConfigurationWorkflowService(channel_config_db_service)
     role_configuration_service = RoleConfigurationWorkflowService(role_config_db_service)
 
     http_client = HTTPClient(timeout_seconds=15.0)
     await http_client.__aenter__()
     henrik_service = HenrikDevService(http_client, henrik_api_key)
+    valorant_api_service = ValorantApiService(http_client)
     twitch_api_service = (
         TwitchApiService(http_client, client_id=twitch_client_id, client_secret=twitch_client_secret)
         if twitch_client_id and twitch_client_secret
@@ -134,6 +141,12 @@ async def build_service_container(
         role_config_db_service,
         persistent_messages_db_service,
     )
+    valorant_shop_service = ValorantShopService(
+        valorant_shop_db_service,
+        channel_config_db_service,
+        henrik_service,
+        valorant_api_service,
+    )
     tournament_service = TournamentService(
         tournaments_db_service,
         channel_config_db_service,
@@ -169,9 +182,11 @@ async def build_service_container(
         reputation_service=reputation_service,
         rules_service=rules_service,
         role_selection_service=role_selection_service,
+        valorant_shop_service=valorant_shop_service,
         tournament_service=tournament_service,
         twitch_notification_service=twitch_notification_service,
         twitch_api_service=twitch_api_service,
+        valorant_api_service=valorant_api_service,
         temp_voice_service=temp_voice_service,
         ranking_service=ranking_service,
         rank_notification_service=rank_notification_service,

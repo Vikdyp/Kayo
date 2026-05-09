@@ -5,8 +5,16 @@ from pydantic import ValidationError
 
 from integrations.exceptions import ApiError
 from integrations.http_client import HTTPClient
-from integrations.henrikdev.models import (AccountResponseName, AccountResponsePuuid, RateLimit,
-MmrResponse, MatchlistResponse, StoredMmrHistoryV2Response, MmrHistoryV2Response )
+from integrations.henrikdev.models import (
+    AccountResponseName,
+    AccountResponsePuuid,
+    MatchlistResponse,
+    MmrHistoryV2Response,
+    MmrResponse,
+    RateLimit,
+    StoreFeaturedResponse,
+    StoredMmrHistoryV2Response,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +24,12 @@ class HenrikDevService:
 
     def __init__(self, client: HTTPClient, api_key: str, header_name: str = "Authorization"):
         self._client = client
-        self._header = {header_name: api_key}
+        self._api_key = api_key.strip()
+        self._header = {header_name: self._api_key} if self._api_key else {}
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(self._api_key)
 
 
     async def get_account_by_name(self, name: str, tag: str) -> tuple[AccountResponseName, RateLimit]:
@@ -163,4 +176,26 @@ class HenrikDevService:
             logger.exception("Invalid payload for get_stored_mmr_history_by_puuid (url=%s)", url)
             raise ApiError(f"Invalid API payload: {e}") from e
         
+        return model, rl
+
+    async def get_featured_store(self) -> tuple[StoreFeaturedResponse, RateLimit]:
+        url = f"{self.BASE_URL}/v2/store-featured"
+        resp = await self._client.get(url, headers=self._header)
+
+        rl = resp.ratelimit()
+        logger.debug(
+            "RateLimit: remaining=%s/%s reset=%ss bucket=%s version=%s",
+            rl.remaining,
+            rl.limit,
+            rl.reset_seconds,
+            rl.bucket,
+            rl.version,
+        )
+
+        try:
+            model = StoreFeaturedResponse.model_validate(resp.payload)
+        except ValidationError as e:
+            logger.exception("Invalid payload for get_featured_store (url=%s)", url)
+            raise ApiError(f"Invalid API payload: {e}") from e
+
         return model, rl

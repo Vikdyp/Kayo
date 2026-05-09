@@ -1,7 +1,7 @@
 # integrations/henrikdev/models.py
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional, List, Sequence
+from typing import Any, Optional, List, Sequence
 from pydantic import BaseModel, ConfigDict, Field
 
 from datetime import datetime
@@ -355,3 +355,39 @@ class StoredMmrHistoryV2Response(BaseModel):
     status: int
     results: StoredMmrResults
     data: List[MmrHistoryEntry] # Reuses MmrHistoryEntry
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Models for /valorant/v2/store-featured
+# ---------------------------------------------------------------------------------------------------------------------
+
+class StoreFeaturedItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    uuid: str
+    name: str
+    image: Optional[str] = None
+    type: Optional[str] = None
+    amount: Optional[int] = None
+    discount_percent: float = 0
+    base_price: Optional[int] = None
+    discounted_price: Optional[int] = None
+    promo_item: bool = False
+
+
+class StoreFeaturedBundle(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    bundle_uuid: str
+    seconds_remaining: Optional[int] = None
+    bundle_price: int = 0
+    whole_sale_only: bool = False
+    expires_at: Optional[str] = None
+    items: List[StoreFeaturedItem] = Field(default_factory=list)
+
+
+class StoreFeaturedResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    status: int
+    data: List[StoreFeaturedBundle] = Field(default_factory=list)

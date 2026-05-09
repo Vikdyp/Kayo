@@ -13,7 +13,6 @@ Domaines encore en quarantaine:
 
 - `five_stack`
 - `scrims`
-- `shop`
 
 Domaines supprimes du legacy car remplaces dans le noyau actif:
 

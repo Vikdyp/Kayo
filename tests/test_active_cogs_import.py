@@ -23,6 +23,7 @@ ACTIVE_COGS = [
     "cogs.rules.rules",
     "cogs.role_management.game_role",
     "cogs.role_management.language_role",
+    "cogs.shop.shop_notifier",
     "cogs.tournaments.tournament",
     "cogs.twitch.twitch",
     "cogs.voice_chat.temp_voice",

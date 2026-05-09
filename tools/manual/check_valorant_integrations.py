@@ -79,6 +79,14 @@ async def main() -> None:
                 live_history.data.history[0].date,
             )
 
+            featured_store, _ = await henrik.get_featured_store()
+            if featured_store.data:
+                bundle_uuid = featured_store.data[0].bundle_uuid
+                bundle = await valorant_api.get_bundle_by_uuid(bundle_uuid)
+                print(f"Featured store: {bundle.data.displayName} ({bundle_uuid})")
+            else:
+                print("Featured store: no active bundle")
+
         except RateLimitError as exc:
             print("Rate limit:", exc)
         except ApiError as exc:
