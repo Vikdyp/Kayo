@@ -23,7 +23,8 @@ Domaines supprimes du legacy car remplaces dans le noyau actif:
 - `role_management/auto_role`: ancien listener vide; la reaplication du ban
   interne au retour membre est geree par `cogs.moderation.moderation`.
 - `role_management/role_combination`: fonctionnalite desactivee, non utilisee.
-- `troll`: commande fun historique non prioritaire, dependante de l'ancienne DB.
+- `troll`: ancienne version DB supprimee; la reponse `quoi`/`feur` vit dans
+  `cogs.fun.quoi_feur`.
 - `update/test`: ancien rapport de permissions remplace par `cogs.admin.permissions_report`.
 
 Domaines deja migres vers le noyau actif:
