@@ -12,6 +12,7 @@ from cogs.configuration.services.role_service import (
 from cogs.moderation.services.automod_service import AutomodService
 from cogs.moderation.services.clean_service import CleanService
 from cogs.moderation.services.moderation_service import ModerationService
+from cogs.file_counter.services import FileCounterService
 from cogs.role_management.services import RoleSelectionService
 from cogs.rules.services import RulesService
 from cogs.voice_chat.services import TempVoiceService
@@ -20,6 +21,7 @@ from cogs.ranking.services.rank_notifications_service import RankNotificationSer
 from cogs.ranking.services.ranking_service import RankingService
 from database.engine import Db
 from database.services.automod_config_service import AutomodConfigService
+from database.services.file_counters_service import FileCountersService
 from database.services.guild_channels_service import ChannelConfigurationService as ChannelConfigurationDbService
 from database.services.guild_members_service import GuildMembersService
 from database.services.guild_roles_service import RoleConfigurationService as RoleConfigurationDbService
@@ -43,6 +45,7 @@ class ServiceContainer:
     automod_service: AutomodService
     moderation_service: ModerationService
     unban_requests_service: UnbanRequestsService
+    file_counter_service: FileCounterService
     rules_service: RulesService
     role_selection_service: RoleSelectionService
     temp_voice_service: TempVoiceService
@@ -59,6 +62,7 @@ async def build_service_container(db: Db, henrik_api_key: str) -> ServiceContain
     role_config_db_service = RoleConfigurationDbService(db)
     guild_members_db_service = GuildMembersService(db)
     message_deletions_db_service = MessageDeletionsService(db)
+    file_counters_db_service = FileCountersService(db)
     automod_config_db_service = AutomodConfigService(db)
     moderation_db_service = ModerationDbService(db)
     unban_requests_db_service = UnbanRequestsService(db)
@@ -81,6 +85,10 @@ async def build_service_container(db: Db, henrik_api_key: str) -> ServiceContain
         moderation_db_service,
         persistent_messages_db_service,
         role_config_db_service,
+        channel_config_db_service,
+    )
+    file_counter_service = FileCounterService(
+        file_counters_db_service,
         channel_config_db_service,
     )
     rules_service = RulesService(
@@ -114,6 +122,7 @@ async def build_service_container(db: Db, henrik_api_key: str) -> ServiceContain
         automod_service=automod_service,
         moderation_service=moderation_service,
         unban_requests_service=unban_requests_db_service,
+        file_counter_service=file_counter_service,
         rules_service=rules_service,
         role_selection_service=role_selection_service,
         temp_voice_service=temp_voice_service,

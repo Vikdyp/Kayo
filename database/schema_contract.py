@@ -30,6 +30,7 @@ KNOWN_EXTERNAL_MIGRATIONS = frozenset(
 EXPECTED_TABLES = frozenset(
     {
         "automod_config",
+        "file_counters",
         "guild_channels",
         "guild_members",
         "guild_roles",
@@ -101,6 +102,17 @@ EXPECTED_COLUMNS: Mapping[str, frozenset[str]] = {
             "updated_at",
         }
     ),
+    "file_counters": frozenset(
+        {
+            "guild_id",
+            "channel_id",
+            "message_id",
+            "added_count",
+            "completed_count",
+            "created_at",
+            "updated_at",
+        }
+    ),
     "moderation_bans": frozenset(
         {
             "id",
@@ -168,6 +180,7 @@ EXPECTED_INDEXES = frozenset(
         "idx_persistent_messages_message_id",
         "idx_message_deletions_guild_id",
         "idx_message_deletions_created_at",
+        "idx_file_counters_message_id",
         "idx_moderation_bans_ban_end",
         "idx_moderation_bans_guild_id",
         "idx_moderation_warnings_guild_user",

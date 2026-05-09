@@ -42,6 +42,7 @@ class ChannelsConfiguration(commands.Cog):
         ("rang", "salon pour definir les rang"),
         ("twitch", "salon des notif twitch"),
         ("valorant_shop", "Salon des shops Valorant"),
+        ("file_counter", "Salon compteur de fichiers"),
         ("temp_vocal_category", "Categorie des vocaux temporaires"),
         ("temp_vocal_lobby", "Salon lobby vocal (creation VC)"),
         ("voice_cleaner_category", "Categorie nettoyee (voice cleaner)"),
