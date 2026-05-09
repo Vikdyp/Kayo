@@ -97,6 +97,7 @@ COG_PATHS: list[str] = [
     "cogs.voice_chat.temp_voice",
     "cogs.ranking.assign_rank",
     "cogs.ranking.rank_notifications",
+    "cogs.ranking.online_count",
     "cogs.ranking.mmr_tracker",
 ]
 

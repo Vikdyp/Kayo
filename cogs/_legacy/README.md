@@ -16,7 +16,6 @@ Domaines encore en quarantaine:
 - `scrims`
 - `shop`
 - `tournaments`
-- `update/online_count_updater`
 
 Domaines supprimes du legacy car remplaces dans le noyau actif:
 
@@ -26,6 +25,7 @@ Domaines supprimes du legacy car remplaces dans le noyau actif:
 - `troll`: ancienne version DB supprimee; la reponse `quoi`/`feur` vit dans
   `cogs.fun.quoi_feur`.
 - `update/test`: ancien rapport de permissions remplace par `cogs.admin.permissions_report`.
+- `update/online_count_updater`: migre vers `cogs.ranking.online_count`.
 
 Domaines deja migres vers le noyau actif:
 
@@ -36,5 +36,6 @@ Domaines deja migres vers le noyau actif:
 - `role_management/language_role`
 - `twitch`
 - `update/permissions_report`
+- `update/online_count_updater`
 - `update/rank_up`
 - `voice_chat`
