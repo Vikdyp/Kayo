@@ -27,7 +27,7 @@ class PermissionsReportCog(commands.Cog):
 
         csv_content = build_permissions_csv(roles=guild.roles, channels=guild.channels)
         file = discord.File(
-            fp=io.BytesIO(csv_content.encode("utf-8")),
+            fp=io.BytesIO(csv_content.encode("utf-8-sig")),
             filename="rapport_permissions.csv",
         )
         await interaction.followup.send(
