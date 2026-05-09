@@ -13,20 +13,20 @@ Domaines encore en quarantaine:
 
 - `economy`
 - `five_stack`
-- `role_management/role_combination`
 - `scrims`
 - `shop`
 - `tournaments`
-- `troll`
-- `update`
+- `update/online_count_updater`
 
 Domaines supprimes du legacy car remplaces dans le noyau actif:
 
 - `role_management/auto_role`: ancien listener vide; la reaplication du ban
   interne au retour membre est geree par `cogs.moderation.moderation`.
+- `role_management/role_combination`: fonctionnalite desactivee, non utilisee.
+- `troll`: commande fun historique non prioritaire, dependante de l'ancienne DB.
+- `update/test`: ancien rapport de permissions remplace par `cogs.admin.permissions_report`.
 
-Domaines deja migres vers le noyau actif. Les anciennes copies peuvent rester
-ici temporairement comme archive de comparaison jusqu'au nettoyage final:
+Domaines deja migres vers le noyau actif:
 
 - `file_counter`
 - `reputation`

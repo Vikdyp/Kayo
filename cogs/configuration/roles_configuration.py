@@ -20,7 +20,6 @@ class RolesConfiguration(commands.Cog):
         "fer", "bronze", "argent", "or", "platine", "diamant", "ascendant",
         "immortel", "radiant", "sentinel", "duelist", "controller", "initiator", "fill",
         "tryhard", "e-sports", "chill", "tester", "francais", "anglais", "espagnol", "pc", "console",
-        "quoicoubeh_top3"
     ]
 
     ACTION_CHOICES = [
