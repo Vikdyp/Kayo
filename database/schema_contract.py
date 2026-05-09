@@ -41,9 +41,11 @@ EXPECTED_TABLES = frozenset(
         "moderation_role_backups",
         "moderation_warnings",
         "persistent_messages",
+        "reputation_events",
         "schema_migrations",
         "unban_requests",
         "users",
+        "user_profiles",
         "valorant_elo_history_parent",
         "valorant_info",
     }
@@ -113,6 +115,20 @@ EXPECTED_COLUMNS: Mapping[str, frozenset[str]] = {
             "updated_at",
         }
     ),
+    "reputation_events": frozenset(
+        {
+            "id",
+            "guild_id",
+            "reporter_user_id",
+            "target_user_id",
+            "event_type",
+            "event_date",
+            "count",
+            "reason",
+            "created_at",
+            "updated_at",
+        }
+    ),
     "moderation_bans": frozenset(
         {
             "id",
@@ -139,6 +155,17 @@ EXPECTED_COLUMNS: Mapping[str, frozenset[str]] = {
             "created_at",
             "resolved_at",
             "resolved_by_user_id",
+        }
+    ),
+    "user_profiles": frozenset(
+        {
+            "user_id",
+            "genre",
+            "valorant_tracker",
+            "lft",
+            "note",
+            "created_at",
+            "updated_at",
         }
     ),
     "valorant_info": frozenset(
@@ -187,6 +214,8 @@ EXPECTED_INDEXES = frozenset(
         "idx_unban_requests_one_pending_per_user",
         "idx_unban_requests_guild_status",
         "idx_unban_requests_message_id",
+        "idx_reputation_events_reporter_target",
+        "idx_reputation_events_target",
         "idx_valorant_info_active_pipeline",
         "idx_valorant_info_tracking",
         "idx_valorant_info_pseudo_tag",
