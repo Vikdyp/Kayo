@@ -82,6 +82,7 @@ COG_PATHS: list[str] = [
     "cogs.accueil.accueil",
     "cogs.accueil.stalker",
     "cogs.admin.status",
+    "cogs.admin.permissions_report",
     "cogs.moderation.clean",
     "cogs.moderation.moderation",
     "cogs.moderation.automod",

@@ -30,5 +30,6 @@ ici temporairement comme archive de comparaison jusqu'au nettoyage final:
 - `role_management/game_role`
 - `role_management/language_role`
 - `twitch`
+- `update/permissions_report`
 - `update/rank_up`
 - `voice_chat`
