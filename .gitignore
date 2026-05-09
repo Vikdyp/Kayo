@@ -14,6 +14,7 @@ __pycache__/
 # Fichiers de données
 data/*.json
 backup.dump
+database/legacy/local/
 *.sql
 !database/migrations/*.sql
 

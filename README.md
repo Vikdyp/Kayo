@@ -5,6 +5,7 @@ Kayo est un bot Discord Python base sur `discord.py`.
 Le refactor en cours garde uniquement le noyau actif charge par `bot.py`:
 
 - configuration des salons et roles
+- reglement et selection de roles
 - accueil et statistiques membres
 - moderation, automod et demandes d'unban
 - ranking Valorant et suivi MMR
@@ -13,6 +14,8 @@ Les anciens domaines sont places dans `cogs/_legacy/`. Ils restent hors chargeme
 tant qu'ils ne respectent pas la nouvelle architecture.
 
 ## Architecture Cible
+
+La documentation detaillee vit dans [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 - `cogs/`: commandes, permissions, embeds, vues et interactions Discord.
 - `cogs/*/services/`: logique metier, validation, orchestration fonctionnelle.
@@ -23,6 +26,8 @@ tant qu'ils ne respectent pas la nouvelle architecture.
 - `integrations/`: appels HTTP, modeles Pydantic et erreurs API.
 - `core/`: assemblage runtime et injection des services.
 - `database/migrations/`: migrations forward-only.
+- `tools/`: scripts manuels hors runtime et hors CI metier.
+- `docs/`: documentation projet et archives non runtime.
 
 Regle importante: un service metier ne doit pas importer `database.repos` ni
 `asyncpg`.
@@ -65,7 +70,7 @@ Variables principales:
 ## Checks
 
 ```bash
-python -m compileall -q bot.py core cogs database integrations tests
+python -m compileall -q bot.py core cogs database integrations tests tools
 python -m pytest -q
 ```
 
