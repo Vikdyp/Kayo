@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import logging
+from types import SimpleNamespace
+
 import pytest
 
+from cogs.ranking.rank_notifications import RankNotificationsCog
 from cogs.ranking.presenters.rank_notifications import (
     build_rank_change_message,
     format_top_percentile,
@@ -84,3 +88,25 @@ def test_rank_notification_presenter_formats_promotion_and_derank() -> None:
         new_rank="bronze",
         top_percentile=25,
     ) == "<@1> a derank **Bronze**. Force a toi !"
+
+
+def test_rank_notification_cog_logs_incomplete_config(caplog: pytest.LogCaptureFixture) -> None:
+    cog = RankNotificationsCog(SimpleNamespace(), object())
+    guild = SimpleNamespace(id=1, name="Guild")
+    config = RankNotificationConfig(rank_roles={}, log_channel_id=None)
+
+    with caplog.at_level(logging.WARNING):
+        cog._log_incomplete_config(guild, config)
+
+    assert "missing salon `rank_up`, roles de rang" in caplog.text
+
+
+def test_rank_notification_cog_logs_unmatched_role_update(caplog: pytest.LogCaptureFixture) -> None:
+    cog = RankNotificationsCog(SimpleNamespace(), object())
+    guild = SimpleNamespace(id=1, name="Guild")
+    config = RankNotificationConfig(rank_roles={"bronze": 2}, log_channel_id=42)
+
+    with caplog.at_level(logging.INFO):
+        cog._log_unmatched_role_update(guild, {10}, {11}, config)
+
+    assert "changed role ids [10, 11] are not configured rank roles" in caplog.text

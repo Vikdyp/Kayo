@@ -38,6 +38,8 @@ class RankNotificationsCog(commands.Cog):
         self._replacement_window_seconds = replacement_window_seconds
         self._pending_removals: dict[tuple[int, int], PendingRankRemoval] = {}
         self._cleanup_tasks: dict[tuple[int, int], asyncio.Task] = {}
+        self._last_config_warning_at: dict[int, float] = {}
+        self._last_role_mismatch_log_at: dict[int, float] = {}
         logger.info("RankNotificationsCog initialized.")
 
     def cog_unload(self) -> None:
@@ -50,14 +52,21 @@ class RankNotificationsCog(commands.Cog):
     async def on_member_update(self, before: discord.Member, after: discord.Member) -> None:
         config = await self._service.get_config(after.guild.id)
         if not config.is_complete:
+            self._log_incomplete_config(after.guild, config)
             return
 
+        before_role_ids = {role.id for role in before.roles}
+        after_role_ids = {role.id for role in after.roles}
         delta = self._service.analyze_role_delta(
-            before_role_ids=(role.id for role in before.roles),
-            after_role_ids=(role.id for role in after.roles),
+            before_role_ids=before_role_ids,
+            after_role_ids=after_role_ids,
             config=config,
         )
         key = (after.guild.id, after.id)
+
+        if not delta.removed and not delta.added:
+            self._log_unmatched_role_update(after.guild, before_role_ids, after_role_ids, config)
+            return
 
         if delta.removed:
             self._store_pending_removal(key, delta.removed)
@@ -71,6 +80,52 @@ class RankNotificationsCog(commands.Cog):
             new_rank = next(iter(delta.added))
             self._clear_pending_removal(key)
             await self._send_rank_change_message(after, old_rank, new_rank, config)
+
+    def _log_incomplete_config(self, guild: discord.Guild, config: RankNotificationConfig) -> None:
+        now = time.time()
+        last_warning_at = self._last_config_warning_at.get(guild.id, 0)
+        if now - last_warning_at < 300:
+            return
+
+        missing: list[str] = []
+        if config.log_channel_id is None:
+            missing.append("salon `rank_up`")
+        if not config.rank_roles:
+            missing.append("roles de rang (`fer`, `bronze`, `argent`, ...)")
+
+        logger.warning(
+            "Rank notifications disabled for guild %s (%s): missing %s.",
+            guild.id,
+            guild.name,
+            ", ".join(missing),
+        )
+        self._last_config_warning_at[guild.id] = now
+
+    def _log_unmatched_role_update(
+        self,
+        guild: discord.Guild,
+        before_role_ids: set[int],
+        after_role_ids: set[int],
+        config: RankNotificationConfig,
+    ) -> None:
+        if before_role_ids == after_role_ids:
+            return
+
+        now = time.time()
+        last_log_at = self._last_role_mismatch_log_at.get(guild.id, 0)
+        if now - last_log_at < 300:
+            return
+
+        changed_role_ids = sorted(before_role_ids ^ after_role_ids)
+        logger.info(
+            "Rank notification ignored role update in guild %s (%s): changed role ids %s are not configured rank roles. "
+            "Configured rank keys: %s.",
+            guild.id,
+            guild.name,
+            changed_role_ids,
+            sorted(config.rank_roles),
+        )
+        self._last_role_mismatch_log_at[guild.id] = now
 
     def _store_pending_removal(self, key: tuple[int, int], removed: frozenset[str]) -> None:
         self._clear_pending_removal(key)
