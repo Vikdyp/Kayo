@@ -14,6 +14,7 @@ from cogs.moderation.services.clean_service import CleanService
 from cogs.moderation.services.moderation_service import ModerationService
 from cogs.role_management.services import RoleSelectionService
 from cogs.rules.services import RulesService
+from cogs.voice_chat.services import TempVoiceService
 from cogs.ranking.services.mmr_tracker_service import MmrTrackerService
 from cogs.ranking.services.ranking_service import RankingService
 from database.engine import Db
@@ -43,6 +44,7 @@ class ServiceContainer:
     unban_requests_service: UnbanRequestsService
     rules_service: RulesService
     role_selection_service: RoleSelectionService
+    temp_voice_service: TempVoiceService
     ranking_service: RankingService
     henrik_service: HenrikDevService
     mmr_tracker_service: MmrTrackerService
@@ -88,6 +90,7 @@ async def build_service_container(db: Db, henrik_api_key: str) -> ServiceContain
         role_config_db_service,
         persistent_messages_db_service,
     )
+    temp_voice_service = TempVoiceService(channel_config_db_service)
     ranking_service = RankingService(
         valorant_db_service,
         channel_config_db_service,
@@ -107,6 +110,7 @@ async def build_service_container(db: Db, henrik_api_key: str) -> ServiceContain
         unban_requests_service=unban_requests_db_service,
         rules_service=rules_service,
         role_selection_service=role_selection_service,
+        temp_voice_service=temp_voice_service,
         ranking_service=ranking_service,
         henrik_service=henrik_service,
         mmr_tracker_service=mmr_tracker_service,

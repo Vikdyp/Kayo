@@ -26,6 +26,7 @@ from cogs.moderation.services.automod_service import AutomodService
 from cogs.moderation.services.moderation_service import ModerationService
 from cogs.role_management.services import RoleSelectionService
 from cogs.rules.services import RulesService
+from cogs.voice_chat.services import TempVoiceService
 from cogs.ranking.services.ranking_service import RankingService
 from cogs.ranking.services.mmr_tracker_service import MmrTrackerService
 from core.bootstrap import ServiceContainer, build_service_container
@@ -83,6 +84,7 @@ COG_PATHS: list[str] = [
     "cogs.rules.rules",
     "cogs.role_management.game_role",
     "cogs.role_management.language_role",
+    "cogs.voice_chat.temp_voice",
     "cogs.ranking.assign_rank",
     "cogs.ranking.mmr_tracker",
 ]
@@ -115,6 +117,7 @@ class KayoBot(commands.Bot):
         self.unban_requests_svc: UnbanRequestsService | None = None
         self.rules_service: RulesService | None = None
         self.role_selection_service: RoleSelectionService | None = None
+        self.temp_voice_service: TempVoiceService | None = None
         self.ranking_service: RankingService | None = None
         self.henrik_service: HenrikDevService | None = None
         self.mmr_tracker_service: MmrTrackerService | None = None
@@ -149,6 +152,7 @@ class KayoBot(commands.Bot):
         self.unban_requests_svc = self.services.unban_requests_service
         self.rules_service = self.services.rules_service
         self.role_selection_service = self.services.role_selection_service
+        self.temp_voice_service = self.services.temp_voice_service
         self.ranking_service = self.services.ranking_service
         self.henrik_service = self.services.henrik_service
         self.mmr_tracker_service = self.services.mmr_tracker_service
@@ -157,6 +161,7 @@ class KayoBot(commands.Bot):
         logger.info("AutomodService initialized.")
         logger.info("ModerationService initialized.")
         logger.info("Rules + role selection services initialized.")
+        logger.info("TempVoiceService initialized.")
         logger.info("Ranking + MmrTracker services initialized.")
 
         # 3) Load extensions (cogs)
