@@ -27,6 +27,7 @@ from cogs.moderation.services.moderation_service import ModerationService
 from cogs.role_management.services import RoleSelectionService
 from cogs.rules.services import RulesService
 from cogs.voice_chat.services import TempVoiceService
+from cogs.ranking.services.rank_notifications_service import RankNotificationService
 from cogs.ranking.services.ranking_service import RankingService
 from cogs.ranking.services.mmr_tracker_service import MmrTrackerService
 from core.bootstrap import ServiceContainer, build_service_container
@@ -86,6 +87,7 @@ COG_PATHS: list[str] = [
     "cogs.role_management.language_role",
     "cogs.voice_chat.temp_voice",
     "cogs.ranking.assign_rank",
+    "cogs.ranking.rank_notifications",
     "cogs.ranking.mmr_tracker",
 ]
 
@@ -119,6 +121,7 @@ class KayoBot(commands.Bot):
         self.role_selection_service: RoleSelectionService | None = None
         self.temp_voice_service: TempVoiceService | None = None
         self.ranking_service: RankingService | None = None
+        self.rank_notification_service: RankNotificationService | None = None
         self.henrik_service: HenrikDevService | None = None
         self.mmr_tracker_service: MmrTrackerService | None = None
 
@@ -154,6 +157,7 @@ class KayoBot(commands.Bot):
         self.role_selection_service = self.services.role_selection_service
         self.temp_voice_service = self.services.temp_voice_service
         self.ranking_service = self.services.ranking_service
+        self.rank_notification_service = self.services.rank_notification_service
         self.henrik_service = self.services.henrik_service
         self.mmr_tracker_service = self.services.mmr_tracker_service
         logger.info("AccueilService initialized.")
@@ -162,7 +166,7 @@ class KayoBot(commands.Bot):
         logger.info("ModerationService initialized.")
         logger.info("Rules + role selection services initialized.")
         logger.info("TempVoiceService initialized.")
-        logger.info("Ranking + MmrTracker services initialized.")
+        logger.info("Ranking + rank notifications + MmrTracker services initialized.")
 
         # 3) Load extensions (cogs)
         await self._load_extensions(COG_PATHS)

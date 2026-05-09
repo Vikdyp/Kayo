@@ -20,6 +20,7 @@ ACTIVE_COGS = [
     "cogs.role_management.language_role",
     "cogs.voice_chat.temp_voice",
     "cogs.ranking.assign_rank",
+    "cogs.ranking.rank_notifications",
     "cogs.ranking.mmr_tracker",
 ]
 

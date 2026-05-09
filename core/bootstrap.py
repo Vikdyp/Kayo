@@ -16,6 +16,7 @@ from cogs.role_management.services import RoleSelectionService
 from cogs.rules.services import RulesService
 from cogs.voice_chat.services import TempVoiceService
 from cogs.ranking.services.mmr_tracker_service import MmrTrackerService
+from cogs.ranking.services.rank_notifications_service import RankNotificationService
 from cogs.ranking.services.ranking_service import RankingService
 from database.engine import Db
 from database.services.automod_config_service import AutomodConfigService
@@ -46,6 +47,7 @@ class ServiceContainer:
     role_selection_service: RoleSelectionService
     temp_voice_service: TempVoiceService
     ranking_service: RankingService
+    rank_notification_service: RankNotificationService
     henrik_service: HenrikDevService
     mmr_tracker_service: MmrTrackerService
 
@@ -97,6 +99,10 @@ async def build_service_container(db: Db, henrik_api_key: str) -> ServiceContain
         role_config_db_service,
         persistent_messages_db_service,
     )
+    rank_notification_service = RankNotificationService(
+        role_config_db_service,
+        channel_config_db_service,
+    )
     mmr_tracker_service = MmrTrackerService(valorant_db_service, henrik_service)
 
     return ServiceContainer(
@@ -112,6 +118,7 @@ async def build_service_container(db: Db, henrik_api_key: str) -> ServiceContain
         role_selection_service=role_selection_service,
         temp_voice_service=temp_voice_service,
         ranking_service=ranking_service,
+        rank_notification_service=rank_notification_service,
         henrik_service=henrik_service,
         mmr_tracker_service=mmr_tracker_service,
     )
