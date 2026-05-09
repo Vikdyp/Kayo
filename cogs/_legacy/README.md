@@ -11,7 +11,6 @@ Regles:
 
 Domaines encore en quarantaine:
 
-- `economy`
 - `five_stack`
 - `scrims`
 - `shop`
@@ -26,10 +25,12 @@ Domaines supprimes du legacy car remplaces dans le noyau actif:
   `cogs.fun.quoi_feur`.
 - `update/test`: ancien rapport de permissions remplace par `cogs.admin.permissions_report`.
 - `update/online_count_updater`: migre vers `cogs.ranking.online_count`.
+- `economy`: migre vers `cogs.economy.economy`.
 
 Domaines deja migres vers le noyau actif:
 
 - `file_counter`
+- `economy`
 - `reputation`
 - `rules`
 - `role_management/game_role`

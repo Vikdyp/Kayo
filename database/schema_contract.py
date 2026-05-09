@@ -30,6 +30,8 @@ KNOWN_EXTERNAL_MIGRATIONS = frozenset(
 EXPECTED_TABLES = frozenset(
     {
         "automod_config",
+        "economy_inventory_items",
+        "economy_profiles",
         "file_counters",
         "guild_channels",
         "guild_members",
@@ -102,6 +104,26 @@ EXPECTED_COLUMNS: Mapping[str, frozenset[str]] = {
             "whitelisted_channels",
             "custom_scam_patterns",
             "custom_scam_domains",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "economy_profiles": frozenset(
+        {
+            "guild_id",
+            "user_id",
+            "balance",
+            "last_daily_claim",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "economy_inventory_items": frozenset(
+        {
+            "guild_id",
+            "user_id",
+            "item_name",
+            "quantity",
             "created_at",
             "updated_at",
         }
@@ -228,6 +250,8 @@ EXPECTED_INDEXES = frozenset(
         "idx_persistent_messages_message_id",
         "idx_message_deletions_guild_id",
         "idx_message_deletions_created_at",
+        "idx_economy_profiles_user_id",
+        "idx_economy_inventory_user_id",
         "idx_file_counters_message_id",
         "idx_moderation_bans_ban_end",
         "idx_moderation_bans_guild_id",

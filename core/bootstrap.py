@@ -12,6 +12,7 @@ from cogs.configuration.services.role_service import (
 from cogs.moderation.services.automod_service import AutomodService
 from cogs.moderation.services.clean_service import CleanService
 from cogs.moderation.services.moderation_service import ModerationService
+from cogs.economy.services import EconomyService
 from cogs.file_counter.services import FileCounterService
 from cogs.reputation.services import ReputationService
 from cogs.role_management.services import RoleSelectionService
@@ -23,6 +24,7 @@ from cogs.ranking.services.rank_notifications_service import RankNotificationSer
 from cogs.ranking.services.ranking_service import RankingService
 from database.engine import Db
 from database.services.automod_config_service import AutomodConfigService
+from database.services.economy_service import EconomyDbService
 from database.services.file_counters_service import FileCountersService
 from database.services.guild_channels_service import ChannelConfigurationService as ChannelConfigurationDbService
 from database.services.guild_members_service import GuildMembersService
@@ -50,6 +52,7 @@ class ServiceContainer:
     automod_service: AutomodService
     moderation_service: ModerationService
     unban_requests_service: UnbanRequestsService
+    economy_service: EconomyService
     file_counter_service: FileCounterService
     reputation_service: ReputationService
     rules_service: RulesService
@@ -76,6 +79,7 @@ async def build_service_container(
     role_config_db_service = RoleConfigurationDbService(db)
     guild_members_db_service = GuildMembersService(db)
     message_deletions_db_service = MessageDeletionsService(db)
+    economy_db_service = EconomyDbService(db)
     file_counters_db_service = FileCountersService(db)
     automod_config_db_service = AutomodConfigService(db)
     moderation_db_service = ModerationDbService(db)
@@ -108,6 +112,7 @@ async def build_service_container(
         role_config_db_service,
         channel_config_db_service,
     )
+    economy_service = EconomyService(economy_db_service)
     file_counter_service = FileCounterService(
         file_counters_db_service,
         channel_config_db_service,
@@ -151,6 +156,7 @@ async def build_service_container(
         automod_service=automod_service,
         moderation_service=moderation_service,
         unban_requests_service=unban_requests_db_service,
+        economy_service=economy_service,
         file_counter_service=file_counter_service,
         reputation_service=reputation_service,
         rules_service=rules_service,

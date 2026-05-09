@@ -16,6 +16,7 @@ ACTIVE_COGS = [
     "cogs.moderation.moderation",
     "cogs.moderation.automod",
     "cogs.moderation.unban_requests",
+    "cogs.economy.economy",
     "cogs.file_counter.file_counter",
     "cogs.fun.quoi_feur",
     "cogs.reputation.reputation",
