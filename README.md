@@ -8,7 +8,8 @@ Le refactor en cours garde uniquement le noyau actif charge par `bot.py`:
 - reglement et selection de roles
 - accueil et statistiques membres
 - moderation, automod et demandes d'unban
-- ranking Valorant et suivi MMR
+- compteur de fichiers et salons vocaux temporaires
+- ranking Valorant, notifications de rang et suivi MMR
 
 Les anciens domaines sont places dans `cogs/_legacy/`. Ils restent hors chargement
 tant qu'ils ne respectent pas la nouvelle architecture.
@@ -72,9 +73,12 @@ Variables principales:
 ```bash
 python -m compileall -q bot.py core cogs database integrations tests tools
 python -m pytest -q
+python tools/smoke_runtime.py
 ```
 
-Les tests ne doivent pas appeler l'API Henrik reelle.
+Les tests ne doivent pas appeler l'API Henrik reelle. Le smoke runtime ouvre la
+DB configuree par `.env`, applique les migrations, construit le conteneur de
+services, charge les cogs actifs sans gateway Discord, puis ferme DB/HTTP.
 
 ## Lancement
 

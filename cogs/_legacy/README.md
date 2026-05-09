@@ -12,15 +12,21 @@ Regles:
 Domaines actuellement en quarantaine:
 
 - `economy`
-- `file_counter`
 - `five_stack`
 - `reputation`
 - `role_management`
-- `rules`
 - `scrims`
 - `shop`
 - `tournaments`
 - `troll`
 - `twitch`
 - `update`
+
+Domaines deja migres vers le noyau actif et retires de cette quarantaine:
+
+- `file_counter`
+- `rules`
+- `role_management/game_role`
+- `role_management/language_role`
+- `update/rank_up`
 - `voice_chat`
