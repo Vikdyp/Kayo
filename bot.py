@@ -24,6 +24,8 @@ from cogs.accueil.services import AccueilService
 from cogs.moderation.services.clean_service import CleanService
 from cogs.moderation.services.automod_service import AutomodService
 from cogs.moderation.services.moderation_service import ModerationService
+from cogs.role_management.services import RoleSelectionService
+from cogs.rules.services import RulesService
 from cogs.ranking.services.ranking_service import RankingService
 from cogs.ranking.services.mmr_tracker_service import MmrTrackerService
 from core.bootstrap import ServiceContainer, build_service_container
@@ -78,6 +80,9 @@ COG_PATHS: list[str] = [
     "cogs.moderation.moderation",
     "cogs.moderation.automod",
     "cogs.moderation.unban_requests",
+    "cogs.rules.rules",
+    "cogs.role_management.game_role",
+    "cogs.role_management.language_role",
     "cogs.ranking.assign_rank",
     "cogs.ranking.mmr_tracker",
 ]
@@ -108,6 +113,8 @@ class KayoBot(commands.Bot):
         self.automod_service: AutomodService | None = None
         self.moderation_service: ModerationService | None = None
         self.unban_requests_svc: UnbanRequestsService | None = None
+        self.rules_service: RulesService | None = None
+        self.role_selection_service: RoleSelectionService | None = None
         self.ranking_service: RankingService | None = None
         self.henrik_service: HenrikDevService | None = None
         self.mmr_tracker_service: MmrTrackerService | None = None
@@ -140,6 +147,8 @@ class KayoBot(commands.Bot):
         self.automod_service = self.services.automod_service
         self.moderation_service = self.services.moderation_service
         self.unban_requests_svc = self.services.unban_requests_service
+        self.rules_service = self.services.rules_service
+        self.role_selection_service = self.services.role_selection_service
         self.ranking_service = self.services.ranking_service
         self.henrik_service = self.services.henrik_service
         self.mmr_tracker_service = self.services.mmr_tracker_service
@@ -147,6 +156,7 @@ class KayoBot(commands.Bot):
         logger.info("CleanService initialized.")
         logger.info("AutomodService initialized.")
         logger.info("ModerationService initialized.")
+        logger.info("Rules + role selection services initialized.")
         logger.info("Ranking + MmrTracker services initialized.")
 
         # 3) Load extensions (cogs)

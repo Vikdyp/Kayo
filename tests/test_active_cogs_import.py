@@ -15,6 +15,9 @@ ACTIVE_COGS = [
     "cogs.moderation.moderation",
     "cogs.moderation.automod",
     "cogs.moderation.unban_requests",
+    "cogs.rules.rules",
+    "cogs.role_management.game_role",
+    "cogs.role_management.language_role",
     "cogs.ranking.assign_rank",
     "cogs.ranking.mmr_tracker",
 ]
