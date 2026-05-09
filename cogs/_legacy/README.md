@@ -12,7 +12,6 @@ Regles:
 Domaines encore en quarantaine:
 
 - `five_stack`
-- `scrims`
 
 Domaines supprimes du legacy car remplaces dans le noyau actif:
 
@@ -32,8 +31,10 @@ Domaines deja migres vers le noyau actif:
 - `economy`
 - `reputation`
 - `rules`
+- `scrims`
 - `role_management/game_role`
 - `role_management/language_role`
+- `shop`
 - `tournaments`
 - `twitch`
 - `update/permissions_report`

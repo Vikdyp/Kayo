@@ -29,6 +29,7 @@ from cogs.file_counter.services import FileCounterService
 from cogs.reputation.services import ReputationService
 from cogs.role_management.services import RoleSelectionService
 from cogs.rules.services import RulesService
+from cogs.scrims.services import ScrimService
 from cogs.shop.services import ValorantShopService
 from cogs.tournaments.services import TournamentService
 from cogs.twitch.services import TwitchNotificationService
@@ -97,6 +98,7 @@ COG_PATHS: list[str] = [
     "cogs.rules.rules",
     "cogs.role_management.game_role",
     "cogs.role_management.language_role",
+    "cogs.scrims.scrims",
     "cogs.shop.shop_notifier",
     "cogs.tournaments.tournament",
     "cogs.twitch.twitch",
@@ -138,6 +140,7 @@ class KayoBot(commands.Bot):
         self.reputation_service: ReputationService | None = None
         self.rules_service: RulesService | None = None
         self.role_selection_service: RoleSelectionService | None = None
+        self.scrim_service: ScrimService | None = None
         self.valorant_shop_service: ValorantShopService | None = None
         self.tournament_service: TournamentService | None = None
         self.twitch_notification_service: TwitchNotificationService | None = None
@@ -186,6 +189,7 @@ class KayoBot(commands.Bot):
         self.reputation_service = self.services.reputation_service
         self.rules_service = self.services.rules_service
         self.role_selection_service = self.services.role_selection_service
+        self.scrim_service = self.services.scrim_service
         self.valorant_shop_service = self.services.valorant_shop_service
         self.tournament_service = self.services.tournament_service
         self.twitch_notification_service = self.services.twitch_notification_service
@@ -203,6 +207,7 @@ class KayoBot(commands.Bot):
         logger.info("FileCounterService initialized.")
         logger.info("ReputationService initialized.")
         logger.info("Rules + role selection services initialized.")
+        logger.info("ScrimService initialized.")
         logger.info("ValorantShopService initialized.")
         logger.info("TournamentService initialized.")
         logger.info("TwitchNotificationService initialized.")

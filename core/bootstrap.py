@@ -17,6 +17,7 @@ from cogs.file_counter.services import FileCounterService
 from cogs.reputation.services import ReputationService
 from cogs.role_management.services import RoleSelectionService
 from cogs.rules.services import RulesService
+from cogs.scrims.services import ScrimService
 from cogs.shop.services import ValorantShopService
 from cogs.tournaments.services import TournamentService
 from cogs.twitch.services import TwitchNotificationService
@@ -36,6 +37,7 @@ from database.services.message_deletions_service import MessageDeletionsService
 from database.services.moderation_service import ModerationDbService
 from database.services.persistent_messages_service import PersistentMessagesService
 from database.services.reputation_service import ReputationDbService
+from database.services.scrims_service import ScrimsDbService
 from database.services.twitch_streamers_service import TwitchStreamersDbService
 from database.services.tournaments_service import TournamentsDbService
 from database.services.unban_requests_service import UnbanRequestsService
@@ -62,6 +64,7 @@ class ServiceContainer:
     reputation_service: ReputationService
     rules_service: RulesService
     role_selection_service: RoleSelectionService
+    scrim_service: ScrimService
     valorant_shop_service: ValorantShopService
     tournament_service: TournamentService
     twitch_notification_service: TwitchNotificationService
@@ -93,6 +96,7 @@ async def build_service_container(
     moderation_db_service = ModerationDbService(db)
     unban_requests_db_service = UnbanRequestsService(db)
     reputation_db_service = ReputationDbService(db)
+    scrims_db_service = ScrimsDbService(db)
     tournaments_db_service = TournamentsDbService(db)
     twitch_streamers_db_service = TwitchStreamersDbService(db)
     valorant_db_service = ValorantDbService(db)
@@ -141,6 +145,11 @@ async def build_service_container(
         role_config_db_service,
         persistent_messages_db_service,
     )
+    scrim_service = ScrimService(
+        scrims_db_service,
+        persistent_messages_db_service,
+        rules_service,
+    )
     valorant_shop_service = ValorantShopService(
         valorant_shop_db_service,
         channel_config_db_service,
@@ -182,6 +191,7 @@ async def build_service_container(
         reputation_service=reputation_service,
         rules_service=rules_service,
         role_selection_service=role_selection_service,
+        scrim_service=scrim_service,
         valorant_shop_service=valorant_shop_service,
         tournament_service=tournament_service,
         twitch_notification_service=twitch_notification_service,

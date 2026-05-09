@@ -46,6 +46,7 @@ EXPECTED_TABLES = frozenset(
         "reputation_events",
         "role_combinations",
         "schema_migrations",
+        "scrims",
         "tournament_teams",
         "tournaments",
         "twitch_streamers",
@@ -165,6 +166,25 @@ EXPECTED_COLUMNS: Mapping[str, frozenset[str]] = {
             "combined_role_id",
             "created_at",
             "updated_at",
+        }
+    ),
+    "scrims": frozenset(
+        {
+            "id",
+            "guild_id",
+            "creator_user_id",
+            "scheduled_at",
+            "map_name",
+            "rank_name",
+            "notes",
+            "team1_user_ids",
+            "team2_user_ids",
+            "channel_id",
+            "message_id",
+            "status",
+            "created_at",
+            "updated_at",
+            "ended_at",
         }
     ),
     "moderation_bans": frozenset(
@@ -297,6 +317,9 @@ EXPECTED_INDEXES = frozenset(
         "idx_reputation_events_reporter_target",
         "idx_reputation_events_target",
         "idx_role_combinations_guild_id",
+        "idx_scrims_due",
+        "idx_scrims_guild_status",
+        "idx_scrims_message_id",
         "idx_tournaments_one_active_per_guild",
         "idx_tournaments_guild_status",
         "idx_tournament_teams_tournament_id",
