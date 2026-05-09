@@ -43,6 +43,7 @@ EXPECTED_TABLES = frozenset(
         "persistent_messages",
         "reputation_events",
         "schema_migrations",
+        "twitch_streamers",
         "unban_requests",
         "users",
         "user_profiles",
@@ -168,6 +169,14 @@ EXPECTED_COLUMNS: Mapping[str, frozenset[str]] = {
             "updated_at",
         }
     ),
+    "twitch_streamers": frozenset(
+        {
+            "guild_id",
+            "streamer_login",
+            "created_at",
+            "updated_at",
+        }
+    ),
     "valorant_info": frozenset(
         {
             "user_id",
@@ -216,6 +225,7 @@ EXPECTED_INDEXES = frozenset(
         "idx_unban_requests_message_id",
         "idx_reputation_events_reporter_target",
         "idx_reputation_events_target",
+        "idx_twitch_streamers_guild_id",
         "idx_valorant_info_active_pipeline",
         "idx_valorant_info_tracking",
         "idx_valorant_info_pseudo_tag",

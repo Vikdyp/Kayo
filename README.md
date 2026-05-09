@@ -9,6 +9,7 @@ Le refactor en cours garde uniquement le noyau actif charge par `bot.py`:
 - accueil et statistiques membres
 - moderation, automod et demandes d'unban
 - compteur de fichiers et salons vocaux temporaires
+- notifications Twitch partenaires
 - ranking Valorant, notifications de rang et suivi MMR
 
 Les anciens domaines sont places dans `cogs/_legacy/`. Ils restent hors chargement
@@ -39,6 +40,7 @@ Regle importante: un service metier ne doit pas importer `database.repos` ni
 - PostgreSQL accessible par `asyncpg`
 - Token Discord
 - Cle Henrik Valorant pour le ranking/MMR
+- Identifiants Twitch Helix pour les notifications de live, optionnels
 
 ## Installation
 
@@ -67,6 +69,8 @@ Variables principales:
 - `DATABASE_PORT`
 - `DATABASE_SSL`
 - `HENRIK_VALO_KEY`: cle API Henrik Valorant.
+- `TWITCH_CLIENT_ID`: client ID Twitch Helix, optionnel.
+- `TWITCH_CLIENT_SECRET`: secret Twitch Helix, optionnel.
 
 ## Checks
 

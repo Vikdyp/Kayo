@@ -20,6 +20,7 @@ ACTIVE_COGS = [
     "cogs.rules.rules",
     "cogs.role_management.game_role",
     "cogs.role_management.language_role",
+    "cogs.twitch.twitch",
     "cogs.voice_chat.temp_voice",
     "cogs.ranking.assign_rank",
     "cogs.ranking.rank_notifications",

@@ -28,11 +28,13 @@ from cogs.file_counter.services import FileCounterService
 from cogs.reputation.services import ReputationService
 from cogs.role_management.services import RoleSelectionService
 from cogs.rules.services import RulesService
+from cogs.twitch.services import TwitchNotificationService
 from cogs.voice_chat.services import TempVoiceService
 from cogs.ranking.services.rank_notifications_service import RankNotificationService
 from cogs.ranking.services.ranking_service import RankingService
 from cogs.ranking.services.mmr_tracker_service import MmrTrackerService
 from core.bootstrap import ServiceContainer, build_service_container
+from integrations.twitch.service import TwitchService as TwitchApiService
 
 # ------------------------------------------------------------
 # Logging
@@ -89,6 +91,7 @@ COG_PATHS: list[str] = [
     "cogs.rules.rules",
     "cogs.role_management.game_role",
     "cogs.role_management.language_role",
+    "cogs.twitch.twitch",
     "cogs.voice_chat.temp_voice",
     "cogs.ranking.assign_rank",
     "cogs.ranking.rank_notifications",
@@ -125,6 +128,8 @@ class KayoBot(commands.Bot):
         self.reputation_service: ReputationService | None = None
         self.rules_service: RulesService | None = None
         self.role_selection_service: RoleSelectionService | None = None
+        self.twitch_notification_service: TwitchNotificationService | None = None
+        self.twitch_api_service: TwitchApiService | None = None
         self.temp_voice_service: TempVoiceService | None = None
         self.ranking_service: RankingService | None = None
         self.rank_notification_service: RankNotificationService | None = None
@@ -150,7 +155,12 @@ class KayoBot(commands.Bot):
 
         # 2) Initialize services
         henrik_api_key = os.getenv("HENRIK_VALO_KEY", "")
-        self.services = await build_service_container(self.db, henrik_api_key)
+        self.services = await build_service_container(
+            self.db,
+            henrik_api_key,
+            twitch_client_id=os.getenv("TWITCH_CLIENT_ID", ""),
+            twitch_client_secret=os.getenv("TWITCH_CLIENT_SECRET", ""),
+        )
         self._http_client = self.services.http_client
         self.channel_configuration_service = self.services.channel_configuration_service
         self.role_configuration_service = self.services.role_configuration_service
@@ -163,6 +173,8 @@ class KayoBot(commands.Bot):
         self.reputation_service = self.services.reputation_service
         self.rules_service = self.services.rules_service
         self.role_selection_service = self.services.role_selection_service
+        self.twitch_notification_service = self.services.twitch_notification_service
+        self.twitch_api_service = self.services.twitch_api_service
         self.temp_voice_service = self.services.temp_voice_service
         self.ranking_service = self.services.ranking_service
         self.rank_notification_service = self.services.rank_notification_service
@@ -175,6 +187,7 @@ class KayoBot(commands.Bot):
         logger.info("FileCounterService initialized.")
         logger.info("ReputationService initialized.")
         logger.info("Rules + role selection services initialized.")
+        logger.info("TwitchNotificationService initialized.")
         logger.info("TempVoiceService initialized.")
         logger.info("Ranking + rank notifications + MmrTracker services initialized.")
 

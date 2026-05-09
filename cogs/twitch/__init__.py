@@ -1,0 +1,1 @@
+"""Active Twitch notification domain."""

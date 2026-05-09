@@ -16,6 +16,7 @@ from cogs.file_counter.services import FileCounterService
 from cogs.reputation.services import ReputationService
 from cogs.role_management.services import RoleSelectionService
 from cogs.rules.services import RulesService
+from cogs.twitch.services import TwitchNotificationService
 from cogs.voice_chat.services import TempVoiceService
 from cogs.ranking.services.mmr_tracker_service import MmrTrackerService
 from cogs.ranking.services.rank_notifications_service import RankNotificationService
@@ -31,10 +32,12 @@ from database.services.message_deletions_service import MessageDeletionsService
 from database.services.moderation_service import ModerationDbService
 from database.services.persistent_messages_service import PersistentMessagesService
 from database.services.reputation_service import ReputationDbService
+from database.services.twitch_streamers_service import TwitchStreamersDbService
 from database.services.unban_requests_service import UnbanRequestsService
 from database.services.valorant_db_service import ValorantDbService
 from integrations.henrikdev.service import HenrikDevService
 from integrations.http_client import HTTPClient
+from integrations.twitch.service import TwitchService as TwitchApiService
 
 
 @dataclass(slots=True)
@@ -51,6 +54,8 @@ class ServiceContainer:
     reputation_service: ReputationService
     rules_service: RulesService
     role_selection_service: RoleSelectionService
+    twitch_notification_service: TwitchNotificationService
+    twitch_api_service: TwitchApiService | None
     temp_voice_service: TempVoiceService
     ranking_service: RankingService
     rank_notification_service: RankNotificationService
@@ -58,7 +63,13 @@ class ServiceContainer:
     mmr_tracker_service: MmrTrackerService
 
 
-async def build_service_container(db: Db, henrik_api_key: str) -> ServiceContainer:
+async def build_service_container(
+    db: Db,
+    henrik_api_key: str,
+    *,
+    twitch_client_id: str = "",
+    twitch_client_secret: str = "",
+) -> ServiceContainer:
     member_stats_db_service = MemberStatsService(db)
     persistent_messages_db_service = PersistentMessagesService(db)
     channel_config_db_service = ChannelConfigurationDbService(db)
@@ -70,6 +81,7 @@ async def build_service_container(db: Db, henrik_api_key: str) -> ServiceContain
     moderation_db_service = ModerationDbService(db)
     unban_requests_db_service = UnbanRequestsService(db)
     reputation_db_service = ReputationDbService(db)
+    twitch_streamers_db_service = TwitchStreamersDbService(db)
     valorant_db_service = ValorantDbService(db)
     channel_configuration_service = ChannelConfigurationWorkflowService(channel_config_db_service)
     role_configuration_service = RoleConfigurationWorkflowService(role_config_db_service)
@@ -77,6 +89,11 @@ async def build_service_container(db: Db, henrik_api_key: str) -> ServiceContain
     http_client = HTTPClient(timeout_seconds=15.0)
     await http_client.__aenter__()
     henrik_service = HenrikDevService(http_client, henrik_api_key)
+    twitch_api_service = (
+        TwitchApiService(http_client, client_id=twitch_client_id, client_secret=twitch_client_secret)
+        if twitch_client_id and twitch_client_secret
+        else None
+    )
 
     accueil_service = AccueilService(
         member_stats_db_service,
@@ -108,6 +125,10 @@ async def build_service_container(db: Db, henrik_api_key: str) -> ServiceContain
         role_config_db_service,
         persistent_messages_db_service,
     )
+    twitch_notification_service = TwitchNotificationService(
+        twitch_streamers_db_service,
+        channel_config_db_service,
+    )
     temp_voice_service = TempVoiceService(channel_config_db_service)
     ranking_service = RankingService(
         valorant_db_service,
@@ -134,6 +155,8 @@ async def build_service_container(db: Db, henrik_api_key: str) -> ServiceContain
         reputation_service=reputation_service,
         rules_service=rules_service,
         role_selection_service=role_selection_service,
+        twitch_notification_service=twitch_notification_service,
+        twitch_api_service=twitch_api_service,
         temp_voice_service=temp_voice_service,
         ranking_service=ranking_service,
         rank_notification_service=rank_notification_service,
