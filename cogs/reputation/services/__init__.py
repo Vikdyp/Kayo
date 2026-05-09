@@ -4,6 +4,7 @@ from cogs.reputation.services.reputation_service import (
     ProfileSaveResult,
     ReputationRolePlan,
     ReputationService,
+    is_valid_tracker_url,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "ProfileSaveResult",
     "ReputationRolePlan",
     "ReputationService",
+    "is_valid_tracker_url",
 ]

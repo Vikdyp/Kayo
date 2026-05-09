@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import Literal, Mapping, Optional
+from urllib.parse import urlparse
 
 from database.services.guild_roles_service import RoleConfigurationService
 from database.services.reputation_service import (
@@ -14,7 +15,6 @@ from database.services.reputation_service import (
 
 GOOD_REPUTATION_ROLE_KEY = "bon joueur"
 BAD_REPUTATION_ROLE_KEY = "mauvais joueur"
-TRACKER_URL_PATTERN = re.compile(r"^https://tracker\.gg/valorant/profile/riot/.+/overview$")
 URL_PATTERN = re.compile(r"https?://", re.IGNORECASE)
 ReputationEventType = Literal["report", "recommendation"]
 
@@ -147,7 +147,7 @@ class ReputationService:
     ) -> Optional[str]:
         if genre and genre.lower() not in {"homme", "femme", "autre"}:
             return "Le genre doit etre Homme, Femme ou Autre."
-        if valorant_tracker and not TRACKER_URL_PATTERN.match(valorant_tracker):
+        if valorant_tracker and not is_valid_tracker_url(valorant_tracker):
             return "Le lien tracker.gg Valorant est invalide."
         if note and URL_PATTERN.search(note):
             return "La note personnelle ne doit pas contenir de lien."
@@ -156,3 +156,18 @@ class ReputationService:
     @staticmethod
     def reputation_ratio(summary: ReputationSummary) -> float:
         return (summary.recommendations + 1) / (summary.reports + 1)
+
+
+def is_valid_tracker_url(value: str) -> bool:
+    parsed = urlparse(value.strip())
+    if parsed.scheme != "https" or parsed.netloc.lower() != "tracker.gg":
+        return False
+
+    path_parts = [part for part in parsed.path.split("/") if part]
+    if path_parts[:3] != ["valorant", "profile", "riot"]:
+        return False
+    if len(path_parts) not in {4, 5}:
+        return False
+    if len(path_parts) == 5 and path_parts[4] != "overview":
+        return False
+    return bool(path_parts[3])

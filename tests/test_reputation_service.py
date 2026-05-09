@@ -3,7 +3,12 @@ from __future__ import annotations
 import pytest
 
 from cogs.reputation.presenters import reputation_ratio
-from cogs.reputation.services import BAD_REPUTATION_ROLE_KEY, GOOD_REPUTATION_ROLE_KEY, ReputationService
+from cogs.reputation.services import (
+    BAD_REPUTATION_ROLE_KEY,
+    GOOD_REPUTATION_ROLE_KEY,
+    ReputationService,
+    is_valid_tracker_url,
+)
 from database.services.reputation_service import ReputationSummary, UserProfileInfo
 
 
@@ -82,6 +87,29 @@ def test_reputation_role_plan_adds_bad_role_when_ratio_is_negative() -> None:
 
     assert plan.role_id_to_add == 11
     assert plan.role_ids_to_remove == (10,)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://tracker.gg/valorant/profile/riot/Curs4d%232908",
+        "https://tracker.gg/valorant/profile/riot/Curs4d%232908/overview",
+    ],
+)
+def test_tracker_url_accepts_profile_and_overview_links(url: str) -> None:
+    assert is_valid_tracker_url(url) is True
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://tracker.gg/valorant/profile/riot/Curs4d%232908",
+        "https://example.com/valorant/profile/riot/Curs4d%232908",
+        "https://tracker.gg/valorant/profile/riot/Curs4d%232908/matches",
+    ],
+)
+def test_tracker_url_rejects_untrusted_or_unexpected_links(url: str) -> None:
+    assert is_valid_tracker_url(url) is False
 
 
 @pytest.mark.asyncio
