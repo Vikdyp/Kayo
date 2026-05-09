@@ -13,13 +13,17 @@ Domaines encore en quarantaine:
 
 - `economy`
 - `five_stack`
-- `role_management/auto_role`
 - `role_management/role_combination`
 - `scrims`
 - `shop`
 - `tournaments`
 - `troll`
 - `update`
+
+Domaines supprimes du legacy car remplaces dans le noyau actif:
+
+- `role_management/auto_role`: ancien listener vide; la reaplication du ban
+  interne au retour membre est geree par `cogs.moderation.moderation`.
 
 Domaines deja migres vers le noyau actif. Les anciennes copies peuvent rester
 ici temporairement comme archive de comparaison jusqu'au nettoyage final:

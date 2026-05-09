@@ -12,7 +12,11 @@ from cogs.moderation.presenters import (
     build_unban_dm_embed,
     format_ban_status_message,
 )
-from cogs.moderation.services.internal_ban_workflow import apply_internal_ban, remove_internal_ban
+from cogs.moderation.services.internal_ban_workflow import (
+    apply_internal_ban,
+    enforce_existing_internal_ban,
+    remove_internal_ban,
+)
 from cogs.moderation.services.moderation_service import ModerationService
 
 logger = logging.getLogger(__name__)
@@ -25,6 +29,7 @@ class Moderation(commands.Cog):
         self.bot = bot
         self._mod_svc = moderation_service
         self.lock = asyncio.Lock()
+        self._internal_ban_enforcements: set[tuple[int, int]] = set()
         self.check_bans_expired.start()
         logger.info("Initialisation du Cog de Modération.")
 
@@ -47,6 +52,59 @@ class Moderation(commands.Cog):
             )
             return False
         return True
+
+    @commands.Cog.listener()
+    async def on_member_join(self, member: discord.Member) -> None:
+        await self._enforce_internal_ban_for_member(
+            member,
+            reason="Ban interne actif: retour sur le serveur.",
+        )
+
+    @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member) -> None:
+        roles_changed = {role.id for role in before.roles} != {role.id for role in after.roles}
+        pending_before = bool(getattr(before, "pending", False))
+        pending_after = bool(getattr(after, "pending", False))
+        onboarding_completed = pending_before and not pending_after
+        if not roles_changed and not onboarding_completed:
+            return
+
+        await self._enforce_internal_ban_for_member(
+            after,
+            reason="Ban interne actif: mise a jour des roles.",
+        )
+
+    async def _enforce_internal_ban_for_member(self, member: discord.Member, *, reason: str) -> bool:
+        key = (member.guild.id, member.id)
+        if key in self._internal_ban_enforcements:
+            return False
+
+        self._internal_ban_enforcements.add(key)
+        try:
+            result = await enforce_existing_internal_ban(
+                bot=self.bot,
+                moderation_service=self._mod_svc,
+                guild=member.guild,
+                member=member,
+                reason=reason,
+            )
+            if result.ban_found:
+                logger.info(
+                    "Ban interne reapplique pour %s (%s) dans %s.",
+                    member.display_name,
+                    member.id,
+                    member.guild.name,
+                )
+            return result.ban_found
+        except Exception:
+            logger.exception(
+                "Erreur lors de la reaplication du ban interne pour %s dans %s.",
+                member.id,
+                member.guild.id,
+            )
+            return False
+        finally:
+            self._internal_ban_enforcements.discard(key)
 
     @app_commands.command(name="moderation", description="Exécute des actions de modération.")
     @app_commands.describe(

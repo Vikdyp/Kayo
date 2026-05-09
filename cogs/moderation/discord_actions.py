@@ -91,10 +91,8 @@ async def apply_ban_role_all_guilds(
         if not ban_role:
             logger.warning("Configured ban role %s not found in guild %s.", ban_role_id, guild.name)
             continue
-        if ban_role in member.roles:
-            logger.debug("Member %s already has ban role in guild %s.", member.display_name, guild.name)
-            continue
-        if not can_bot_manage_role(guild, ban_role):
+        has_ban_role = ban_role in member.roles
+        if not has_ban_role and not can_bot_manage_role(guild, ban_role):
             logger.warning("Bot cannot manage ban role %s in guild %s.", ban_role.name, guild.name)
             continue
 
@@ -103,6 +101,10 @@ async def apply_ban_role_all_guilds(
             if roles_to_remove:
                 await member.remove_roles(*roles_to_remove, reason=reason)
                 logger.info("Removed roles for %s in %s.", member.display_name, guild.name)
+
+            if has_ban_role:
+                logger.debug("Member %s already has ban role in guild %s.", member.display_name, guild.name)
+                continue
 
             await member.add_roles(ban_role, reason=reason)
             logger.info("Applied ban role to %s in %s.", member.display_name, guild.name)

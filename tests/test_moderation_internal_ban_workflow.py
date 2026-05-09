@@ -5,7 +5,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from cogs.moderation.services.internal_ban_workflow import apply_internal_ban, remove_internal_ban
+from cogs.moderation.services.internal_ban_workflow import (
+    apply_internal_ban,
+    enforce_existing_internal_ban,
+    remove_internal_ban,
+)
 
 
 @dataclass
@@ -121,6 +125,50 @@ async def test_apply_internal_ban_records_backup_and_adds_ban_role() -> None:
     assert service.add_ban_kwargs["banned_by"] == 99
     assert member.removed_roles == [guild.member_role]
     assert member.added_roles == [guild.ban_role]
+
+
+@pytest.mark.asyncio
+async def test_enforce_existing_internal_ban_does_not_overwrite_backup() -> None:
+    guild = FakeGuild()
+    member = FakeMember(guild, roles=[guild.member_role])
+    guild.add_member(member)
+    service = FakeModerationService(guild)
+    bot = SimpleNamespace(guilds=[guild])
+
+    result = await enforce_existing_internal_ban(
+        bot=bot,
+        moderation_service=service,
+        guild=guild,
+        member=member,
+        reason="return",
+    )
+
+    assert result.ban_found is True
+    assert service.roles_backup is None
+    assert service.add_ban_kwargs is None
+    assert member.removed_roles == [guild.member_role]
+    assert member.added_roles == [guild.ban_role]
+
+
+@pytest.mark.asyncio
+async def test_enforce_existing_internal_ban_cleans_roles_when_ban_role_already_present() -> None:
+    guild = FakeGuild()
+    member = FakeMember(guild, roles=[guild.member_role, guild.ban_role])
+    guild.add_member(member)
+    service = FakeModerationService(guild)
+    bot = SimpleNamespace(guilds=[guild])
+
+    result = await enforce_existing_internal_ban(
+        bot=bot,
+        moderation_service=service,
+        guild=guild,
+        member=member,
+        reason="role update",
+    )
+
+    assert result.ban_found is True
+    assert member.removed_roles == [guild.member_role]
+    assert member.added_roles == []
 
 
 @pytest.mark.asyncio

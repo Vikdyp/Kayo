@@ -26,6 +26,11 @@ class InternalBanResult:
 
 
 @dataclass(frozen=True, slots=True)
+class InternalBanEnforcementResult:
+    ban_found: bool
+
+
+@dataclass(frozen=True, slots=True)
 class InternalUnbanResult:
     ban_found: bool
     saved_roles: tuple[int, ...]
@@ -85,6 +90,28 @@ async def apply_internal_ban(
         ban_end=ban_end,
         ban_recorded=True,
     )
+
+
+async def enforce_existing_internal_ban(
+    *,
+    bot: commands.Bot,
+    moderation_service: ModerationService,
+    guild: discord.Guild,
+    member: discord.Member,
+    reason: Optional[str] = None,
+) -> InternalBanEnforcementResult:
+    ban_info = await moderation_service.get_ban_info(guild.id, member.id)
+    if not ban_info:
+        return InternalBanEnforcementResult(ban_found=False)
+
+    await apply_ban_role_all_guilds(
+        bot,
+        moderation_service,
+        member.id,
+        reason or "Ban interne actif: reapplique automatiquement.",
+        source_member=member,
+    )
+    return InternalBanEnforcementResult(ban_found=True)
 
 
 async def remove_internal_ban(
