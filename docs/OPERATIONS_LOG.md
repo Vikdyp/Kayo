@@ -37,6 +37,19 @@ les commits et aide la personne suivante a comprendre l'etat reel du projet.
   limitent des features.
 - Ajout de `docs/CONFIG.md` et `docs/RUNBOOK.md`.
 
+## 2026-05-10 - Deploiement Git active sur le VPS
+
+- Les changements valides ont ete commits et pousses sur `origin/master`.
+- `/srv/kayo` est maintenant un checkout Git propre.
+- L'ancien dossier manuel est conserve dans
+  `/srv/kayo.manual-20260510T201135Z`.
+- `.env` a ete preserve avec permissions `600`.
+- Les backups PostgreSQL ont ete preserves dans `/srv/kayo/backups/postgres`.
+- `tools/vps/deploy-from-git.sh` est executable et a ete teste en production :
+  pull fast-forward, backup, rebuild Docker, restart bot et smoke runtime.
+- Etat verifie apres bascule : `kayo-bot` up, `kayo-postgres` healthy, logs
+  recents sans erreur critique.
+
 ## Suite recommandee
 
 1. Copier automatiquement les backups PostgreSQL hors VPS.
