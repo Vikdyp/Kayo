@@ -19,7 +19,7 @@ DATE_FORMAT = "%d/%m/%Y %H:%M"
 
 class TournamentCog(commands.Cog):
     ACTION_CHOICES = [
-        app_commands.Choice(name="creat", value="creat"),
+        app_commands.Choice(name="create", value="create"),
         app_commands.Choice(name="close", value="close"),
     ]
 
@@ -51,7 +51,7 @@ class TournamentCog(commands.Cog):
             await interaction.response.send_message("Cette commande doit etre executee dans un serveur.", ephemeral=True)
             return
 
-        if action.value == "creat":
+        if action.value in {"create", "creat"}:
             active = await self._service.get_active_tournament(interaction.guild.id)
             if active:
                 await interaction.response.send_message(

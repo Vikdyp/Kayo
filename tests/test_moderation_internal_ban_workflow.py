@@ -24,12 +24,18 @@ class FakeRole:
 
 
 class FakeGuild:
-    def __init__(self) -> None:
-        self.id = 10
-        self.name = "Perfect Team"
-        self.default_role = FakeRole(1, "@everyone", 0)
-        self.member_role = FakeRole(2, "Member", 10)
-        self.ban_role = FakeRole(3, "ban", 20)
+    def __init__(
+        self,
+        *,
+        guild_id: int = 10,
+        name: str = "Perfect Team",
+        role_offset: int = 0,
+    ) -> None:
+        self.id = guild_id
+        self.name = name
+        self.default_role = FakeRole(role_offset + 1, "@everyone", 0)
+        self.member_role = FakeRole(role_offset + 2, "Member", 10)
+        self.ban_role = FakeRole(role_offset + 3, "ban", 20)
         self.me = SimpleNamespace(top_role=FakeRole(999, "Kayo", 50))
         self.roles = [self.default_role, self.member_role, self.ban_role]
         self._members: dict[int, FakeMember] = {}
@@ -65,17 +71,27 @@ class FakeMember:
 
 
 class FakeModerationService:
-    def __init__(self, guild: FakeGuild) -> None:
+    def __init__(self, guild: FakeGuild, *other_guilds: FakeGuild) -> None:
         self.guild = guild
+        self.guilds_by_id = {
+            target_guild.id: target_guild
+            for target_guild in (guild, *other_guilds)
+        }
         self.roles_backup: list[int] | None = None
+        self.roles_backups: dict[int, list[int]] = {}
         self.add_ban_kwargs: dict | None = None
         self.removed_ban: tuple[int, int] | None = None
         self.cleared_backup: tuple[int, int] | None = None
+        self.cleared_backups: list[tuple[int, int]] = []
         self.ban_exists = True
-        self.saved_roles = [guild.member_role.id]
+        self.saved_roles_by_guild = {
+            target_guild.id: [target_guild.member_role.id]
+            for target_guild in (guild, *other_guilds)
+        }
 
     async def update_roles_backup(self, *, guild_id, guild_name, discord_user_id, roles):
         self.roles_backup = roles
+        self.roles_backups[guild_id] = roles
         return True
 
     async def add_ban(self, **kwargs):
@@ -83,13 +99,13 @@ class FakeModerationService:
         return True
 
     async def get_ban_role_id(self, guild_id: int):
-        return self.guild.ban_role.id
+        return self.guilds_by_id[guild_id].ban_role.id
 
     async def get_ban_info(self, guild_id: int, user_id: int):
         return object() if self.ban_exists else None
 
     async def get_roles_backup(self, guild_id: int, user_id: int):
-        return self.saved_roles
+        return self.saved_roles_by_guild.get(guild_id, [])
 
     async def remove_ban(self, guild_id: int, user_id: int):
         self.removed_ban = (guild_id, user_id)
@@ -97,6 +113,7 @@ class FakeModerationService:
 
     async def clear_roles_backup(self, guild_id: int, user_id: int):
         self.cleared_backup = (guild_id, user_id)
+        self.cleared_backups.append((guild_id, user_id))
         return True
 
 
@@ -125,6 +142,37 @@ async def test_apply_internal_ban_records_backup_and_adds_ban_role() -> None:
     assert service.add_ban_kwargs["banned_by"] == 99
     assert member.removed_roles == [guild.member_role]
     assert member.added_roles == [guild.ban_role]
+
+
+@pytest.mark.asyncio
+async def test_apply_internal_ban_records_backup_for_each_shared_guild() -> None:
+    guild = FakeGuild()
+    other_guild = FakeGuild(guild_id=11, name="Partner Team", role_offset=10)
+    member = FakeMember(guild, roles=[guild.member_role])
+    other_member = FakeMember(other_guild, roles=[other_guild.member_role])
+    guild.add_member(member)
+    other_guild.add_member(other_member)
+    service = FakeModerationService(guild, other_guild)
+    bot = SimpleNamespace(guilds=[guild, other_guild])
+
+    result = await apply_internal_ban(
+        bot=bot,
+        moderation_service=service,
+        guild=guild,
+        member=member,
+        reason="reason",
+        banned_by_id=99,
+        ban_type="perm",
+        ban_end=None,
+    )
+
+    assert result.ban_recorded is True
+    assert service.roles_backups == {
+        guild.id: [guild.member_role.id],
+        other_guild.id: [other_guild.member_role.id],
+    }
+    assert member.added_roles == [guild.ban_role]
+    assert other_member.added_roles == [other_guild.ban_role]
 
 
 @pytest.mark.asyncio
@@ -194,3 +242,33 @@ async def test_remove_internal_ban_removes_ban_role_and_restores_saved_roles() -
     assert service.cleared_backup == (guild.id, member.id)
     assert member.removed_roles == [guild.ban_role]
     assert member.added_roles == [guild.member_role]
+
+
+@pytest.mark.asyncio
+async def test_remove_internal_ban_restores_roles_for_each_shared_guild() -> None:
+    guild = FakeGuild()
+    other_guild = FakeGuild(guild_id=11, name="Partner Team", role_offset=10)
+    member = FakeMember(guild, roles=[guild.ban_role])
+    other_member = FakeMember(other_guild, roles=[other_guild.ban_role])
+    guild.add_member(member)
+    other_guild.add_member(other_member)
+    service = FakeModerationService(guild, other_guild)
+    bot = SimpleNamespace(guilds=[guild, other_guild])
+
+    result = await remove_internal_ban(
+        bot=bot,
+        moderation_service=service,
+        guild=guild,
+        user_id=member.id,
+        reason="done",
+    )
+
+    assert result.ban_found is True
+    assert result.removed_ban_roles == 2
+    assert result.restored_roles == 2
+    assert service.cleared_backups == [
+        (guild.id, member.id),
+        (other_guild.id, member.id),
+    ]
+    assert member.added_roles == [guild.member_role]
+    assert other_member.added_roles == [other_guild.member_role]

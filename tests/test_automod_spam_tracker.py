@@ -103,6 +103,66 @@ def test_spam_tracker_message_refs_match_recent_content() -> None:
     assert refs == [(100, 1000), (101, 1001)]
 
 
+def test_spam_tracker_honors_configured_detection_window() -> None:
+    tracker = AutomodSpamTracker()
+    now = datetime(2026, 5, 8, 12, 0)
+
+    tracker.record_and_detect(
+        user_id=1,
+        guild_id=10,
+        channel_id=100,
+        message_id=1000,
+        content="same",
+        threshold=2,
+        time_window_seconds=300,
+        now=now,
+    )
+
+    assert tracker.record_and_detect(
+        user_id=1,
+        guild_id=10,
+        channel_id=101,
+        message_id=1001,
+        content="same",
+        threshold=2,
+        time_window_seconds=300,
+        now=now + timedelta(seconds=180),
+    ) is True
+
+
+def test_spam_tracker_flags_pending_spam_content_and_expires() -> None:
+    tracker = AutomodSpamTracker()
+    now = datetime(2026, 5, 8, 12, 0)
+
+    tracker.flag_pending_spam(
+        user_id=1,
+        guild_id=10,
+        content="Same spam",
+        now=now,
+        duration=timedelta(seconds=30),
+    )
+
+    assert tracker.is_pending_spam_message(
+        user_id=1,
+        guild_id=10,
+        content=" same spam ",
+        now=now + timedelta(seconds=10),
+    ) is True
+    assert tracker.is_pending_spam_message(
+        user_id=1,
+        guild_id=10,
+        content="different",
+        now=now + timedelta(seconds=10),
+    ) is False
+    assert tracker.is_pending_spam_message(
+        user_id=1,
+        guild_id=10,
+        content="same spam",
+        now=now + timedelta(seconds=31),
+    ) is False
+    assert tracker.pending_spam_content == {}
+
+
 def test_spam_tracker_whitelist_expires() -> None:
     tracker = AutomodSpamTracker()
     now = datetime(2026, 5, 8, 12, 0)

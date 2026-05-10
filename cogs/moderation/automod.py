@@ -421,6 +421,24 @@ class AutoMod(commands.Cog):
         """Vérifie si un utilisateur est dans la whitelist spam."""
         return self._spam_tracker.is_whitelisted(user_id, guild_id)
 
+    def get_spam_message_refs(
+        self,
+        *,
+        user_id: int,
+        guild_id: int,
+        content: str,
+        window_seconds: int = 300,
+    ) -> list[tuple[int, int]]:
+        return self._spam_tracker.get_matching_message_refs(
+            user_id=user_id,
+            guild_id=guild_id,
+            content=content,
+            window_seconds=window_seconds,
+        )
+
+    def clear_pending_spam(self, *, user_id: int, guild_id: int) -> None:
+        self._spam_tracker.clear_pending_spam(user_id=user_id, guild_id=guild_id)
+
     async def is_member_whitelisted(self, member: discord.Member, config: Dict[str, Any]) -> bool:
         """Vérifie si un membre est exempté de l'automod (admin, modo, rôle whitelisté)."""
         return self._detection_svc.is_member_whitelisted(member, config)
@@ -604,7 +622,7 @@ class AutoMod(commands.Cog):
             time_window_seconds=time_window,
         )
 
-    async def request_spam_confirmation(self, message: discord.Message) -> None:
+    async def request_spam_confirmation(self, message: discord.Message, config: Dict[str, Any]) -> None:
         """Envoie une demande de confirmation aux modérateurs pour un spam détecté."""
         user = message.author
         guild = message.guild
@@ -621,6 +639,7 @@ class AutoMod(commands.Cog):
                 user_id=user.id,
                 guild_id=guild.id,
                 content=message.content,
+                window_seconds=int(config.get("spam_time_window", 60)),
             )
 
             # Récupérer le salon de modération
@@ -664,6 +683,11 @@ class AutoMod(commands.Cog):
             )
 
             await mod_channel.send(embed=embed, view=view)
+            self._spam_tracker.flag_pending_spam(
+                user_id=user.id,
+                guild_id=guild.id,
+                content=message.content,
+            )
             keep_pending = True
             logger.info(f"Alerte spam envoyée pour {user.display_name} dans {guild.name}")
 
@@ -715,8 +739,32 @@ class AutoMod(commands.Cog):
         if config.get('spam_detection_enabled', True):
             # Sauf si l'utilisateur est dans la whitelist temporaire
             if not self.is_spam_whitelisted(message.author.id, message.guild.id):
+                if self._spam_tracker.is_pending_spam_message(
+                    user_id=message.author.id,
+                    guild_id=message.guild.id,
+                    content=message.content,
+                ):
+                    self._spam_tracker.record_message(
+                        user_id=message.author.id,
+                        guild_id=message.guild.id,
+                        channel_id=message.channel.id,
+                        message_id=message.id,
+                        content=message.content,
+                    )
+                    try:
+                        await message.delete()
+                    except discord.Forbidden:
+                        logger.warning(
+                            "Pas de permission pour supprimer le spam en attente de %s dans %s.",
+                            message.author.id,
+                            message.channel.id,
+                        )
+                    except discord.NotFound:
+                        pass
+                    return
+
                 if await self.check_cross_channel_spam(message, config):
-                    await self.request_spam_confirmation(message)
+                    await self.request_spam_confirmation(message, config)
 
 
 async def setup(bot: commands.Bot):

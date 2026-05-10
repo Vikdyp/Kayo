@@ -16,7 +16,7 @@ def build_queue_embed(entries: Iterable[object]) -> discord.Embed:
 
     embed = discord.Embed(
         title="Matchmaking Five Stack",
-        description="Rejoignez la queue en solo ou avec votre equipe.",
+        description="Rejoignez la recherche en solo ou avec votre equipe.",
         color=discord.Color.blurple(),
     )
     embed.add_field(name="Joueurs en attente", value=str(total_players), inline=True)
@@ -26,7 +26,7 @@ def build_queue_embed(entries: Iterable[object]) -> discord.Embed:
     if rows:
         lines = []
         for entry in rows[:10]:
-            size = "any" if entry.desired_team_size == 0 else str(entry.desired_team_size)
+            size = "any" if entry.desired_team_size == 0 else f"{entry.desired_team_size} joueurs"
             lines.append(
                 f"<@{entry.discord_member_id}> - {entry.entry_type} joueur(s), "
                 f"{entry.language}/{entry.region}/{entry.platform}, cible {size}"
@@ -37,7 +37,7 @@ def build_queue_embed(entries: Iterable[object]) -> discord.Embed:
     else:
         embed.add_field(name="Queue", value="Aucun joueur en attente.", inline=False)
 
-    embed.set_footer(text="La queue passe en any apres 5 min et expire apres 10 min.")
+    embed.set_footer(text="La recherche passe en any apres 5 min et expire apres 10 min.")
     return embed
 
 
@@ -90,7 +90,7 @@ def queue_status_message(status: str) -> str:
         "left": "Vous avez quitte la queue.",
         "missing_valorant": "Vous devez lier votre compte Valorant avant de rejoindre la queue.",
         "missing_team": "Vous devez etre leader d'une equipe pour rejoindre en equipe.",
-        "invalid_size": "Taille de match invalide.",
+        "invalid_size": "Taille de groupe invalide.",
     }
     return messages.get(status, "Action terminee.")
 
@@ -122,8 +122,8 @@ def build_server_stats_embed(guild: discord.Guild, stats: dict) -> discord.Embed
     distribution = stats.get("team_size_distribution", {}) or {}
     if distribution:
         embed.add_field(
-            name="Tailles",
-            value="\n".join(f"{size}v{size}: {count}" for size, count in sorted(distribution.items())),
+            name="Tailles de groupe",
+            value="\n".join(f"{size} joueurs: {count}" for size, count in sorted(distribution.items())),
             inline=False,
         )
     return embed
@@ -145,7 +145,7 @@ def build_match_history_embed(member: discord.abc.User, bundles: Iterable[FiveSt
     lines = []
     for bundle in bundles:
         lines.append(
-            f"`{bundle.match.match_code}` - {bundle.match.team_size}v{bundle.match.team_size} "
+            f"`{bundle.match.match_code}` - {bundle.match.team_size} joueurs "
             f"- {_format_dt(bundle.match.created_at)}"
         )
     embed.description = "\n".join(lines) if lines else "Aucun match recent."
@@ -157,7 +157,7 @@ def build_global_match_history_embed(rows: Iterable[object]) -> discord.Embed:
     lines = []
     for match in rows:
         lines.append(
-            f"`{match.match_code}` - {match.team_size}v{match.team_size} "
+            f"`{match.match_code}` - {match.team_size} joueurs "
             f"- qualite {match.quality_score:.2f} - {_format_dt(match.created_at)}"
         )
     embed.description = "\n".join(lines) if lines else "Aucun match recent."

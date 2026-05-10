@@ -5,9 +5,9 @@ import discord
 
 TEAM_SIZE_OPTIONS = [
     discord.SelectOption(label="Any", value="0", description="Le bot choisit la meilleure taille disponible."),
-    discord.SelectOption(label="2v2", value="2"),
-    discord.SelectOption(label="3v3", value="3"),
-    discord.SelectOption(label="5v5", value="5"),
+    discord.SelectOption(label="Duo", value="2", description="Former un groupe de 2 joueurs, vous compris."),
+    discord.SelectOption(label="Groupe de 3", value="3", description="Former un groupe de 3 joueurs, vous compris."),
+    discord.SelectOption(label="Equipe de 5", value="5", description="Former un groupe de 5 joueurs, vous compris."),
 ]
 
 
@@ -19,7 +19,7 @@ class QueueView(discord.ui.View):
     @discord.ui.button(label="Solo", style=discord.ButtonStyle.primary, custom_id="join_solo_button")
     async def join_solo(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         await interaction.response.send_message(
-            "Choisissez la taille souhaitee.",
+            "Choisissez le groupe que vous voulez former.",
             view=QueueSizeView(self._cog, mode="solo"),
             ephemeral=True,
         )
@@ -27,7 +27,7 @@ class QueueView(discord.ui.View):
     @discord.ui.button(label="Equipe", style=discord.ButtonStyle.success, custom_id="join_team_button")
     async def join_team(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         await interaction.response.send_message(
-            "Choisissez la taille souhaitee.",
+            "Choisissez le groupe que vous voulez former.",
             view=QueueSizeView(self._cog, mode="team"),
             ephemeral=True,
         )
@@ -46,7 +46,7 @@ class QueueSizeView(discord.ui.View):
 class QueueSizeSelect(discord.ui.Select):
     def __init__(self, cog, *, mode: str) -> None:
         super().__init__(
-            placeholder="Taille de match",
+            placeholder="Groupe recherche",
             min_values=1,
             max_values=1,
             options=TEAM_SIZE_OPTIONS,

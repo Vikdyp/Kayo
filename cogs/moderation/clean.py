@@ -267,32 +267,41 @@ class Clean(commands.Cog):
                         for a in m.attachments
                     )
                     deletion_type = "image"
+                    desc = "images"
                 elif action.value == "gif":
                     condition = lambda m: (
                         any(a.url.lower().endswith("gif") for a in m.attachments)
                         or "gif" in m.content.lower()
                     )
                     deletion_type = "gif"
+                    desc = "GIFs"
                 elif action.value == "links":
-                    condition = lambda m: re.search(r"http[s]?://", m.content)
+                    condition = lambda m: bool(re.search(r"http[s]?://", m.content))
                     deletion_type = "links"
+                    desc = "liens"
 
-                deleted_count = await self._clean_svc.delete_messages_with_condition(
-                    channel,
-                    condition,
-                    interaction.user,
-                    deletion_type=deletion_type,
-                )
+                async def confirmation_callback(value: Optional[bool]):
+                    if value:
+                        deleted_count = await self._clean_svc.delete_messages_with_condition(
+                            channel,
+                            condition,
+                            interaction.user,
+                            deletion_type=deletion_type,
+                        )
+                        await interaction.followup.send(
+                            f"{deleted_count} messages contenant des {desc} ont ete supprimes dans {channel.mention}.",
+                            ephemeral=True,
+                        )
+                    else:
+                        await interaction.followup.send("Action annulee ou confirmation expiree.", ephemeral=True)
 
-                desc_map = {
-                    "image": "images",
-                    "gif": "GIFs",
-                    "links": "liens",
-                }
-                desc = desc_map.get(action.value, "messages")
-                await interaction.followup.send(
-                    f"{deleted_count} messages contenant des {desc} ont été supprimés dans {channel.mention}.",
-                    ephemeral=True,
+                await self.ask_confirmation(
+                    interaction,
+                    f"Confirmez-vous la suppression des messages contenant des {desc} dans {channel.mention} ?",
+                    confirmation_callback,
+                    confirm_label="Supprimer",
+                    confirm_style=discord.ButtonStyle.red,
+                    is_ephemeral=True,
                 )
 
         except Exception as e:

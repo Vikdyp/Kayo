@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Iterable
 
 import asyncpg
+from dotenv import load_dotenv
 
+from database.dsn import build_database_dsn_from_env
 from database.engine import Db, DbConfig
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+
+load_dotenv()
 
 
 async def _ensure_migrations_table(conn: asyncpg.Connection) -> None:
@@ -65,9 +68,10 @@ async def run_migrations(db: Db) -> None:
 
 # CLI simple: python -m database.migrate
 async def _amain() -> None:
-    dsn = os.getenv("DATABASE_URL") or os.getenv("POSTGRES_DSN")
-    if not dsn:
-        raise SystemExit("Missing DATABASE_URL (or POSTGRES_DSN) env var.")
+    try:
+        dsn = build_database_dsn_from_env()
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
 
     db = Db(DbConfig(dsn=dsn))
     await db.open()

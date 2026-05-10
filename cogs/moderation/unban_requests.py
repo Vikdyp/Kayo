@@ -50,7 +50,7 @@ class DebanManager(commands.Cog):
         return self.bot.unban_requests_svc
 
     @commands.command(name="send_deban")
-    @commands.has_permissions(ban_members=True)
+    @commands.has_permissions(administrator=True)
     async def send_deban(self, ctx: commands.Context):
         """
         Commande pour envoyer l'embed principal de demande de débannissement.

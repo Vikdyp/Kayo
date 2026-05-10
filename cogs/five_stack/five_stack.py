@@ -94,12 +94,20 @@ class FiveStackCog(commands.Cog):
         await ctx.send("Queue initialisee.")
 
     @commands.command(name="role_counters")
+    @commands.has_permissions(administrator=True)
     async def role_counters(self, ctx: commands.Context) -> None:
         if not ctx.guild:
             return
         entries = await self._service.list_queue(ctx.guild.id)
         counts = self._service.role_counts(entries)
         await ctx.send(embed=build_role_counters_embed(counts))
+
+    @role_counters.error
+    async def role_counters_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.send("Vous n'avez pas les permissions necessaires.", delete_after=10)
+            return
+        raise error
 
     @team_group.command(name="create", description="Creer une equipe five-stack.")
     @app_commands.describe(visibility="Visibilite de l'equipe.")
@@ -331,14 +339,17 @@ class FiveStackCog(commands.Cog):
 
     @tasks.loop(seconds=15)
     async def process_queue_task_loop(self) -> None:
-        proposals = await self._service.find_match_proposals()
-        for proposal in proposals:
-            guild = self.bot.get_guild(proposal.guild_id)
-            if guild is None:
-                continue
-            lock = self._server_locks.setdefault(guild.id, asyncio.Lock())
-            async with lock:
-                await self._create_match(guild, proposal)
+        try:
+            proposals = await self._service.find_match_proposals()
+            for proposal in proposals:
+                guild = self.bot.get_guild(proposal.guild_id)
+                if guild is None:
+                    continue
+                lock = self._server_locks.setdefault(guild.id, asyncio.Lock())
+                async with lock:
+                    await self._create_match(guild, proposal)
+        except Exception:
+            logger.exception("Five-stack queue processing task failed.")
 
     @process_queue_task_loop.before_loop
     async def before_process_queue(self) -> None:
@@ -346,13 +357,16 @@ class FiveStackCog(commands.Cog):
 
     @tasks.loop(minutes=1)
     async def stale_task(self) -> None:
-        converted, removed_ids = await self._service.cleanup_queue()
-        if not converted and not removed_ids:
-            return
-        for guild in self.bot.guilds:
-            await self._refresh_queue_message(guild)
-        for member_id in removed_ids:
-            await self._safe_dm(member_id, "Votre inscription a la queue a expire apres 10 minutes.")
+        try:
+            converted, removed_ids = await self._service.cleanup_queue()
+            if not converted and not removed_ids:
+                return
+            for guild in self.bot.guilds:
+                await self._refresh_queue_message(guild)
+            for member_id in removed_ids:
+                await self._safe_dm(member_id, "Votre inscription a la queue a expire apres 10 minutes.")
+        except Exception:
+            logger.exception("Five-stack stale queue cleanup task failed.")
 
     @stale_task.before_loop
     async def before_stale(self) -> None:
@@ -360,16 +374,19 @@ class FiveStackCog(commands.Cog):
 
     @tasks.loop(hours=1)
     async def cleanup_teams_task(self) -> None:
-        for team in await self._service.list_old_teams(hours=TEAM_RETENTION_HOURS):
-            guild = self.bot.get_guild(team.team.guild_id)
-            if guild is None:
-                continue
-            await self._delete_team_resources(guild, team)
-            await self._service.delete_team(
-                guild_id=guild.id,
-                code=team.team.code,
-                actor_discord_id=team.team.leader_discord_id,
-            )
+        try:
+            for team in await self._service.list_old_teams(hours=TEAM_RETENTION_HOURS):
+                guild = self.bot.get_guild(team.team.guild_id)
+                if guild is None:
+                    continue
+                await self._delete_team_resources(guild, team)
+                await self._service.delete_team(
+                    guild_id=guild.id,
+                    code=team.team.code,
+                    actor_discord_id=team.team.leader_discord_id,
+                )
+        except Exception:
+            logger.exception("Five-stack old team cleanup task failed.")
 
     @cleanup_teams_task.before_loop
     async def before_cleanup_teams(self) -> None:
@@ -377,20 +394,23 @@ class FiveStackCog(commands.Cog):
 
     @tasks.loop(minutes=5)
     async def voice_cleaner_task(self) -> None:
-        for guild in self.bot.guilds:
-            category_id = await self._service.get_voice_cleaner_category_id(guild.id)
-            afk_id = await self._service.get_voice_cleaner_afk_id(guild.id)
-            category = guild.get_channel(category_id) if category_id else None
-            if not isinstance(category, discord.CategoryChannel):
-                continue
-            for channel in category.voice_channels:
-                if channel.id == afk_id:
+        try:
+            for guild in self.bot.guilds:
+                category_id = await self._service.get_voice_cleaner_category_id(guild.id)
+                afk_id = await self._service.get_voice_cleaner_afk_id(guild.id)
+                category = guild.get_channel(category_id) if category_id else None
+                if not isinstance(category, discord.CategoryChannel):
                     continue
-                if not channel.members:
-                    try:
-                        await channel.delete(reason="Five-stack voice cleaner")
-                    except discord.HTTPException:
-                        logger.exception("Could not delete empty voice channel %s.", channel.id)
+                for channel in category.voice_channels:
+                    if channel.id == afk_id:
+                        continue
+                    if not channel.members:
+                        try:
+                            await channel.delete(reason="Five-stack voice cleaner")
+                        except discord.HTTPException:
+                            logger.exception("Could not delete empty voice channel %s.", channel.id)
+        except Exception:
+            logger.exception("Five-stack voice cleaner task failed.")
 
     @voice_cleaner_task.before_loop
     async def before_voice_cleaner(self) -> None:
@@ -444,7 +464,7 @@ class FiveStackCog(commands.Cog):
         )
         await self._refresh_queue_message(guild)
         message = (
-            f"Match `{match.match_code}` trouve en {proposal.team_size}v{proposal.team_size}."
+            f"Groupe `{match.match_code}` trouve pour {proposal.team_size} joueurs."
             + (f" Salon vocal: {channel.mention}" if channel else "")
         )
         for member_id in proposal.member_ids:
@@ -463,7 +483,7 @@ class FiveStackCog(commands.Cog):
                 overwrites[member] = discord.PermissionOverwrite(view_channel=True, connect=True)
         try:
             return await guild.create_voice_channel(
-                name=f"Five Stack {len(member_ids)}v{len(member_ids)}",
+                name=f"Five Stack {len(member_ids)} joueurs",
                 category=category,
                 overwrites=overwrites,
                 reason="Five-stack matchmaking",

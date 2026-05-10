@@ -12,6 +12,7 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"true", "1", "t", "yes", "y", "on"}
 
 TEST_MODE = _env_bool("TEST_MODE", False)
+DATABASE_DSN = os.getenv("DATABASE_URL") or os.getenv("POSTGRES_DSN")
 
 DATABASE = {
     "user": os.getenv("DATABASE_USER"),

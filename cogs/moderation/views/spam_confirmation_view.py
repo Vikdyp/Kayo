@@ -43,6 +43,17 @@ class SpamConfirmationView(discord.ui.View):
         self._mod_svc = moderation_service
         self.resolved = False
 
+    async def _require_moderator(self, interaction: discord.Interaction) -> bool:
+        permissions = getattr(interaction.user, "guild_permissions", None)
+        if permissions and (permissions.ban_members or permissions.administrator):
+            return True
+
+        await interaction.response.send_message(
+            "Vous n'avez pas les permissions necessaires pour traiter cette alerte.",
+            ephemeral=True,
+        )
+        return False
+
     @discord.ui.button(label="Bannir", style=discord.ButtonStyle.danger, emoji="🔨")
     async def ban_button(
         self,
@@ -57,11 +68,28 @@ class SpamConfirmationView(discord.ui.View):
             )
             return
 
+        if not await self._require_moderator(interaction):
+            return
+
         self.resolved = True
         await interaction.response.defer()
 
+        message_refs = self.message_refs
+        automod_cog = self.bot.get_cog("AutoMod")
+        if automod_cog and hasattr(automod_cog, "get_spam_message_refs"):
+            message_refs = automod_cog.get_spam_message_refs(
+                user_id=self.user.id,
+                guild_id=self.guild.id,
+                content=self.content,
+            )
+
         deleted_count = 0
-        for channel_id, msg_id in self.message_refs:
+        seen_refs: set[tuple[int, int]] = set()
+        for channel_id, msg_id in message_refs:
+            ref = (channel_id, msg_id)
+            if ref in seen_refs:
+                continue
+            seen_refs.add(ref)
             try:
                 channel = self.bot.get_channel(channel_id)
                 if channel:
@@ -119,6 +147,8 @@ class SpamConfirmationView(discord.ui.View):
                 item.disabled = True
 
             await interaction.message.edit(embed=embed, view=self)
+            if automod_cog and hasattr(automod_cog, "clear_pending_spam"):
+                automod_cog.clear_pending_spam(user_id=self.user.id, guild_id=self.guild.id)
             logger.info(
                 "Spam confirmé: %s banni par %s",
                 self.user.display_name,
@@ -146,12 +176,17 @@ class SpamConfirmationView(discord.ui.View):
             )
             return
 
+        if not await self._require_moderator(interaction):
+            return
+
         self.resolved = True
         await interaction.response.defer()
 
         automod_cog = self.bot.get_cog("AutoMod")
         if automod_cog:
             automod_cog.add_to_spam_whitelist(self.user.id, self.guild.id)
+            if hasattr(automod_cog, "clear_pending_spam"):
+                automod_cog.clear_pending_spam(user_id=self.user.id, guild_id=self.guild.id)
 
         embed = interaction.message.embeds[0] if interaction.message.embeds else None
         if embed:
@@ -170,4 +205,7 @@ class SpamConfirmationView(discord.ui.View):
     async def on_timeout(self) -> None:
         """Called when the confirmation view expires."""
         if not self.resolved:
+            automod_cog = self.bot.get_cog("AutoMod")
+            if automod_cog and hasattr(automod_cog, "clear_pending_spam"):
+                automod_cog.clear_pending_spam(user_id=self.user.id, guild_id=self.guild.id)
             logger.info("Vue de confirmation spam expirée pour %s", self.user.display_name)

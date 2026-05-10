@@ -16,10 +16,18 @@ class SpamMessageRecord:
     created_at: datetime
 
 
+@dataclass(frozen=True)
+class PendingSpamContent:
+    guild_id: int
+    content_hash: int
+    expires_at: datetime
+
+
 class AutomodSpamTracker:
     def __init__(self) -> None:
         self.message_cache: dict[int, list[SpamMessageRecord]] = {}
         self.spam_whitelist: dict[tuple[int, int], datetime] = {}
+        self.pending_spam_content: dict[tuple[int, int], PendingSpamContent] = {}
 
     def add_to_whitelist(
         self,
@@ -64,19 +72,18 @@ class AutomodSpamTracker:
         now: datetime | None = None,
     ) -> bool:
         timestamp = now or datetime.utcnow()
-        self.cleanup(now=timestamp)
+        self.cleanup(now=timestamp, max_age=timedelta(seconds=max(time_window_seconds, 120)))
 
-        records = self.message_cache.setdefault(user_id, [])
         content_hash = self._content_hash(content)
-        records.append(
-            SpamMessageRecord(
-                guild_id=guild_id,
-                channel_id=channel_id,
-                message_id=message_id,
-                content_hash=content_hash,
-                created_at=timestamp,
-            )
+        self.record_message(
+            user_id=user_id,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            message_id=message_id,
+            content=content,
+            now=timestamp,
         )
+        records = self.message_cache[user_id]
 
         cutoff = timestamp - timedelta(seconds=time_window_seconds)
         recent_records = [
@@ -91,6 +98,69 @@ class AutomodSpamTracker:
         }
 
         return len(channels_with_same_content) >= threshold
+
+    def record_message(
+        self,
+        *,
+        user_id: int,
+        guild_id: int,
+        channel_id: int,
+        message_id: int,
+        content: str,
+        now: datetime | None = None,
+    ) -> None:
+        timestamp = now or datetime.utcnow()
+        records = self.message_cache.setdefault(user_id, [])
+        records.append(
+            SpamMessageRecord(
+                guild_id=guild_id,
+                channel_id=channel_id,
+                message_id=message_id,
+                content_hash=self._content_hash(content),
+                created_at=timestamp,
+            )
+        )
+
+    def flag_pending_spam(
+        self,
+        *,
+        user_id: int,
+        guild_id: int,
+        content: str,
+        now: datetime | None = None,
+        duration: timedelta = timedelta(minutes=5),
+    ) -> datetime:
+        timestamp = now or datetime.utcnow()
+        expires_at = timestamp + duration
+        self.pending_spam_content[(user_id, guild_id)] = PendingSpamContent(
+            guild_id=guild_id,
+            content_hash=self._content_hash(content),
+            expires_at=expires_at,
+        )
+        return expires_at
+
+    def is_pending_spam_message(
+        self,
+        *,
+        user_id: int,
+        guild_id: int,
+        content: str,
+        now: datetime | None = None,
+    ) -> bool:
+        key = (user_id, guild_id)
+        pending = self.pending_spam_content.get(key)
+        if pending is None:
+            return False
+
+        timestamp = now or datetime.utcnow()
+        if timestamp >= pending.expires_at:
+            del self.pending_spam_content[key]
+            return False
+
+        return pending.content_hash == self._content_hash(content)
+
+    def clear_pending_spam(self, *, user_id: int, guild_id: int) -> None:
+        self.pending_spam_content.pop((user_id, guild_id), None)
 
     def get_matching_message_refs(
         self,
@@ -121,7 +191,8 @@ class AutomodSpamTracker:
         now: datetime | None = None,
         max_age: timedelta = timedelta(minutes=2),
     ) -> None:
-        cutoff = (now or datetime.utcnow()) - max_age
+        timestamp = now or datetime.utcnow()
+        cutoff = timestamp - max_age
         for user_id in list(self.message_cache.keys()):
             self.message_cache[user_id] = [
                 record
@@ -130,6 +201,9 @@ class AutomodSpamTracker:
             ]
             if not self.message_cache[user_id]:
                 del self.message_cache[user_id]
+        for key, pending in list(self.pending_spam_content.items()):
+            if timestamp >= pending.expires_at:
+                del self.pending_spam_content[key]
 
     @staticmethod
     def _content_hash(content: str) -> int:

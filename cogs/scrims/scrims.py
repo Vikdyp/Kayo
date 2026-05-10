@@ -45,6 +45,7 @@ class ScrimCog(commands.Cog):
         await self._reload_persistent_views()
 
     @commands.command(name="init_scrim")
+    @commands.has_permissions(administrator=True)
     async def init_scrim(self, ctx: commands.Context) -> None:
         if not ctx.guild:
             return
@@ -60,21 +61,34 @@ class ScrimCog(commands.Cog):
             message_id=message.id,
         )
 
+    @init_scrim.error
+    async def init_scrim_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.send(
+                "Vous devez etre administrateur pour initialiser le module scrim.",
+                delete_after=10,
+            )
+            return
+        raise error
+
     @tasks.loop(minutes=1)
     async def scrim_end_checker(self) -> None:
-        due_scrims = await self._service.list_due_scrims(
-            now=datetime.now(PARIS_TZ) - timedelta(seconds=SCRIM_END_GRACE_SECONDS)
-        )
-        for scrim in due_scrims:
-            if scrim.id in self._ending_scrims:
-                continue
-            self._ending_scrims.add(scrim.id)
-            try:
-                await self._complete_scrim(scrim)
-            except Exception:
-                logger.exception("Could not complete scrim %s.", scrim.id)
-            finally:
-                self._ending_scrims.discard(scrim.id)
+        try:
+            due_scrims = await self._service.list_due_scrims(
+                now=datetime.now(PARIS_TZ) - timedelta(seconds=SCRIM_END_GRACE_SECONDS)
+            )
+            for scrim in due_scrims:
+                if scrim.id in self._ending_scrims:
+                    continue
+                self._ending_scrims.add(scrim.id)
+                try:
+                    await self._complete_scrim(scrim)
+                except Exception:
+                    logger.exception("Could not complete scrim %s.", scrim.id)
+                finally:
+                    self._ending_scrims.discard(scrim.id)
+        except Exception:
+            logger.exception("Scrim end checker task failed.")
 
     @scrim_end_checker.before_loop
     async def before_scrim_end_checker(self) -> None:

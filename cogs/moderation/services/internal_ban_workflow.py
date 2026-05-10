@@ -52,14 +52,22 @@ async def apply_internal_ban(
     ban_end: Optional[datetime],
     role_reason: Optional[str] = None,
 ) -> InternalBanResult:
-    roles_to_backup = tuple(collect_restorable_role_ids(member))
+    source_roles_to_backup = tuple(collect_restorable_role_ids(member))
+    guild_backups: dict[int, tuple[int, ...]] = {}
 
-    await moderation_service.update_roles_backup(
-        guild_id=guild.id,
-        guild_name=guild.name,
-        discord_user_id=member.id,
-        roles=list(roles_to_backup),
-    )
+    for target_guild in bot.guilds:
+        target_member = member if target_guild.id == guild.id else target_guild.get_member(member.id)
+        if not target_member:
+            continue
+
+        roles_to_backup = tuple(collect_restorable_role_ids(target_member))
+        guild_backups[target_guild.id] = roles_to_backup
+        await moderation_service.update_roles_backup(
+            guild_id=target_guild.id,
+            guild_name=target_guild.name,
+            discord_user_id=member.id,
+            roles=list(roles_to_backup),
+        )
 
     ban_recorded = await moderation_service.add_ban(
         guild_id=guild.id,
@@ -72,7 +80,7 @@ async def apply_internal_ban(
     )
     if not ban_recorded:
         return InternalBanResult(
-            roles_backed_up=roles_to_backup,
+            roles_backed_up=guild_backups.get(guild.id, source_roles_to_backup),
             ban_end=ban_end,
             ban_recorded=False,
         )
@@ -86,7 +94,7 @@ async def apply_internal_ban(
     )
 
     return InternalBanResult(
-        roles_backed_up=roles_to_backup,
+        roles_backed_up=guild_backups.get(guild.id, source_roles_to_backup),
         ban_end=ban_end,
         ban_recorded=True,
     )
@@ -126,61 +134,62 @@ async def remove_internal_ban(
     if not ban_info:
         return InternalUnbanResult(ban_found=False, saved_roles=())
 
-    saved_roles = tuple(await moderation_service.get_roles_backup(guild.id, user_id))
+    source_saved_roles = tuple(await moderation_service.get_roles_backup(guild.id, user_id))
     removed_ban_roles = 0
     restored_roles = 0
+    backup_cleared = False
 
     for target_guild in bot.guilds:
         member = target_guild.get_member(user_id)
-        if not member:
-            continue
+        if member:
+            ban_role_id = await moderation_service.get_ban_role_id(target_guild.id)
+            if ban_role_id:
+                ban_role = target_guild.get_role(ban_role_id)
+                if ban_role and ban_role in member.roles:
+                    try:
+                        await member.remove_roles(
+                            ban_role,
+                            reason=f"Fin de ban: {reason or 'Debannissement'}",
+                        )
+                        removed_ban_roles += 1
+                        logger.info("Removed ban role from %s in %s.", member.display_name, target_guild.name)
+                    except discord.Forbidden:
+                        logger.error("Missing permissions to remove ban role from %s in %s.", member.display_name, target_guild.name)
+                    except discord.HTTPException as exc:
+                        logger.error("HTTP error while removing ban role from %s in %s: %s", member.display_name, target_guild.name, exc)
 
-        ban_role_id = await moderation_service.get_ban_role_id(target_guild.id)
-        if ban_role_id:
-            ban_role = target_guild.get_role(ban_role_id)
-            if ban_role and ban_role in member.roles:
-                try:
-                    await member.remove_roles(
-                        ban_role,
-                        reason=f"Fin de ban: {reason or 'Debannissement'}",
-                    )
-                    removed_ban_roles += 1
-                    logger.info("Removed ban role from %s in %s.", member.display_name, target_guild.name)
-                except discord.Forbidden:
-                    logger.error("Missing permissions to remove ban role from %s in %s.", member.display_name, target_guild.name)
-                except discord.HTTPException as exc:
-                    logger.error("HTTP error while removing ban role from %s in %s: %s", member.display_name, target_guild.name, exc)
+            saved_roles = tuple(await moderation_service.get_roles_backup(target_guild.id, user_id))
+            if saved_roles:
+                roles_to_add = [
+                    discord.utils.get(target_guild.roles, id=role_id)
+                    for role_id in saved_roles
+                ]
+                roles_to_add = filter_assignable_roles(target_guild, roles_to_add)
+                if roles_to_add:
+                    try:
+                        await member.add_roles(
+                            *roles_to_add,
+                            reason="Restauration des roles apres debannissement.",
+                        )
+                        restored_roles += len(roles_to_add)
+                        logger.info(
+                            "Restored roles for %s in %s: %s",
+                            member.display_name,
+                            target_guild.name,
+                            [role.name for role in roles_to_add],
+                        )
+                    except discord.Forbidden:
+                        logger.error("Missing permissions to restore roles for %s in %s.", member.display_name, target_guild.name)
+                    except discord.HTTPException as exc:
+                        logger.exception("HTTP error while restoring roles for %s in %s: %s", member.display_name, target_guild.name, exc)
 
-        if target_guild.id == guild.id and saved_roles:
-            roles_to_add = [
-                discord.utils.get(target_guild.roles, id=role_id)
-                for role_id in saved_roles
-            ]
-            roles_to_add = filter_assignable_roles(target_guild, roles_to_add)
-            if roles_to_add:
-                try:
-                    await member.add_roles(
-                        *roles_to_add,
-                        reason="Restauration des roles apres debannissement.",
-                    )
-                    restored_roles += len(roles_to_add)
-                    logger.info(
-                        "Restored roles for %s in %s: %s",
-                        member.display_name,
-                        target_guild.name,
-                        [role.name for role in roles_to_add],
-                    )
-                except discord.Forbidden:
-                    logger.error("Missing permissions to restore roles for %s in %s.", member.display_name, target_guild.name)
-                except discord.HTTPException as exc:
-                    logger.exception("HTTP error while restoring roles for %s in %s: %s", member.display_name, target_guild.name, exc)
+        backup_cleared = await moderation_service.clear_roles_backup(target_guild.id, user_id) or backup_cleared
 
     ban_removed = await moderation_service.remove_ban(guild.id, user_id)
-    backup_cleared = await moderation_service.clear_roles_backup(guild.id, user_id)
 
     return InternalUnbanResult(
         ban_found=True,
-        saved_roles=saved_roles,
+        saved_roles=source_saved_roles,
         removed_ban_roles=removed_ban_roles,
         restored_roles=restored_roles,
         ban_removed=ban_removed,

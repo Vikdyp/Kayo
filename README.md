@@ -48,7 +48,7 @@ Regle importante: un service metier ne doit pas importer `database.repos` ni
 python -m venv .venv
 .venv\Scripts\activate
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 ```
 
 Copier `.env.example` vers `.env`, puis renseigner les valeurs.
@@ -92,3 +92,13 @@ python bot.py
 
 Au demarrage, le bot ouvre le pool DB, applique les migrations, initialise les
 services, charge les cogs actifs, puis synchronise les commandes slash.
+
+## Docker / VPS
+
+Le projet fournit un `Dockerfile`, un `docker-compose.yml` avec PostgreSQL 18 et
+un modèle `.env.docker.example`.
+
+Documentation:
+
+- [`docs/DEPLOY_DOCKER.md`](docs/DEPLOY_DOCKER.md)
+- [`docs/DATABASE_V2_PROPOSAL.md`](docs/DATABASE_V2_PROPOSAL.md)

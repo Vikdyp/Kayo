@@ -3,15 +3,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
-from urllib.parse import quote
 
 import asyncpg
 from dotenv import load_dotenv
 
+from database.dsn import build_database_dsn_from_env
 from database.migrate import MIGRATIONS_DIR
 
 load_dotenv()
@@ -30,6 +29,7 @@ KNOWN_EXTERNAL_MIGRATIONS = frozenset(
 EXPECTED_TABLES = frozenset(
     {
         "automod_config",
+        "discord_users_v2",
         "economy_inventory_items",
         "economy_profiles",
         "file_counters",
@@ -42,6 +42,7 @@ EXPECTED_TABLES = frozenset(
         "five_stack_teams",
         "guild_channels",
         "guild_members",
+        "guild_members_v2",
         "guild_roles",
         "guilds",
         "member_daily_stats",
@@ -66,6 +67,52 @@ EXPECTED_TABLES = frozenset(
     }
 )
 
+EXPECTED_DOMAIN_V2_TABLES = frozenset(
+    {
+        "automod_allowed_channels_v2",
+        "automod_allowed_roles_v2",
+        "automod_scam_domains_v2",
+        "automod_scam_patterns_v2",
+        "automod_settings_v2",
+        "economy_inventory_items_v2",
+        "economy_profiles_v2",
+        "feature_keys_v2",
+        "file_counters_v2",
+        "five_stack_feedback_v2",
+        "five_stack_match_participants_v2",
+        "five_stack_match_roles_v2",
+        "five_stack_matches_v2",
+        "five_stack_player_stats_v2",
+        "five_stack_queue_roles_v2",
+        "five_stack_queue_v2",
+        "five_stack_team_members_v2",
+        "five_stack_teams_v2",
+        "guild_channel_configs_v2",
+        "guild_role_configs_v2",
+        "member_daily_stats_v2",
+        "message_deletions_v2",
+        "moderation_cases_v2",
+        "moderation_role_snapshots_v2",
+        "moderation_sanctions_v2",
+        "persistent_messages_v2",
+        "reputation_events_v2",
+        "scrim_participants_v2",
+        "scrims_v2",
+        "tournament_team_players_v2",
+        "tournament_teams_v2",
+        "tournaments_v2",
+        "twitch_streamers_v2",
+        "unban_requests_v2",
+        "user_profiles_v2",
+        "valorant_accounts_v2",
+        "valorant_rank_snapshots_v2",
+        "valorant_rank_state_v2",
+        "valorant_sent_bundles_v2",
+    }
+)
+
+EXPECTED_TABLES = EXPECTED_TABLES | EXPECTED_DOMAIN_V2_TABLES
+
 
 EXPECTED_COLUMNS: Mapping[str, frozenset[str]] = {
     "schema_migrations": frozenset({"version", "applied_at"}),
@@ -83,6 +130,21 @@ EXPECTED_COLUMNS: Mapping[str, frozenset[str]] = {
             "updated_at",
             "accepted_rules",
             "accepted_rules_at",
+        }
+    ),
+    "discord_users_v2": frozenset({"id", "discord_id", "legacy_user_id", "created_at", "last_seen_at"}),
+    "guild_members_v2": frozenset(
+        {
+            "id",
+            "guild_id",
+            "discord_user_id",
+            "legacy_user_id",
+            "is_member",
+            "joined_at",
+            "left_at",
+            "accepted_rules",
+            "accepted_rules_at",
+            "updated_at",
         }
     ),
     "member_daily_stats": frozenset({"guild_id", "date", "join_count", "leave_count", "created_at", "updated_at"}),
@@ -383,6 +445,244 @@ EXPECTED_COLUMNS: Mapping[str, frozenset[str]] = {
     "valorant_sent_bundles": frozenset({"guild_id", "bundle_uuid", "notified_at"}),
 }
 
+EXPECTED_DOMAIN_V2_COLUMNS: Mapping[str, frozenset[str]] = {
+    "feature_keys_v2": frozenset({"feature", "key", "value_type", "required", "description", "created_at"}),
+    "guild_channel_configs_v2": frozenset({"guild_id", "key", "channel_id", "created_at", "updated_at"}),
+    "guild_role_configs_v2": frozenset({"guild_id", "key", "role_id", "name_cache", "created_at", "updated_at"}),
+    "persistent_messages_v2": frozenset(
+        {"guild_id", "message_type", "channel_id", "message_id", "created_at", "updated_at"}
+    ),
+    "moderation_cases_v2": frozenset(
+        {"id", "guild_id", "target_member_id", "moderator_member_id", "case_type", "reason", "created_at"}
+    ),
+    "moderation_sanctions_v2": frozenset(
+        {"id", "case_id", "sanction_type", "status", "starts_at", "ends_at", "resolved_at"}
+    ),
+    "moderation_role_snapshots_v2": frozenset({"guild_id", "member_id", "role_id", "created_at"}),
+    "unban_requests_v2": frozenset(
+        {
+            "id",
+            "guild_id",
+            "requester_user_id",
+            "channel_id",
+            "message_id",
+            "reason",
+            "status",
+            "created_at",
+            "resolved_at",
+            "resolved_by_member_id",
+        }
+    ),
+    "automod_settings_v2": frozenset(
+        {
+            "guild_id",
+            "scam_detection_enabled",
+            "spam_detection_enabled",
+            "spam_channel_threshold",
+            "spam_time_window",
+            "delete_messages_on_scam",
+            "delete_period_hours",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "automod_allowed_roles_v2": frozenset({"guild_id", "role_id"}),
+    "automod_allowed_channels_v2": frozenset({"guild_id", "channel_id"}),
+    "automod_scam_patterns_v2": frozenset({"guild_id", "pattern"}),
+    "automod_scam_domains_v2": frozenset({"guild_id", "domain"}),
+    "valorant_accounts_v2": frozenset(
+        {
+            "id",
+            "discord_user_id",
+            "puuid",
+            "name",
+            "tag",
+            "region",
+            "platform",
+            "account_level",
+            "card_uuid",
+            "title_uuid",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "valorant_rank_state_v2": frozenset(
+        {
+            "account_id",
+            "rank_name",
+            "elo",
+            "season",
+            "act",
+            "tracking_enabled",
+            "is_active",
+            "error_count",
+            "last_error_at",
+            "last_checked_at",
+            "last_notification",
+            "updated_at",
+        }
+    ),
+    "valorant_rank_snapshots_v2": frozenset(
+        {"id", "account_id", "season", "act", "recorded_at", "elo", "is_win"}
+    ),
+    "valorant_sent_bundles_v2": frozenset({"guild_id", "bundle_uuid", "notified_at"}),
+    "five_stack_teams_v2": frozenset(
+        {
+            "id",
+            "guild_id",
+            "code",
+            "leader_member_id",
+            "visibility",
+            "status",
+            "forum_channel_id",
+            "thread_id",
+            "voice_channel_id",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "five_stack_team_members_v2": frozenset({"team_id", "member_id", "joined_at"}),
+    "five_stack_queue_v2": frozenset(
+        {
+            "id",
+            "guild_id",
+            "member_id",
+            "entry_type",
+            "team_id",
+            "language",
+            "region",
+            "platform",
+            "desired_team_size",
+            "mmr_extended",
+            "elo",
+            "elo_low",
+            "elo_high",
+            "queued_at",
+        }
+    ),
+    "five_stack_queue_roles_v2": frozenset({"queue_id", "role_key"}),
+    "five_stack_matches_v2": frozenset(
+        {
+            "id",
+            "guild_id",
+            "match_code",
+            "voice_channel_id",
+            "quality_score",
+            "elo_spread",
+            "avg_elo",
+            "team_size",
+            "language",
+            "region",
+            "platform",
+            "total_wait_time_seconds",
+            "created_at",
+        }
+    ),
+    "five_stack_match_participants_v2": frozenset(
+        {"match_id", "member_id", "elo_at_match", "entry_type", "wait_time_seconds"}
+    ),
+    "five_stack_match_roles_v2": frozenset({"match_id", "member_id", "role_key"}),
+    "five_stack_feedback_v2": frozenset(
+        {"match_id", "reporter_member_id", "rating", "feedback_type", "issues", "comment", "created_at"}
+    ),
+    "five_stack_player_stats_v2": frozenset(
+        {
+            "guild_id",
+            "member_id",
+            "total_matches",
+            "total_wait_time_seconds",
+            "matches_as_solo",
+            "matches_in_group",
+            "last_match_at",
+            "preferred_role",
+        }
+    ),
+    "member_daily_stats_v2": frozenset({"guild_id", "date", "join_count", "leave_count", "created_at", "updated_at"}),
+    "message_deletions_v2": frozenset(
+        {
+            "id",
+            "guild_id",
+            "deleted_by_member_id",
+            "source",
+            "channel_id",
+            "channel_name",
+            "deletion_type",
+            "target_user_id",
+            "target_user_tag",
+            "message_count",
+            "created_at",
+        }
+    ),
+    "economy_profiles_v2": frozenset(
+        {"guild_id", "member_id", "balance", "last_daily_claim", "created_at", "updated_at"}
+    ),
+    "economy_inventory_items_v2": frozenset(
+        {"guild_id", "member_id", "item_name", "quantity", "created_at", "updated_at"}
+    ),
+    "file_counters_v2": frozenset(
+        {"guild_id", "channel_id", "message_id", "added_count", "completed_count", "created_at", "updated_at"}
+    ),
+    "reputation_events_v2": frozenset(
+        {
+            "id",
+            "guild_id",
+            "reporter_member_id",
+            "target_member_id",
+            "event_type",
+            "event_date",
+            "count",
+            "reason",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "user_profiles_v2": frozenset(
+        {"discord_user_id", "genre", "valorant_tracker", "lft", "note", "created_at", "updated_at"}
+    ),
+    "twitch_streamers_v2": frozenset({"guild_id", "streamer_login", "created_at", "updated_at"}),
+    "scrims_v2": frozenset(
+        {
+            "id",
+            "guild_id",
+            "creator_member_id",
+            "scheduled_at",
+            "map_name",
+            "rank_name",
+            "notes",
+            "channel_id",
+            "message_id",
+            "status",
+            "created_at",
+            "updated_at",
+            "ended_at",
+        }
+    ),
+    "scrim_participants_v2": frozenset({"scrim_id", "team_index", "member_id"}),
+    "tournaments_v2": frozenset(
+        {
+            "id",
+            "guild_id",
+            "tournament_name",
+            "max_teams",
+            "registration_start",
+            "registration_end",
+            "tournament_date",
+            "status",
+            "registration_channel_id",
+            "registration_message_id",
+            "created_at",
+            "updated_at",
+            "closed_at",
+        }
+    ),
+    "tournament_teams_v2": frozenset(
+        {"id", "tournament_id", "captain_member_id", "team_name", "coach_member_id", "created_at", "updated_at"}
+    ),
+    "tournament_team_players_v2": frozenset({"team_id", "member_id", "slot_type"}),
+}
+
+EXPECTED_COLUMNS = {**EXPECTED_COLUMNS, **EXPECTED_DOMAIN_V2_COLUMNS}
+
 
 EXPECTED_INDEXES = frozenset(
     {
@@ -394,6 +694,12 @@ EXPECTED_INDEXES = frozenset(
         "idx_guild_members_user_id",
         "idx_guild_members_guild_active",
         "idx_guild_members_rules_acceptance",
+        "idx_discord_users_v2_discord_id",
+        "idx_discord_users_v2_legacy_user_id",
+        "idx_guild_members_v2_discord_user_id",
+        "idx_guild_members_v2_guild_active",
+        "idx_guild_members_v2_legacy_user_id",
+        "idx_guild_members_v2_rules_acceptance",
         "idx_member_daily_stats_date",
         "idx_persistent_messages_message_id",
         "idx_message_deletions_guild_id",
@@ -432,6 +738,52 @@ EXPECTED_INDEXES = frozenset(
     }
 )
 
+EXPECTED_DOMAIN_V2_INDEXES = frozenset(
+    {
+        "idx_automod_allowed_channels_v2_channel",
+        "idx_automod_allowed_roles_v2_role",
+        "idx_economy_inventory_v2_member",
+        "idx_economy_profiles_v2_member",
+        "idx_file_counters_v2_message",
+        "idx_five_stack_matches_v2_guild_created",
+        "idx_five_stack_participants_v2_member",
+        "idx_five_stack_queue_v2_guild",
+        "idx_five_stack_queue_v2_member",
+        "idx_five_stack_stats_v2_matches",
+        "idx_five_stack_team_members_v2_member",
+        "idx_five_stack_teams_v2_guild_status",
+        "idx_guild_channel_configs_v2_channel_id",
+        "idx_guild_role_configs_v2_role_id",
+        "idx_member_daily_stats_v2_date",
+        "idx_message_deletions_v2_guild_created",
+        "idx_moderation_cases_v2_guild_created",
+        "idx_moderation_cases_v2_target",
+        "idx_moderation_sanctions_v2_status",
+        "idx_persistent_messages_v2_message_id",
+        "idx_reputation_events_v2_reporter_target",
+        "idx_reputation_events_v2_target",
+        "idx_scrim_participants_v2_member",
+        "idx_scrims_v2_due",
+        "idx_scrims_v2_guild_status",
+        "idx_scrims_v2_message",
+        "idx_tournament_players_v2_member",
+        "idx_tournament_teams_v2_tournament",
+        "idx_tournaments_v2_guild_status",
+        "idx_tournaments_v2_one_active",
+        "idx_twitch_streamers_v2_guild",
+        "idx_unban_requests_v2_guild_status",
+        "idx_unban_requests_v2_one_pending",
+        "idx_user_profiles_v2_lft",
+        "idx_valorant_accounts_v2_puuid",
+        "idx_valorant_accounts_v2_user",
+        "idx_valorant_rank_snapshots_v2_account",
+        "idx_valorant_rank_state_v2_tracking",
+        "idx_valorant_sent_bundles_v2_guild",
+    }
+)
+
+EXPECTED_INDEXES = EXPECTED_INDEXES | EXPECTED_DOMAIN_V2_INDEXES
+
 
 @dataclass(frozen=True, slots=True)
 class SchemaAuditResult:
@@ -466,38 +818,6 @@ class SchemaAuditResult:
 
 def repo_migration_versions(migrations_dir: Path = MIGRATIONS_DIR) -> frozenset[str]:
     return frozenset(path.name for path in migrations_dir.glob("*.sql") if path.is_file())
-
-
-def build_database_dsn_from_env(env: Mapping[str, str] | None = None) -> str:
-    values = env or os.environ
-    direct_dsn = values.get("DATABASE_URL") or values.get("POSTGRES_DSN")
-    if direct_dsn:
-        return direct_dsn
-
-    user = values.get("DATABASE_USER")
-    password = values.get("DATABASE_PASSWORD")
-    host = values.get("DATABASE_HOST")
-    name = values.get("DATABASE_NAME")
-    port = values.get("DATABASE_PORT", "5432")
-    ssl_enabled = values.get("DATABASE_SSL", "false").strip().lower() in {"true", "1", "t", "yes", "y", "on"}
-
-    missing = [
-        key
-        for key, value in {
-            "DATABASE_USER": user,
-            "DATABASE_PASSWORD": password,
-            "DATABASE_HOST": host,
-            "DATABASE_NAME": name,
-        }.items()
-        if not value
-    ]
-    if missing:
-        raise RuntimeError(f"Missing database config env vars: {', '.join(missing)}")
-
-    dsn = f"postgresql://{quote(user)}:{quote(password)}@{host}:{port}/{name}"
-    if ssl_enabled:
-        dsn += "?sslmode=require"
-    return dsn
 
 
 async def audit_connection(

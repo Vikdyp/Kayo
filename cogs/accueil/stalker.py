@@ -201,6 +201,7 @@ class StalkerCog(commands.Cog):
         await self.bot.wait_until_ready()
 
     @commands.command(name="embed_statistique")
+    @commands.has_permissions(administrator=True)
     async def embed_statistique(self, ctx: commands.Context):
         """
         Commande pour envoyer initialement l'embed de statistiques
@@ -218,6 +219,16 @@ class StalkerCog(commands.Cog):
         except Exception as e:
             logger.error(f"Erreur lors de l'initialisation de l'embed: {e}")
             await ctx.send("Une erreur est survenue lors de l'initialisation.", delete_after=10)
+
+    @embed_statistique.error
+    async def embed_statistique_error(self, ctx: commands.Context, error: commands.CommandError):
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.send(
+                "Vous devez etre administrateur pour initialiser l'embed de statistiques.",
+                delete_after=10,
+            )
+            return
+        raise error
 
     # ----- Listeners pour les événements de membres -----
     @commands.Cog.listener()

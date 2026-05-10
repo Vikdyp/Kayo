@@ -451,26 +451,29 @@ class Moderation(commands.Cog):
     @tasks.loop(minutes=1)
     async def check_bans_expired(self):
         """Vérifie régulièrement les bannissements temporaires expirés et débannit automatiquement les membres."""
-        now = datetime.utcnow()
-        expired_bans = await self._mod_svc.get_expired_bans(now)
+        try:
+            now = datetime.utcnow()
+            expired_bans = await self._mod_svc.get_expired_bans(now)
 
-        count = 0
-        for ban in expired_bans:
-            discord_id = ban.target_discord_id
-            if not discord_id:
-                logger.error("Impossible de récupérer l'ID Discord pour un ban expiré.")
-                continue
+            count = 0
+            for ban in expired_bans:
+                discord_id = ban.target_discord_id
+                if not discord_id:
+                    logger.error("Impossible de récupérer l'ID Discord pour un ban expiré.")
+                    continue
 
-            guild = self.bot.get_guild(ban.guild_id)
-            if not guild:
-                logger.warning(f"Guild introuvable pour le ban expiré: {ban.guild_id}.")
-                continue
+                guild = self.bot.get_guild(ban.guild_id)
+                if not guild:
+                    logger.warning(f"Guild introuvable pour le ban expiré: {ban.guild_id}.")
+                    continue
 
-            await self.unban_member(guild, discord_id, reason="Expiration du bannissement temporaire")
-            count += 1
+                await self.unban_member(guild, discord_id, reason="Expiration du bannissement temporaire")
+                count += 1
 
-        if count > 0:
-            logger.info(f"{count} bannissement(s) expiré(s) traité(s) avec succès.")
+            if count > 0:
+                logger.info(f"{count} bannissement(s) expiré(s) traité(s) avec succès.")
+        except Exception:
+            logger.exception("Expired ban check task failed.")
 
     @check_bans_expired.before_loop
     async def before_check_bans_expired(self):

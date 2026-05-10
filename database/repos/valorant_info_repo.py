@@ -113,6 +113,10 @@ class ValorantInfoRepo:
              WHERE is_active = TRUE
                AND pseudo IS NOT NULL
                AND tag    IS NOT NULL
+               AND (
+                 last_checked_at IS NULL
+                 OR last_checked_at < NOW() - INTERVAL '15 minutes'
+               )
              ORDER BY last_checked_at ASC NULLS FIRST
              LIMIT $1;
             """,
@@ -368,6 +372,10 @@ class ValorantInfoRepo:
              WHERE vi.is_active = TRUE
                AND vi.pseudo IS NOT NULL
                AND vi.tag IS NOT NULL
+               AND (
+                 vi.last_checked_at IS NULL
+                 OR vi.last_checked_at < NOW() - INTERVAL '15 minutes'
+               )
              ORDER BY vi.last_checked_at ASC NULLS FIRST
              LIMIT $1;
             """,

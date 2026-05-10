@@ -16,8 +16,22 @@ jobs:
           ACTOR: ${{ github.actor }}
           REF: ${{ github.ref_name }}
           URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
-          MSG: ${{ github.event.head_commit.message }}
+          MSG: ${{ github.event.head_commit.message || github.event.pull_request.title }}
         run: |
-          curl -H "Content-Type: application/json" \
-               -d "{\"content\":\"📌 **$REPO** — push par **$ACTOR** sur **$REF**\n📝 $MSG\n🔗 $URL\"}" \
-               "$WEBHOOK"
+          if [ -z "$WEBHOOK" ]; then
+            echo "DISCORD_WEBHOOK_URL is not configured; skipping notification."
+            exit 0
+          fi
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          content = (
+              f"📌 **{os.environ['REPO']}** — push par **{os.environ['ACTOR']}** sur **{os.environ['REF']}**\n"
+              f"📝 {os.environ.get('MSG') or '(message indisponible)'}\n"
+              f"🔗 {os.environ['URL']}"
+          )
+          Path("payload.json").write_text(json.dumps({"content": content}), encoding="utf-8")
+          PY
+          curl -H "Content-Type: application/json" --data-binary @payload.json "$WEBHOOK"

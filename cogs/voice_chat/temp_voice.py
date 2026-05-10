@@ -141,16 +141,19 @@ class TempVoiceCog(commands.Cog):
 
     @tasks.loop(minutes=1)
     async def voice_check_loop(self) -> None:
-        for guild in self.bot.guilds:
-            config = await self._service.get_config(guild.id)
-            if not config.is_complete:
-                continue
+        try:
+            for guild in self.bot.guilds:
+                config = await self._service.get_config(guild.id)
+                if not config.is_complete:
+                    continue
 
-            for channel in guild.voice_channels:
-                if self._service.should_schedule_deletion(channel, config=config):
-                    self._schedule_deletion(channel)
-                elif self._service.should_cancel_deletion(channel, config=config):
-                    self._cancel_deletion(channel.id)
+                for channel in guild.voice_channels:
+                    if self._service.should_schedule_deletion(channel, config=config):
+                        self._schedule_deletion(channel)
+                    elif self._service.should_cancel_deletion(channel, config=config):
+                        self._cancel_deletion(channel.id)
+        except Exception:
+            logger.exception("Temp voice check task failed.")
 
     @voice_check_loop.before_loop
     async def before_voice_check_loop(self) -> None:

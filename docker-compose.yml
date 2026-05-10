@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: kayo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DATABASE_USER:-kayo}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?Set DATABASE_PASSWORD in .env}
+      POSTGRES_DB: ${DATABASE_NAME:-kayo}
+    volumes:
+      - kayo_postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  bot:
+    build: .
+    image: kayo-bot:latest
+    container_name: kayo-bot
+    restart: unless-stopped
+    environment:
+      DISCORD_TOKEN: ${DISCORD_TOKEN:?Set DISCORD_TOKEN in .env}
+      DISCORD_TOKEN_TEST: ${DISCORD_TOKEN_TEST:-}
+      TEST_GUILD_ID: ${TEST_GUILD_ID:-}
+      TEST_MODE: ${TEST_MODE:-false}
+      HENRIK_VALO_KEY: ${HENRIK_VALO_KEY:-}
+      TWITCH_CLIENT_ID: ${TWITCH_CLIENT_ID:-}
+      TWITCH_CLIENT_SECRET: ${TWITCH_CLIENT_SECRET:-}
+      DATABASE_USER: ${DATABASE_USER:-kayo}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:?Set DATABASE_PASSWORD in .env}
+      DATABASE_NAME: ${DATABASE_NAME:-kayo}
+      DATABASE_TEST_NAME: ${DATABASE_TEST_NAME:-kayo_test}
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_SSL: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - kayo_logs:/app/logs
+
+volumes:
+  kayo_postgres_data:
+  kayo_logs:

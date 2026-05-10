@@ -454,16 +454,27 @@ class EmbedCog(commands.Cog):
             logger.error(f"Erreur envoi notification a {state.discord_id}: {e}")
 
     @commands.command(name="ping")
+    @commands.has_permissions(administrator=True)
     async def ping(self, ctx: commands.Context):
         await ctx.send("Pong!")
+
+    @ping.error
+    async def ping_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.send("Vous n'avez pas les permissions necessaires.", delete_after=10)
+            return
+        raise error
 
     @tasks.loop(hours=1)
     async def refresh_roles_cache_task(self):
         """Rafraichit le cache des roles toutes les heures."""
-        logger.info("Debut du rafraichissement du cache des roles.")
-        for guild in self.bot.guilds:
-            await self._ranking_svc.refresh_role_mappings(guild.id)
-        logger.info("Rafraichissement du cache des roles termine.")
+        try:
+            logger.info("Debut du rafraichissement du cache des roles.")
+            for guild in self.bot.guilds:
+                await self._ranking_svc.refresh_role_mappings(guild.id)
+            logger.info("Rafraichissement du cache des roles termine.")
+        except Exception:
+            logger.exception("Rank role cache refresh task failed.")
 
     @refresh_roles_cache_task.before_loop
     async def before_refresh_roles_cache_task(self):

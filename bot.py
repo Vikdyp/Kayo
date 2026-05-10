@@ -6,12 +6,13 @@ import asyncio
 import logging
 import os
 from typing import Iterable
+from urllib.parse import quote
 
 import discord
 from discord.ext import commands
 
 from logging_config import setup_logging
-from config import DISCORD_TOKEN, TEST_GUILD_ID, LOG_LEVELS, TEST_MODE, DATABASE
+from config import DISCORD_TOKEN, TEST_GUILD_ID, LOG_LEVELS, TEST_MODE, DATABASE, DATABASE_DSN
 
 from cogs.configuration.services.channel_service import ChannelConfigurationService
 from cogs.configuration.services.role_service import RoleConfigurationService
@@ -56,25 +57,33 @@ def _build_postgres_dsn() -> str:
     Construit une DSN à partir de config.DATABASE.
     Ex: postgresql://user:pass@host:5432/dbname?sslmode=require
     """
+    if DATABASE_DSN:
+        return DATABASE_DSN
+
     user = DATABASE.get("user")
     password = DATABASE.get("password")
     host = DATABASE.get("host")
     port = DATABASE.get("port")
     dbname = DATABASE.get("database")
     ssl = DATABASE.get("ssl", False)
+    database_env_name = "DATABASE_TEST_NAME" if TEST_MODE else "DATABASE_NAME"
 
     missing = [k for k, v in {
         "DATABASE_USER": user,
         "DATABASE_PASSWORD": password,
         "DATABASE_HOST": host,
-        "DATABASE_NAME": dbname,
+        database_env_name: dbname,
     }.items() if not v]
 
     if missing:
         raise RuntimeError(f"Missing database config env vars: {', '.join(missing)}")
 
-    # asyncpg accepte l’URL classique
-    dsn = f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
+    # Encoder les composants évite de casser la DSN si le mot de passe contient
+    # des caractères réservés comme @, :, / ou %.
+    encoded_user = quote(str(user), safe="")
+    encoded_password = quote(str(password), safe="")
+    encoded_dbname = quote(str(dbname), safe="")
+    dsn = f"postgresql://{encoded_user}:{encoded_password}@{host}:{port}/{encoded_dbname}"
     if ssl:
         # postgresql URL standard
         dsn += "?sslmode=require"
@@ -117,11 +126,13 @@ COG_PATHS: list[str] = [
 # ------------------------------------------------------------
 class KayoBot(commands.Bot):
     def __init__(self) -> None:
-        intents = discord.Intents.all()
+        intents = discord.Intents.default()
         intents.guilds = True
         intents.members = True
         intents.messages = True
         intents.message_content = True
+        intents.presences = True
+        intents.voice_states = True
 
         super().__init__(command_prefix="!", intents=intents)
 
