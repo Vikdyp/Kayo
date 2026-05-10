@@ -6,6 +6,7 @@ env/
 # Fichiers de logs
 logs/
 *.log
+backups/
 
 # Fichiers Python compilés
 __pycache__/
