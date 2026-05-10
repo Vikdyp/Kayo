@@ -4,15 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from typing import Iterable
-from urllib.parse import quote
 
 import discord
 from discord.ext import commands
 
 from logging_config import setup_logging
-from config import DISCORD_TOKEN, TEST_GUILD_ID, LOG_LEVELS, TEST_MODE, DATABASE, DATABASE_DSN
+from config import (
+    SETTINGS,
+    ConfigValidationError,
+    TEST_GUILD_ID,
+    LOG_LEVELS,
+    TEST_MODE,
+    validate_runtime_config,
+)
 
 from cogs.configuration.services.channel_service import ChannelConfigurationService
 from cogs.configuration.services.role_service import RoleConfigurationService
@@ -53,41 +58,7 @@ logger = logging.getLogger("bot")
 # Helpers
 # ------------------------------------------------------------
 def _build_postgres_dsn() -> str:
-    """
-    Construit une DSN à partir de config.DATABASE.
-    Ex: postgresql://user:pass@host:5432/dbname?sslmode=require
-    """
-    if DATABASE_DSN:
-        return DATABASE_DSN
-
-    user = DATABASE.get("user")
-    password = DATABASE.get("password")
-    host = DATABASE.get("host")
-    port = DATABASE.get("port")
-    dbname = DATABASE.get("database")
-    ssl = DATABASE.get("ssl", False)
-    database_env_name = "DATABASE_TEST_NAME" if TEST_MODE else "DATABASE_NAME"
-
-    missing = [k for k, v in {
-        "DATABASE_USER": user,
-        "DATABASE_PASSWORD": password,
-        "DATABASE_HOST": host,
-        database_env_name: dbname,
-    }.items() if not v]
-
-    if missing:
-        raise RuntimeError(f"Missing database config env vars: {', '.join(missing)}")
-
-    # Encoder les composants évite de casser la DSN si le mot de passe contient
-    # des caractères réservés comme @, :, / ou %.
-    encoded_user = quote(str(user), safe="")
-    encoded_password = quote(str(password), safe="")
-    encoded_dbname = quote(str(dbname), safe="")
-    dsn = f"postgresql://{encoded_user}:{encoded_password}@{host}:{port}/{encoded_dbname}"
-    if ssl:
-        # postgresql URL standard
-        dsn += "?sslmode=require"
-    return dsn
+    return SETTINGS.database_dsn()
 
 
 COG_PATHS: list[str] = [
@@ -183,12 +154,11 @@ class KayoBot(commands.Bot):
         logger.info("Migrations applied.")
 
         # 2) Initialize services
-        henrik_api_key = os.getenv("HENRIK_VALO_KEY", "")
         self.services = await build_service_container(
             self.db,
-            henrik_api_key,
-            twitch_client_id=os.getenv("TWITCH_CLIENT_ID", ""),
-            twitch_client_secret=os.getenv("TWITCH_CLIENT_SECRET", ""),
+            SETTINGS.henrik_valo_key,
+            twitch_client_id=SETTINGS.twitch_client_id,
+            twitch_client_secret=SETTINGS.twitch_client_secret,
         )
         self._http_client = self.services.http_client
         self.channel_configuration_service = self.services.channel_configuration_service
@@ -274,7 +244,16 @@ class KayoBot(commands.Bot):
         failures: list[str] = []
         for cog_path in paths:
             try:
+                cogs_before = set(self.cogs)
                 await self.load_extension(cog_path)
+                if set(self.cogs) == cogs_before:
+                    logger.error("Cog setup completed without registering a cog: %s", cog_path)
+                    failures.append(cog_path)
+                    try:
+                        await self.unload_extension(cog_path)
+                    except Exception:
+                        logger.exception("Failed to unload incomplete cog extension: %s", cog_path)
+                    continue
                 logger.info("Cog loaded: %s", cog_path)
             except commands.errors.ExtensionAlreadyLoaded:
                 logger.warning("Cog already loaded: %s", cog_path)
@@ -320,12 +299,22 @@ bot = KayoBot()
 
 
 async def main() -> None:
-    if not DISCORD_TOKEN:
-        logger.error("DISCORD_TOKEN missing (TEST_MODE=%s).", TEST_MODE)
+    try:
+        validate_runtime_config(SETTINGS)
+    except ConfigValidationError as exc:
+        logger.error("%s", exc)
+        return
+
+    for warning in SETTINGS.operational_warnings():
+        logger.warning(warning)
+
+    token = SETTINGS.discord_token
+    if token is None:
+        logger.error("Discord token missing after config validation.")
         return
 
     async with bot:
-        await bot.start(DISCORD_TOKEN)
+        await bot.start(token)
 
 
 if __name__ == "__main__":

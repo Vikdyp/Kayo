@@ -35,6 +35,18 @@ class Clean(commands.Cog):
         self.bot = bot
         self._clean_svc = clean_service
 
+    async def _send_ephemeral_error(
+        self,
+        interaction: discord.Interaction,
+        message: str,
+        *,
+        ephemeral: bool = True,
+    ) -> None:
+        if interaction.response.is_done():
+            await interaction.followup.send(message, ephemeral=ephemeral)
+            return
+        await interaction.response.send_message(message, ephemeral=ephemeral)
+
     ACTION_CHOICES = [
         app_commands.Choice(name="Supprimer tous les messages", value="all"),
         app_commands.Choice(name="Supprimer les messages d'un utilisateur", value="user"),
@@ -107,7 +119,8 @@ class Clean(commands.Cog):
         channel = interaction.channel
         if not isinstance(channel, discord.TextChannel):
             logger.warning("Commande utilisée en dehors d'un salon texte.")
-            return await interaction.followup.send(
+            return await self._send_ephemeral_error(
+                interaction,
                 "Cette commande doit être utilisée dans un salon texte.",
                 ephemeral=True,
             )
@@ -311,12 +324,14 @@ class Clean(commands.Cog):
     @clean_execute.error
     async def clean_command_error(self, interaction: discord.Interaction, error: Exception):
         if isinstance(error, app_commands.MissingPermissions):
-            await interaction.followup.send(
+            await self._send_ephemeral_error(
+                interaction,
                 "Vous n'avez pas la permission d'utiliser cette commande.",
                 ephemeral=True,
             )
         else:
-            await interaction.followup.send(
+            await self._send_ephemeral_error(
+                interaction,
                 "Une erreur est survenue lors de l'exécution de la commande.",
                 ephemeral=True,
             )

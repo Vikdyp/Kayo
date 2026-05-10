@@ -67,6 +67,13 @@ Le but est d’obtenir un code maintenable, testable et scalable.
 - Aucun SQL
 - Aucun code Discord UI
 
+### config.py
+
+- Chargement `.env`
+- Validation de la configuration runtime
+- Construction des settings typés
+- Aucune logique métier
+
 ---
 
 ## Règles clés

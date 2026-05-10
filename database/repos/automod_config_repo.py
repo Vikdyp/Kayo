@@ -30,6 +30,97 @@ class AutomodConfigRow:
 
 class AutomodConfigRepo:
 
+    _SCALAR_UPDATE_SQL = {
+        "scam_detection_enabled": """
+            UPDATE automod_config
+            SET scam_detection_enabled = $1, updated_at = now()
+            WHERE guild_id = $2;
+            """,
+        "spam_detection_enabled": """
+            UPDATE automod_config
+            SET spam_detection_enabled = $1, updated_at = now()
+            WHERE guild_id = $2;
+            """,
+        "spam_channel_threshold": """
+            UPDATE automod_config
+            SET spam_channel_threshold = $1, updated_at = now()
+            WHERE guild_id = $2;
+            """,
+        "spam_time_window": """
+            UPDATE automod_config
+            SET spam_time_window = $1, updated_at = now()
+            WHERE guild_id = $2;
+            """,
+        "delete_messages_on_scam": """
+            UPDATE automod_config
+            SET delete_messages_on_scam = $1, updated_at = now()
+            WHERE guild_id = $2;
+            """,
+        "delete_period_hours": """
+            UPDATE automod_config
+            SET delete_period_hours = $1, updated_at = now()
+            WHERE guild_id = $2;
+            """,
+    }
+
+    _ARRAY_APPEND_SQL = {
+        "whitelisted_roles": """
+            UPDATE automod_config
+            SET whitelisted_roles = array_append(whitelisted_roles, $1),
+                updated_at = now()
+            WHERE guild_id = $2
+              AND NOT ($1 = ANY(whitelisted_roles));
+            """,
+        "whitelisted_channels": """
+            UPDATE automod_config
+            SET whitelisted_channels = array_append(whitelisted_channels, $1),
+                updated_at = now()
+            WHERE guild_id = $2
+              AND NOT ($1 = ANY(whitelisted_channels));
+            """,
+        "custom_scam_patterns": """
+            UPDATE automod_config
+            SET custom_scam_patterns = array_append(custom_scam_patterns, $1),
+                updated_at = now()
+            WHERE guild_id = $2
+              AND NOT ($1 = ANY(custom_scam_patterns));
+            """,
+        "custom_scam_domains": """
+            UPDATE automod_config
+            SET custom_scam_domains = array_append(custom_scam_domains, $1),
+                updated_at = now()
+            WHERE guild_id = $2
+              AND NOT ($1 = ANY(custom_scam_domains));
+            """,
+    }
+
+    _ARRAY_REMOVE_SQL = {
+        "whitelisted_roles": """
+            UPDATE automod_config
+            SET whitelisted_roles = array_remove(whitelisted_roles, $1),
+                updated_at = now()
+            WHERE guild_id = $2;
+            """,
+        "whitelisted_channels": """
+            UPDATE automod_config
+            SET whitelisted_channels = array_remove(whitelisted_channels, $1),
+                updated_at = now()
+            WHERE guild_id = $2;
+            """,
+        "custom_scam_patterns": """
+            UPDATE automod_config
+            SET custom_scam_patterns = array_remove(custom_scam_patterns, $1),
+                updated_at = now()
+            WHERE guild_id = $2;
+            """,
+        "custom_scam_domains": """
+            UPDATE automod_config
+            SET custom_scam_domains = array_remove(custom_scam_domains, $1),
+                updated_at = now()
+            WHERE guild_id = $2;
+            """,
+    }
+
     @staticmethod
     async def get(
         conn: asyncpg.Connection,
@@ -116,23 +207,12 @@ class AutomodConfigRepo:
         Retourne True si la ligne a été mise à jour.
         """
         # Liste blanche des champs autorisés
-        allowed_fields = {
-            "scam_detection_enabled",
-            "spam_detection_enabled",
-            "spam_channel_threshold",
-            "spam_time_window",
-            "delete_messages_on_scam",
-            "delete_period_hours",
-        }
-        if field not in allowed_fields:
+        query = AutomodConfigRepo._SCALAR_UPDATE_SQL.get(field)
+        if query is None:
             raise ValueError(f"Field '{field}' not allowed for update")
 
         result = await conn.execute(
-            f"""
-            UPDATE automod_config
-            SET {field} = $1, updated_at = now()
-            WHERE guild_id = $2;
-            """,
+            query,
             value,
             guild_id,
         )
@@ -149,23 +229,12 @@ class AutomodConfigRepo:
         Ajoute une valeur à un array si elle n'existe pas déjà.
         Retourne True si la ligne a été mise à jour.
         """
-        allowed_fields = {
-            "whitelisted_roles",
-            "whitelisted_channels",
-            "custom_scam_patterns",
-            "custom_scam_domains",
-        }
-        if field not in allowed_fields:
+        query = AutomodConfigRepo._ARRAY_APPEND_SQL.get(field)
+        if query is None:
             raise ValueError(f"Field '{field}' not allowed for array_append")
 
         result = await conn.execute(
-            f"""
-            UPDATE automod_config
-            SET {field} = array_append({field}, $1),
-                updated_at = now()
-            WHERE guild_id = $2
-              AND NOT ($1 = ANY({field}));
-            """,
+            query,
             value,
             guild_id,
         )
@@ -182,22 +251,12 @@ class AutomodConfigRepo:
         Retire une valeur d'un array.
         Retourne True si la ligne a été mise à jour.
         """
-        allowed_fields = {
-            "whitelisted_roles",
-            "whitelisted_channels",
-            "custom_scam_patterns",
-            "custom_scam_domains",
-        }
-        if field not in allowed_fields:
+        query = AutomodConfigRepo._ARRAY_REMOVE_SQL.get(field)
+        if query is None:
             raise ValueError(f"Field '{field}' not allowed for array_remove")
 
         result = await conn.execute(
-            f"""
-            UPDATE automod_config
-            SET {field} = array_remove({field}, $1),
-                updated_at = now()
-            WHERE guild_id = $2;
-            """,
+            query,
             value,
             guild_id,
         )

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import random
+import secrets
 import string
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -467,11 +467,13 @@ class FiveStackService:
 
     @staticmethod
     def generate_team_code(length: int = 6) -> str:
-        return "".join(random.choices(string.ascii_uppercase + string.digits, k=length))
+        alphabet = string.ascii_uppercase + string.digits
+        return "".join(secrets.choice(alphabet) for _ in range(length))
 
     @staticmethod
     def generate_match_code(length: int = 6) -> str:
-        return "M" + "".join(random.choices(string.ascii_uppercase + string.digits, k=length))
+        alphabet = string.ascii_uppercase + string.digits
+        return "M" + "".join(secrets.choice(alphabet) for _ in range(length))
 
     @staticmethod
     def role_counts(entries: Iterable[object]) -> dict[str, int]:

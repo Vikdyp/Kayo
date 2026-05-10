@@ -55,13 +55,6 @@ def _row_to_model(row: asyncpg.Record) -> ValorantInfoRow:
     )
 
 
-_ALL_COLS = (
-    "user_id, pseudo, tag, puuid, region, platform, rank, elo, "
-    "current_season, current_act, is_active, tracking_enabled, "
-    "error_count, last_error_at, last_checked_at, last_notification, deactivated_at"
-)
-
-
 class ValorantInfoRepo:
 
     # ---- reads ----
@@ -71,7 +64,14 @@ class ValorantInfoRepo:
         conn: asyncpg.Connection, user_id: int
     ) -> Optional[ValorantInfoRow]:
         row = await conn.fetchrow(
-            f"SELECT {_ALL_COLS} FROM valorant_info WHERE user_id = $1;",
+            """
+            SELECT user_id, pseudo, tag, puuid, region, platform, rank, elo,
+                   current_season, current_act, is_active, tracking_enabled,
+                   error_count, last_error_at, last_checked_at,
+                   last_notification, deactivated_at
+              FROM valorant_info
+             WHERE user_id = $1;
+            """,
             user_id,
         )
         return _row_to_model(row) if row else None
@@ -81,7 +81,16 @@ class ValorantInfoRepo:
         conn: asyncpg.Connection, pseudo: str, tag: str
     ) -> Optional[ValorantInfoRow]:
         row = await conn.fetchrow(
-            f"SELECT {_ALL_COLS} FROM valorant_info WHERE pseudo = $1 AND tag = $2 LIMIT 1;",
+            """
+            SELECT user_id, pseudo, tag, puuid, region, platform, rank, elo,
+                   current_season, current_act, is_active, tracking_enabled,
+                   error_count, last_error_at, last_checked_at,
+                   last_notification, deactivated_at
+              FROM valorant_info
+             WHERE pseudo = $1
+               AND tag = $2
+             LIMIT 1;
+            """,
             pseudo, tag,
         )
         return _row_to_model(row) if row else None
@@ -107,8 +116,11 @@ class ValorantInfoRepo:
         conn: asyncpg.Connection, limit: int
     ) -> list[ValorantInfoRow]:
         rows = await conn.fetch(
-            f"""
-            SELECT {_ALL_COLS}
+            """
+            SELECT user_id, pseudo, tag, puuid, region, platform, rank, elo,
+                   current_season, current_act, is_active, tracking_enabled,
+                   error_count, last_error_at, last_checked_at,
+                   last_notification, deactivated_at
               FROM valorant_info
              WHERE is_active = TRUE
                AND pseudo IS NOT NULL
@@ -129,8 +141,11 @@ class ValorantInfoRepo:
         conn: asyncpg.Connection,
     ) -> list[ValorantInfoRow]:
         rows = await conn.fetch(
-            f"""
-            SELECT {_ALL_COLS}
+            """
+            SELECT user_id, pseudo, tag, puuid, region, platform, rank, elo,
+                   current_season, current_act, is_active, tracking_enabled,
+                   error_count, last_error_at, last_checked_at,
+                   last_notification, deactivated_at
               FROM valorant_info
              WHERE pseudo IS NOT NULL
                AND tag    IS NOT NULL;
@@ -143,7 +158,14 @@ class ValorantInfoRepo:
         conn: asyncpg.Connection,
     ) -> list[ValorantInfoRow]:
         rows = await conn.fetch(
-            f"SELECT {_ALL_COLS} FROM valorant_info WHERE tracking_enabled = TRUE;"
+            """
+            SELECT user_id, pseudo, tag, puuid, region, platform, rank, elo,
+                   current_season, current_act, is_active, tracking_enabled,
+                   error_count, last_error_at, last_checked_at,
+                   last_notification, deactivated_at
+              FROM valorant_info
+             WHERE tracking_enabled = TRUE;
+            """
         )
         return [_row_to_model(r) for r in rows]
 
@@ -223,23 +245,34 @@ class ValorantInfoRepo:
         current_season: int | None = None,
         current_act: int | None = None,
     ) -> None:
-        updates = ["last_checked_at = NOW()", "error_count = 0", "last_error_at = NULL"]
-        params: list = []
-        idx = 1
-
-        for col, val in [
-            ("puuid", puuid), ("region", region), ("platform", platform),
-            ("rank", rank), ("elo", elo), ("pseudo", pseudo), ("tag", tag),
-            ("current_season", current_season), ("current_act", current_act),
-        ]:
-            if val is not None:
-                updates.append(f"{col} = ${idx}")
-                params.append(val)
-                idx += 1
-
-        params.append(user_id)
-        query = f"UPDATE valorant_info SET {', '.join(updates)} WHERE user_id = ${idx};"
-        await conn.execute(query, *params)
+        await conn.execute(
+            """
+            UPDATE valorant_info
+               SET last_checked_at = NOW(),
+                   error_count = 0,
+                   last_error_at = NULL,
+                   puuid = COALESCE($1::text, puuid),
+                   region = COALESCE($2::text, region),
+                   platform = COALESCE($3::text, platform),
+                   rank = COALESCE($4::text, rank),
+                   elo = COALESCE($5::integer, elo),
+                   pseudo = COALESCE($6::text, pseudo),
+                   tag = COALESCE($7::text, tag),
+                   current_season = COALESCE($8::integer, current_season),
+                   current_act = COALESCE($9::integer, current_act)
+             WHERE user_id = $10;
+            """,
+            puuid,
+            region,
+            platform,
+            rank,
+            elo,
+            pseudo,
+            tag,
+            current_season,
+            current_act,
+            user_id,
+        )
 
     @staticmethod
     async def update_pipeline_error(

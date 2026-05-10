@@ -26,7 +26,12 @@ async def run_smoke(*, apply_migrations: bool = True) -> dict[str, object]:
         if apply_migrations:
             await run_migrations(db)
 
-        services = await build_service_container(db, os.getenv("HENRIK_VALO_KEY", ""))
+        services = await build_service_container(
+            db,
+            os.getenv("HENRIK_VALO_KEY", ""),
+            twitch_client_id=os.getenv("TWITCH_CLIENT_ID", ""),
+            twitch_client_secret=os.getenv("TWITCH_CLIENT_SECRET", ""),
+        )
 
         bot.db = db
         bot.services = services

@@ -100,5 +100,8 @@ un modèle `.env.docker.example`.
 
 Documentation:
 
+- [`docs/CONFIG.md`](docs/CONFIG.md)
+- [`docs/RUNBOOK.md`](docs/RUNBOOK.md)
 - [`docs/DEPLOY_DOCKER.md`](docs/DEPLOY_DOCKER.md)
+- [`docs/OPERATIONS_LOG.md`](docs/OPERATIONS_LOG.md)
 - [`docs/DATABASE_V2_PROPOSAL.md`](docs/DATABASE_V2_PROPOSAL.md)

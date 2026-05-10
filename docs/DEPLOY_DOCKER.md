@@ -72,6 +72,21 @@ docker compose exec bot python tools/smoke_runtime.py --skip-migrations
 
 ## Sauvegarde PostgreSQL
 
+Le VPS peut installer le timer systemd fourni :
+
+```bash
+install -m 0755 tools/vps/kayo-postgres-backup.sh /usr/local/sbin/kayo-postgres-backup.sh
+install -m 0644 tools/vps/kayo-postgres-backup.service /etc/systemd/system/kayo-postgres-backup.service
+install -m 0644 tools/vps/kayo-postgres-backup.timer /etc/systemd/system/kayo-postgres-backup.timer
+systemctl daemon-reload
+systemctl enable --now kayo-postgres-backup.timer
+```
+
+Par defaut, le timer cree un dump quotidien au format `pg_dump -Fc` dans
+`/srv/kayo/backups/postgres`
+et supprime les dumps de plus de 14 jours. Conserver aussi une copie hors VPS
+pour couvrir une perte machine complete.
+
 Avant toute migration majeure :
 
 ```bash
@@ -80,11 +95,11 @@ docker compose exec -T postgres pg_dump -U "$DATABASE_USER" "$DATABASE_NAME" \
   > "/srv/kayo/backups/kayo_$(date +%Y%m%d_%H%M%S).sql"
 ```
 
-Restauration dans une base vide :
+Restauration dans une base vide depuis un dump `.dump` :
 
 ```bash
-docker compose exec -T postgres psql -U "$DATABASE_USER" "$DATABASE_NAME" \
-  < /srv/kayo/backups/backup.sql
+cat /srv/kayo/backups/postgres/kayo-postgres-YYYYMMDDTHHMMSSZ.dump \
+  | docker compose exec -T postgres pg_restore -U "$DATABASE_USER" -d "$DATABASE_NAME"
 ```
 
 ## Migration DB v2
@@ -118,11 +133,12 @@ des domaines.
 
 ## Mise à jour
 
+Procedure complete : voir [`RUNBOOK.md`](RUNBOOK.md).
+
+Flux recommande quand `/srv/kayo` est un checkout Git :
+
 ```bash
-git pull
-docker compose build bot
-docker compose up -d
-docker compose logs -f bot
+tools/vps/deploy-from-git.sh
 ```
 
 ## Arrêt

@@ -99,19 +99,27 @@ class FiveStackPlayerStatsRepo:
         limit: int,
     ) -> list[FiveStackPlayerStatsRow]:
         if order_by == "wait_time":
-            order_sql = "total_wait_time_seconds DESC"
-        else:
-            order_sql = "total_matches DESC"
-        rows = await conn.fetch(
-            f"""
+            query = """
             SELECT guild_id, discord_member_id, total_matches,
                    total_wait_time_seconds, matches_as_solo, matches_in_group,
                    last_match_at, preferred_role
               FROM five_stack_player_stats
              WHERE guild_id = $1
-             ORDER BY {order_sql}
+             ORDER BY total_wait_time_seconds DESC
              LIMIT $2;
-            """,
+            """
+        else:
+            query = """
+            SELECT guild_id, discord_member_id, total_matches,
+                   total_wait_time_seconds, matches_as_solo, matches_in_group,
+                   last_match_at, preferred_role
+              FROM five_stack_player_stats
+             WHERE guild_id = $1
+             ORDER BY total_matches DESC
+             LIMIT $2;
+            """
+        rows = await conn.fetch(
+            query,
             guild_id,
             limit,
         )
