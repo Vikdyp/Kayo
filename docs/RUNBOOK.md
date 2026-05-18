@@ -29,6 +29,40 @@ docker logs --since 10m kayo-bot
 docker logs --since 10m kayo-bot 2>&1 | grep -Ei 'error|exception|traceback|failed|critical'
 ```
 
+## Alertes bot
+
+Le timer systemd `kayo-bot-healthcheck.timer` peut surveiller le conteneur
+`kayo-bot` toutes les 5 minutes et envoyer une alerte Discord via webhook
+lorsque le conteneur passe en erreur, revient OK ou redemarre.
+
+Installation depuis le VPS :
+
+```bash
+cd /srv/kayo
+install -m 0755 tools/vps/kayo_bot_healthcheck.py /usr/local/sbin/kayo_bot_healthcheck.py
+install -m 0644 tools/vps/kayo-bot-healthcheck.service /etc/systemd/system/kayo-bot-healthcheck.service
+install -m 0644 tools/vps/kayo-bot-healthcheck.timer /etc/systemd/system/kayo-bot-healthcheck.timer
+install -d -m 0700 /etc/kayo
+nano /etc/kayo/alerts.env
+systemctl daemon-reload
+systemctl enable --now kayo-bot-healthcheck.timer
+systemctl start kayo-bot-healthcheck.service
+```
+
+Contenu attendu dans `/etc/kayo/alerts.env` :
+
+```bash
+KAYO_ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/...
+```
+
+Commandes de verification :
+
+```bash
+systemctl status kayo-bot-healthcheck.timer --no-pager
+systemctl status kayo-bot-healthcheck.service --no-pager
+journalctl -u kayo-bot-healthcheck.service -n 50 --no-pager
+```
+
 ## Redemarrage
 
 ```bash

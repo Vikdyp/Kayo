@@ -1,0 +1,10 @@
+[Unit]
+Description=Kayo bot healthcheck alert
+Wants=docker.service network-online.target
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/kayo/alerts.env
+ExecStart=/usr/bin/env python3 /usr/local/sbin/kayo_bot_healthcheck.py
+Nice=10
