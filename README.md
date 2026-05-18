@@ -2,6 +2,9 @@
 
 Kayo est un bot Discord Python base sur `discord.py`.
 
+Les consignes locales pour Codex et agents de code vivent dans
+[`AGENTS.md`](AGENTS.md).
+
 Le refactor en cours garde uniquement le noyau actif charge par `bot.py`:
 
 - configuration des salons et roles
