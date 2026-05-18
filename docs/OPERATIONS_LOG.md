@@ -50,8 +50,27 @@ les commits et aide la personne suivante a comprendre l'etat reel du projet.
 - Etat verifie apres bascule : `kayo-bot` up, `kayo-postgres` healthy, logs
   recents sans erreur critique.
 
+## 2026-05-18 - Alerte healthcheck bot sur VPS
+
+- Ajout d'un healthcheck systemd optionnel pour `kayo-bot`.
+- Commit pousse sur `origin/master`, puis pull fast-forward sur `/srv/kayo`.
+- Installation VPS :
+  - `/usr/local/sbin/kayo_bot_healthcheck.py`
+  - `/etc/systemd/system/kayo-bot-healthcheck.service`
+  - `/etc/systemd/system/kayo-bot-healthcheck.timer`
+  - secret webhook hors Git dans `/etc/kayo/alerts.env`
+- Le timer `kayo-bot-healthcheck.timer` tourne toutes les 5 minutes.
+- Perimetre verifie : le script cible uniquement `docker inspect kayo-bot` et
+  ecrit son etat dans `/var/lib/kayo/bot-healthcheck-state.json`.
+- Aucun rebuild ni redemarrage du bot.
+- Autres conteneurs verifies actifs apres installation : `bodylab-app`,
+  `bodylab-postgres`, `cypher-trading-bot-dashboard-1`,
+  `cypher-trading-bot-live-bot-1`, `cypher-trading-bot-paper-bot-1`.
+- Premier passage OK : `Kayo bot OK`, sans alerte envoyee car l'etat initial
+  etait sain.
+
 ## Suite recommandee
 
 1. Copier automatiquement les backups PostgreSQL hors VPS.
 2. Reduire progressivement les permissions Discord du bot.
-3. Ajouter une alerte externe sur crash ou redemarrages repetes.
+3. Tester une restauration backup Hostinger ou documenter sa procedure exacte.
