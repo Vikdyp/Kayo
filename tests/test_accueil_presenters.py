@@ -10,7 +10,7 @@ from cogs.accueil.presenters import (
 
 def test_build_welcome_embed_keeps_mentions_and_assets() -> None:
     embed = build_welcome_embed(
-        username="Victor",
+        member_mention="<@123>",
         rules_mention="<#1>",
         introductions_mention="<#2>",
         member_avatar_url="https://example.test/member.png",
@@ -18,7 +18,7 @@ def test_build_welcome_embed_keeps_mentions_and_assets() -> None:
     )
 
     assert embed.title == "🎉 Bienvenue sur le serveur ! 🎉"
-    assert "Salut **Victor**" in embed.description
+    assert "Salut <@123>" in embed.description
     assert "<#1>" in embed.description
     assert "<#2>" in embed.description
     assert embed.thumbnail.url == "https://example.test/member.png"

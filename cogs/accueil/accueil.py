@@ -59,7 +59,7 @@ class WelcomeCog(commands.Cog):
             else None
         )
         embed = build_welcome_embed(
-            username=member.display_name,
+            member_mention=member.mention,
             rules_mention=rules_mention,
             introductions_mention=introductions_mention,
             member_avatar_url=member_avatar_url,

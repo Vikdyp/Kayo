@@ -8,7 +8,7 @@ import discord
 
 def build_welcome_embed(
     *,
-    username: str,
+    member_mention: str,
     rules_mention: str,
     introductions_mention: str,
     member_avatar_url: str,
@@ -17,7 +17,7 @@ def build_welcome_embed(
     embed = discord.Embed(
         title="🎉 Bienvenue sur le serveur ! 🎉",
         description=(
-            f"Salut **{username}** ! Nous sommes ravis de t'accueillir parmi nous. 🎉\n\n"
+            f"Salut {member_mention} ! Nous sommes ravis de t'accueillir parmi nous. 🎉\n\n"
             "Pour bien démarrer, voici quelques informations importantes :\n"
             f"• **Règles du serveur** : Assure-toi de lire {rules_mention}.\n"
             f"• **Découvre le serveur** : Va dans {introductions_mention} pour en apprendre davantage sur notre communauté.\n\n"

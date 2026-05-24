@@ -69,6 +69,17 @@ les commits et aide la personne suivante a comprendre l'etat reel du projet.
 - Premier passage OK : `Kayo bot OK`, sans alerte envoyee car l'etat initial
   etait sain.
 
+## 2026-05-24 - Mention membre dans l'accueil
+
+- Message de bienvenue ajuste pour afficher une vraie mention Discord du membre
+  au lieu de son nom texte.
+- Validation effectuee sur `Perfect Team Test` avec une instance VPS temporaire
+  `TEST_MODE=true`.
+- Une base `kayo_test` a ete creee par copie de la base Kayo pour le test, puis
+  doit etre supprimee pendant le nettoyage de fin de chantier.
+- Deploiement production prevu via `tools/vps/deploy-from-git.sh` apres checks
+  locaux et nettoyage des ressources temporaires de test.
+
 ## Suite recommandee
 
 1. Copier automatiquement les backups PostgreSQL hors VPS.
