@@ -72,6 +72,36 @@ docker compose ps
 docker logs --since 2m kayo-bot
 ```
 
+## Instance Test VPS
+
+Pour tester un changement Discord depuis le VPS sans toucher au conteneur
+production `kayo-bot`, utiliser l'instance test separee :
+
+```bash
+cd /srv/kayo
+tools/vps/run-test-instance.sh status
+tools/vps/run-test-instance.sh start --copy-prod-db
+tools/vps/run-test-instance.sh logs --since 2m
+tools/vps/run-test-instance.sh logs --since 10m --errors
+tools/vps/run-test-instance.sh cleanup --drop-test-db
+```
+
+Le script cree un worktree temporaire `/tmp/kayo-test-*`, une image
+`kayo-bot-test:<run_id>` et un conteneur `kayo-bot-test` connecte au reseau de
+`kayo-postgres`. Il force `TEST_MODE=true`, `DATABASE_HOST=postgres` et utilise
+`DATABASE_TEST_NAME`; la sync Discord doit donc rester limitee a
+`TEST_GUILD_ID`.
+
+Garde-fous :
+
+- `start` refuse un checkout `/srv/kayo` avec fichiers tracked modifies.
+- `start --copy-prod-db` recree `DATABASE_TEST_NAME` depuis `DATABASE_NAME` et
+  refuse si les deux noms sont identiques.
+- `cleanup --drop-test-db` supprime seulement les ressources test connues :
+  `kayo-bot-test`, `kayo-bot-test:*`, `/tmp/kayo-test-*`, les patchs test
+  `/tmp/kayo-test-*.patch` et la DB `DATABASE_TEST_NAME`.
+- Ne pas utiliser `docker system prune` pour ce workflow.
+
 ## Backup PostgreSQL
 
 Le timer systemd `kayo-postgres-backup.timer` lance un dump quotidien.
