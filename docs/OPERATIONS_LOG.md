@@ -116,6 +116,19 @@ les commits et aide la personne suivante a comprendre l'etat reel du projet.
   healthy, smoke runtime OK avec 27 cogs charges, logs recents filtres sans
   erreur critique.
 
+## 2026-06-12 - Renvoi notifications boutique Valorant
+
+- Apres validation du rendu sur `Perfect Team Test`, renvoi manuel one-shot des
+  notifications boutique sur `Perfect Team` dans le salon `valorant_shop`.
+- Aucun changement DB : le one-shot a utilise le presenter deploye et l'API REST
+  Discord, sans modifier l'etat `bundle deja envoye`.
+- Messages production envoyes :
+  - `Give Back // V26` : message/thread `1514770362724778175`, 8 items.
+  - `Rogue` : message/thread `1514770395197214843`, 8 items.
+- Verification REST apres envoi : titre legacy, description en gras, un seul
+  champ prix total, footer date, image presente et 8 embeds d'items par fil.
+- Verification runtime : `kayo-bot` up, `kayo-postgres` healthy.
+
 ## Suite recommandee
 
 1. Copier automatiquement les backups PostgreSQL hors VPS.
