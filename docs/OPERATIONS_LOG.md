@@ -108,6 +108,13 @@ les commits et aide la personne suivante a comprendre l'etat reel du projet.
   OK avec 27 cogs charges, logs recents sans erreur critique.
 - Ressources test nettoyees : `kayo-bot-test`, images test, worktree
   `/tmp/kayo-test-*` et base `kayo_test` supprimes.
+- Ajustement supplementaire deploye sur le commit `f5fca78` pour reprendre le
+  rendu legacy exact depuis `cogs/_legacy/shop/shop_notifier.py` : titre et
+  description en gras, prix total seul, date en footer, image `displayIcon`,
+  fil `Détails – ...`, champs item verticaux et `Vente groupée`.
+- Verification production apres `f5fca78` : `kayo-bot` up, `kayo-postgres`
+  healthy, smoke runtime OK avec 27 cogs charges, logs recents filtres sans
+  erreur critique.
 
 ## Suite recommandee
 
