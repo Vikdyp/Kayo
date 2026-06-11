@@ -69,17 +69,36 @@ class FakeValorantDb:
 
 
 class FakeHenrik:
-    def __init__(self, *, stored=None, live=None, stored_error=None, live_error=None):
+    def __init__(
+        self,
+        *,
+        stored=None,
+        stored_pages=None,
+        live=None,
+        stored_error=None,
+        live_error=None,
+    ):
         self.stored = stored
+        self.stored_pages = stored_pages
         self.live = live
         self.stored_error = stored_error
         self.live_error = live_error
         self.calls: list[tuple[str, tuple[object, ...]]] = []
 
-    async def get_stored_mmr_history_by_puuid(self, region: str, platform: str, puuid: str):
-        self.calls.append(("stored", (region, platform, puuid)))
+    async def get_stored_mmr_history_by_puuid(
+        self,
+        region: str,
+        platform: str,
+        puuid: str,
+        *,
+        start=None,
+        size=None,
+    ):
+        self.calls.append(("stored", (region, platform, puuid, start, size)))
         if self.stored_error:
             raise self.stored_error
+        if self.stored_pages is not None:
+            return self.stored_pages[start], None
         return self.stored, None
 
     async def get_mmr_history_by_puuid(self, region: str, platform: str, puuid: str):
@@ -112,6 +131,18 @@ def history_entry(**overrides):
     }
     values.update(overrides)
     return ns(**values)
+
+
+def stored_response(entries, *, total=None, returned=None, before=0, after=0):
+    if total is None:
+        total = len(entries)
+    if returned is None:
+        returned = len(entries)
+    return ns(
+        status=200,
+        data=entries,
+        results=ns(total=total, returned=returned, before=before, after=after),
+    )
 
 
 @pytest.mark.asyncio
@@ -270,10 +301,46 @@ async def test_fetch_full_history_imports_stored_history():
     assert result.status == "imported"
     assert result.inserted_count == 1
     assert result.source == "henrik_stored"
-    assert henrik.calls == [("stored", ("eu", "pc", "puuid-1"))]
+    assert henrik.calls == [("stored", ("eu", "pc", "puuid-1", None, None))]
     assert db.backfill_attempts == [(10, None)]
     assert db.backfilled == [10]
     assert db.calls[-1][1][-4:] == ("puuid-1", -16, "match-1", "henrik_stored")
+
+
+@pytest.mark.asyncio
+async def test_fetch_full_history_imports_all_stored_pages():
+    db = FakeValorantDb()
+    db.info = player_info()
+    henrik = FakeHenrik(
+        stored_pages={
+            None: stored_response(
+                [history_entry(match_id="match-1"), history_entry(match_id="match-2")],
+                total=3,
+                returned=2,
+                before=0,
+                after=1,
+            ),
+            2: stored_response(
+                [history_entry(match_id="match-3")],
+                total=3,
+                returned=1,
+                before=2,
+                after=0,
+            ),
+        },
+    )
+    service = MmrTrackerService(db, henrik)
+
+    result = await service.fetch_full_history(123)
+
+    assert result.status == "imported"
+    assert result.inserted_count == 3
+    assert result.source == "henrik_stored"
+    assert henrik.calls == [
+        ("stored", ("eu", "pc", "puuid-1", None, None)),
+        ("stored", ("eu", "pc", "puuid-1", 2, 2)),
+    ]
+    assert db.backfilled == [10]
 
 
 @pytest.mark.asyncio
@@ -291,7 +358,7 @@ async def test_fetch_full_history_falls_back_to_live_history():
     assert result.status == "imported"
     assert result.source == "henrik_live"
     assert henrik.calls == [
-        ("stored", ("eu", "pc", "puuid-1")),
+        ("stored", ("eu", "pc", "puuid-1", None, None)),
         ("live", ("eu", "pc", "puuid-1")),
     ]
     assert db.calls[-1][1][-4:] == ("puuid-1", 24, "live-1", "henrik_live")

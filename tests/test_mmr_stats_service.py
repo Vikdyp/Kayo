@@ -90,6 +90,21 @@ def test_calculate_mmr_stats_keeps_tracker_snapshots_after_imports() -> None:
     assert stats.elos_plot == [1010, 1030]
 
 
+def test_calculate_mmr_stats_dedupes_aggregated_tracker_snapshot_after_imports() -> None:
+    history = [
+        _row_at(10, 0, 1010, match_id="m1", rr_delta=10, source="henrik_live"),
+        _row_at(10, 30, 1025, match_id="m2", rr_delta=15, source="henrik_live"),
+        _row_at(11, 0, 1025, rr_delta=25, source="tracker_snapshot"),
+    ]
+
+    stats = calculate_mmr_stats(history, start_date=date(2026, 5, 8))
+
+    assert stats is not None
+    assert stats.total_games == 2
+    assert stats.total_change == 25
+    assert stats.elos_plot == [1010, 1025]
+
+
 def test_calculate_mmr_stats_ignores_first_filtered_legacy_delta() -> None:
     stats = calculate_mmr_stats(
         [

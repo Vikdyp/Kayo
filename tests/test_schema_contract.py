@@ -97,6 +97,7 @@ def test_mmr_history_metadata_migration_is_additive() -> None:
     assert "ADD COLUMN IF NOT EXISTS SOURCE" in migration
     assert "ADD COLUMN IF NOT EXISTS MMR_HISTORY_BACKFILLED_AT" in migration
     assert "IDX_VALORANT_ELO_HISTORY_USER_PUUID_RECORDED_AT" in migration
+    assert "SET PUUID = VI.PUUID" not in migration
 
 
 @pytest.mark.parametrize(

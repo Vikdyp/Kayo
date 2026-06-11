@@ -249,11 +249,11 @@ class MmrTrackerService:
         # Tentative historique stocke
         history_entries: list[tuple[dict, str]] = []
         try:
-            stored_resp, _ = await self._henrik.get_stored_mmr_history_by_puuid(
+            stored_entries = await self._fetch_stored_mmr_history_pages(
                 region, platform, puuid,
             )
-            if stored_resp.status == 200 and stored_resp.data:
-                for entry in stored_resp.data:
+            if stored_entries:
+                for entry in stored_entries:
                     history_entries.append((
                         self._history_entry_to_dict(entry),
                         "henrik_stored",
@@ -311,6 +311,58 @@ class MmrTrackerService:
             inserted_count=inserted_count,
             source=imported_source,
         )
+
+    async def _fetch_stored_mmr_history_pages(
+        self,
+        region: str,
+        platform: str,
+        puuid: str,
+    ) -> list[Any]:
+        entries: list[Any] = []
+        start: int | None = None
+        size: int | None = None
+        seen_starts: set[int | None] = set()
+
+        while start not in seen_starts:
+            seen_starts.add(start)
+            stored_resp, _ = await self._henrik.get_stored_mmr_history_by_puuid(
+                region,
+                platform,
+                puuid,
+                start=start,
+                size=size,
+            )
+            if stored_resp.status != 200:
+                if entries:
+                    raise RuntimeError(
+                        f"stored mmr history page failed with status {stored_resp.status}"
+                    )
+                break
+            entries.extend(stored_resp.data or [])
+
+            next_start, next_size = self._next_stored_history_page(stored_resp)
+            if next_start is None:
+                break
+            if next_start in seen_starts:
+                raise RuntimeError("stored mmr history pagination did not advance")
+            start = next_start
+            size = next_size
+
+        return entries
+
+    @staticmethod
+    def _next_stored_history_page(stored_resp: Any) -> tuple[int | None, int | None]:
+        results = getattr(stored_resp, "results", None)
+        if results is None:
+            return None, None
+
+        returned = getattr(results, "returned", 0) or 0
+        after = getattr(results, "after", 0) or 0
+        if returned <= 0 or after <= 0:
+            return None, None
+
+        before = getattr(results, "before", 0) or 0
+        return before + returned, returned
 
     @staticmethod
     def _history_entry_to_dict(entry: Any) -> dict[str, Any]:

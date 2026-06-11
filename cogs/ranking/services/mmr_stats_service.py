@@ -152,11 +152,7 @@ def _dedupe_imported_matches_and_snapshots(diff_rows: list[_DiffRow]) -> list[_D
             last_import = item
             continue
 
-        if (
-            last_import
-            and item.row.elo == last_import.row.elo
-            and item.diff == last_import.diff
-        ):
+        if last_import and item.row.elo == last_import.row.elo:
             continue
 
         deduped.append(item)

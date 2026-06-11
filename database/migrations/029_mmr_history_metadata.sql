@@ -12,12 +12,9 @@ ALTER TABLE IF EXISTS valorant_info
   ADD COLUMN IF NOT EXISTS mmr_history_backfill_attempted_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS mmr_history_backfill_error TEXT;
 
-UPDATE valorant_elo_history_parent h
-   SET puuid = vi.puuid
-  FROM valorant_info vi
- WHERE h.user_id = vi.user_id
-   AND h.puuid IS NULL
-   AND vi.puuid IS NOT NULL;
+-- Legacy history rows stay unscoped when their PUUID was not known at write time.
+-- Stamping all old rows with the currently linked PUUID would permanently attach
+-- previous-account history to the current account for users who changed accounts.
 
 WITH history_diffs AS (
   SELECT
