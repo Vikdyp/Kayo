@@ -40,6 +40,11 @@ Complex domain backfills are split by responsibility:
 - `028_five_stack_v2_backfill.sql` backfills teams, queue entries, queue roles,
   matches, participants, participant roles, feedback, and player stats.
 
+`029_mmr_history_metadata.sql` enriches the active Valorant MMR history with
+account-scoped metadata (`puuid`, RR delta, match id, source) and backfill
+status fields on `valorant_info`. It is additive and keeps the runtime on the
+current Valorant tables.
+
 After these migrations are committed, a live schema audit will report drift until
 the pending v2 migrations have been applied to the target database. Run a
 `pg_dump` backup before applying them on production.

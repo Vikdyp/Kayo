@@ -217,22 +217,29 @@ class ValorantDbService:
             await ValorantInfoRepo.disable_tracking(conn, user_id)
 
     async def get_tracked_players(self) -> list[dict]:
-        """Retourne user_id, elo, current_season, current_act pour chaque joueur suivi."""
+        """Retourne les infos necessaires au suivi MMR pour chaque joueur actif suivi."""
         async with self._db.acquire() as conn:
             rows = await ValorantInfoRepo.get_tracked(conn)
             return [
                 {
                     "user_id": r.user_id,
+                    "puuid": r.puuid,
+                    "region": r.region,
+                    "platform": r.platform,
                     "elo": r.elo,
                     "current_season": r.current_season,
                     "current_act": r.current_act,
+                    "mmr_history_backfilled_at": r.mmr_history_backfilled_at,
+                    "mmr_history_backfill_attempted_at": r.mmr_history_backfill_attempted_at,
                 }
                 for r in rows
             ]
 
-    async def get_last_history_row(self, user_id: int) -> Optional[EloHistoryRow]:
+    async def get_last_history_row(
+        self, user_id: int, puuid: str | None = None
+    ) -> Optional[EloHistoryRow]:
         async with self._db.acquire() as conn:
-            return await ValorantEloHistoryRepo.get_last_row(conn, user_id)
+            return await ValorantEloHistoryRepo.get_last_row(conn, user_id, puuid)
 
     async def get_history(
         self, discord_id: int, season: int | None = None, act: int | None = None
@@ -241,14 +248,32 @@ class ValorantDbService:
             user_id = await self._resolve_user_id(conn, discord_id)
             if user_id is None:
                 return []
-            return await ValorantEloHistoryRepo.get_history(conn, user_id, season, act)
+            info = await ValorantInfoRepo.get_by_user_id(conn, user_id)
+            if info is None:
+                return []
+            if not info.puuid:
+                return await ValorantEloHistoryRepo.get_history(
+                    conn, user_id, season, act, legacy_only=True
+                )
+            return await ValorantEloHistoryRepo.get_history(
+                conn, user_id, season, act, info.puuid
+            )
 
     async def get_partitions(self, discord_id: int) -> list[tuple[int, int]]:
         async with self._db.acquire() as conn:
             user_id = await self._resolve_user_id(conn, discord_id)
             if user_id is None:
                 return []
-            return await ValorantEloHistoryRepo.get_distinct_partitions(conn, user_id)
+            info = await ValorantInfoRepo.get_by_user_id(conn, user_id)
+            if info is None:
+                return []
+            if not info.puuid:
+                return await ValorantEloHistoryRepo.get_distinct_partitions(
+                    conn, user_id, legacy_only=True
+                )
+            return await ValorantEloHistoryRepo.get_distinct_partitions(
+                conn, user_id, info.puuid
+            )
 
     async def get_latest_partition(self) -> Optional[tuple[int, int]]:
         async with self._db.acquire() as conn:
@@ -266,10 +291,24 @@ class ValorantDbService:
         recorded_at: datetime,
         elo: int,
         is_win: bool,
-    ) -> None:
+        puuid: str | None = None,
+        rr_delta: int | None = None,
+        match_id: str | None = None,
+        source: str = "tracker_snapshot",
+    ) -> bool:
         async with self._db.transaction() as conn:
-            await ValorantEloHistoryRepo.insert_entry(
-                conn, season, act, user_id, recorded_at, elo, is_win,
+            return await ValorantEloHistoryRepo.insert_entry(
+                conn,
+                season,
+                act,
+                user_id,
+                recorded_at,
+                elo,
+                is_win,
+                puuid=puuid,
+                rr_delta=rr_delta,
+                match_id=match_id,
+                source=source,
             )
 
     async def get_valorant_info_by_user_id(
@@ -286,6 +325,16 @@ class ValorantDbService:
             if user_id is None:
                 return None
             return await ValorantInfoRepo.get_by_user_id(conn, user_id)
+
+    async def mark_mmr_history_backfill_attempt(
+        self, user_id: int, error: str | None = None
+    ) -> None:
+        async with self._db.transaction() as conn:
+            await ValorantInfoRepo.mark_mmr_history_backfill_attempt(conn, user_id, error)
+
+    async def mark_mmr_history_backfilled(self, user_id: int) -> None:
+        async with self._db.transaction() as conn:
+            await ValorantInfoRepo.mark_mmr_history_backfilled(conn, user_id)
 
     # ==================== stats ====================
 

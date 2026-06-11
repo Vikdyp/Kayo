@@ -161,10 +161,27 @@ class HenrikDevService:
         
         return model, rl
 
-    async def get_stored_mmr_history_by_puuid(self, region: str, platform: str, puuid: str):
+    async def get_stored_mmr_history_by_puuid(
+        self,
+        region: str,
+        platform: str,
+        puuid: str,
+        *,
+        size: int | None = None,
+        page: int | None = None,
+    ):
         
         url = f"{self.BASE_URL}/v2/by-puuid/stored-mmr-history/{region}/{platform}/{puuid}"
-        resp = await self._client.get(url, headers=self._header)
+        params: dict[str, int] = {}
+        if size is not None:
+            params["size"] = size
+        if page is not None:
+            params["page"] = page
+        resp = await self._client.get(
+            url,
+            params=params or None,
+            headers=self._header,
+        )
 
         rl = resp.ratelimit()
         logger.debug("RateLimit: remaining=%s/%s reset=%ss bucket=%s version=%s",
