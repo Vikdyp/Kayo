@@ -168,15 +168,15 @@ class HenrikDevService:
         puuid: str,
         *,
         size: int | None = None,
-        start: int | None = None,
+        page: int | None = None,
     ):
         
         url = f"{self.BASE_URL}/v2/by-puuid/stored-mmr-history/{region}/{platform}/{puuid}"
         params: dict[str, int] = {}
         if size is not None:
             params["size"] = size
-        if start is not None:
-            params["start"] = start
+        if page is not None:
+            params["page"] = page
         resp = await self._client.get(
             url,
             params=params or None,

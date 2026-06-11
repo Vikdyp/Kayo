@@ -319,17 +319,17 @@ class MmrTrackerService:
         puuid: str,
     ) -> list[Any]:
         entries: list[Any] = []
-        start: int | None = None
+        page: int | None = None
         size: int | None = None
-        seen_starts: set[int | None] = set()
+        seen_pages: set[int | None] = set()
 
-        while start not in seen_starts:
-            seen_starts.add(start)
+        while page not in seen_pages:
+            seen_pages.add(page)
             stored_resp, _ = await self._henrik.get_stored_mmr_history_by_puuid(
                 region,
                 platform,
                 puuid,
-                start=start,
+                page=page,
                 size=size,
             )
             if stored_resp.status != 200:
@@ -340,12 +340,12 @@ class MmrTrackerService:
                 break
             entries.extend(stored_resp.data or [])
 
-            next_start, next_size = self._next_stored_history_page(stored_resp)
-            if next_start is None:
+            next_page, next_size = self._next_stored_history_page(stored_resp)
+            if next_page is None:
                 break
-            if next_start in seen_starts:
+            if next_page in seen_pages:
                 raise RuntimeError("stored mmr history pagination did not advance")
-            start = next_start
+            page = next_page
             size = next_size
 
         return entries
@@ -362,7 +362,8 @@ class MmrTrackerService:
             return None, None
 
         before = getattr(results, "before", 0) or 0
-        return before + returned, returned
+        current_page = before // returned + 1
+        return current_page + 1, returned
 
     @staticmethod
     def _history_entry_to_dict(entry: Any) -> dict[str, Any]:

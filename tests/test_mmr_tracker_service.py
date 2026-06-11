@@ -91,14 +91,14 @@ class FakeHenrik:
         platform: str,
         puuid: str,
         *,
-        start=None,
+        page=None,
         size=None,
     ):
-        self.calls.append(("stored", (region, platform, puuid, start, size)))
+        self.calls.append(("stored", (region, platform, puuid, page, size)))
         if self.stored_error:
             raise self.stored_error
         if self.stored_pages is not None:
-            return self.stored_pages[start], None
+            return self.stored_pages[page], None
         return self.stored, None
 
     async def get_mmr_history_by_puuid(self, region: str, platform: str, puuid: str):
