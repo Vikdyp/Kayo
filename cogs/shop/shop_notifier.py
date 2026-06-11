@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import discord
@@ -14,6 +15,9 @@ from cogs.shop.services import ShopBundle, ShopBundleMetadata, ValorantShopServi
 from integrations.exceptions import IntegrationError, RateLimitError
 
 logger = logging.getLogger(__name__)
+
+SHOP_CHECK_INTERVAL_MINUTES = 5
+SHOP_FETCH_RETRY_DELAYS_SECONDS = (15.0, 45.0)
 
 
 class ValorantShopNotifier(commands.Cog):
@@ -31,10 +35,10 @@ class ValorantShopNotifier(commands.Cog):
         if self.check_shop_task.is_running():
             self.check_shop_task.cancel()
 
-    @tasks.loop(minutes=30)
+    @tasks.loop(minutes=SHOP_CHECK_INTERVAL_MINUTES)
     async def check_shop_task(self) -> None:
         try:
-            bundles = await self._service.fetch_featured_bundles()
+            bundles = await self._fetch_featured_bundles_with_retry()
         except RateLimitError:
             logger.warning("Valorant shop check skipped: HenrikDev rate limit reached.")
             return
@@ -54,6 +58,29 @@ class ValorantShopNotifier(commands.Cog):
                 await self._notify_guild(guild, bundles, metadata_cache)
             except Exception:
                 logger.exception("Valorant shop notification failed for guild %s.", guild.id)
+
+    async def _fetch_featured_bundles_with_retry(
+        self,
+        *,
+        retry_delays: tuple[float, ...] = SHOP_FETCH_RETRY_DELAYS_SECONDS,
+    ) -> tuple[ShopBundle, ...]:
+        for attempt, delay in enumerate((*retry_delays, None), start=1):
+            try:
+                return await self._service.fetch_featured_bundles()
+            except RateLimitError:
+                raise
+            except IntegrationError:
+                if delay is None:
+                    raise
+                logger.warning(
+                    "Valorant shop fetch failed on attempt %s/%s; retrying in %.0fs.",
+                    attempt,
+                    len(retry_delays) + 1,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+
+        raise RuntimeError("unreachable Valorant shop retry state")
 
     @check_shop_task.before_loop
     async def before_check_shop_task(self) -> None:

@@ -8,41 +8,30 @@ from cogs.shop.services import ShopBundle, ShopBundleItem, ShopBundleMetadata
 
 
 def build_bundle_embed(bundle: ShopBundle, metadata: ShopBundleMetadata | None) -> discord.Embed:
-    name = metadata.display_name if metadata else "Nouveau bundle Valorant"
+    name = _bundle_display_name(metadata, bundle)
     embed = discord.Embed(
-        title=f"Boutique Valorant - {name}",
-        description="Un nouveau bundle est disponible.",
+        title=f"🛍️ {name}",
+        description="Un nouveau bundle est dispo ! 🎉",
         color=discord.Color.red(),
     )
-    embed.add_field(name="Prix total", value=f"{bundle.bundle_price} VP", inline=True)
-    embed.add_field(name="Expire", value=_format_expiration(bundle), inline=True)
+    embed.add_field(name="💰 Prix total", value=f"{bundle.bundle_price} VP", inline=True)
+    embed.add_field(name=f"🛍️ **{name}**", value=f"⏳ Jusqu’au {_format_expiration(bundle)}", inline=True)
 
     image_url = _best_bundle_image(metadata)
     if image_url:
         embed.set_image(url=image_url)
 
-    embed.set_footer(text="Source: HenrikDev / Valorant-API")
     return embed
 
 
 def build_item_embed(item: ShopBundleItem, *, whole_sale_only: bool) -> discord.Embed:
     embed = discord.Embed(title=item.name, color=discord.Color.dark_gold())
 
-    if item.item_type:
-        embed.add_field(name="Type", value=item.item_type, inline=True)
-
-    if whole_sale_only:
-        embed.add_field(
-            name="Vente groupee",
-            value="Disponible uniquement dans le bundle complet.",
-            inline=False,
-        )
-    else:
-        if item.base_price is not None:
-            embed.add_field(name="Prix", value=f"{item.base_price} VP", inline=True)
-        if item.discount_percent > 0:
-            discount = _format_discount(item.discount_percent)
-            embed.add_field(name="Reduction", value=discount, inline=True)
+    if item.base_price is not None:
+        embed.add_field(name="💰 Prix", value=f"{item.base_price} VP", inline=True)
+    if item.discount_percent > 0:
+        discount = _format_discount(item.discount_percent)
+        embed.add_field(name="🏷 Réduction", value=discount, inline=True)
 
     if item.image_url:
         embed.set_image(url=item.image_url)
@@ -51,8 +40,11 @@ def build_item_embed(item: ShopBundleItem, *, whole_sale_only: bool) -> discord.
 
 
 def thread_name_for_bundle(metadata: ShopBundleMetadata | None, bundle: ShopBundle) -> str:
-    name = metadata.display_name if metadata else bundle.bundle_uuid
-    return f"Details - {name}"[:100]
+    return f"🛍️ {_bundle_display_name(metadata, bundle)}"[:100]
+
+
+def _bundle_display_name(metadata: ShopBundleMetadata | None, bundle: ShopBundle) -> str:
+    return metadata.display_name if metadata else bundle.bundle_uuid
 
 
 def _best_bundle_image(metadata: ShopBundleMetadata | None) -> str | None:
