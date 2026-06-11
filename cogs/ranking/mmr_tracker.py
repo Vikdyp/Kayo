@@ -14,6 +14,32 @@ from cogs.ranking.services.mmr_stats_service import calculate_mmr_stats, parse_m
 logger = logging.getLogger(__name__)
 
 
+def _format_tracking_enabled_message(result) -> str:
+    if result.status == "imported":
+        return (
+            "✅ Suivi MMR activé. "
+            f"Historique importé ({result.inserted_count} entrées)."
+        )
+    if result.status == "already_present":
+        return "✅ Suivi MMR activé. L'historique de ce compte est déjà présent."
+    if result.status == "pending_sync":
+        return (
+            "✅ Suivi MMR activé. Synchronisation Valorant en cours ; "
+            "l'historique sera importé automatiquement ensuite."
+        )
+    if result.status == "empty":
+        return "✅ Suivi MMR activé. Aucun historique MMR disponible via l'API pour le moment."
+    if result.status == "rate_limited":
+        return (
+            "✅ Suivi MMR activé. L'API Valorant est rate-limitée ; "
+            "nouvel essai automatique plus tard."
+        )
+    return (
+        "✅ Suivi MMR activé. L'import de l'historique a échoué temporairement ; "
+        "nouvel essai automatique plus tard."
+    )
+
+
 async def _valorant_link_required(interaction: discord.Interaction) -> bool:
     linked = await interaction.client.ranking_service.account_linked(interaction.user.id)
     if not linked:
@@ -77,8 +103,11 @@ class MMRTracker(commands.Cog):
             await interaction.response.defer(thinking=True, ephemeral=True)
             if action.value == "activer":
                 await self._tracker_svc.enable_tracking(discord_id)
-                await self._tracker_svc.fetch_full_history(discord_id)
-                return await interaction.followup.send("✅ Suivi MMR activé.", ephemeral=True)
+                result = await self._tracker_svc.fetch_full_history(discord_id)
+                return await interaction.followup.send(
+                    _format_tracking_enabled_message(result),
+                    ephemeral=True,
+                )
             else:
                 await self._tracker_svc.disable_tracking(discord_id)
                 return await interaction.followup.send("⏸️ Suivi MMR désactivé.", ephemeral=True)

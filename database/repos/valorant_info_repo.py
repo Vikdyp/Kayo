@@ -25,6 +25,9 @@ class ValorantInfoRow:
     last_checked_at: datetime | None
     last_notification: datetime | None
     deactivated_at: datetime | None
+    mmr_history_backfilled_at: datetime | None
+    mmr_history_backfill_attempted_at: datetime | None
+    mmr_history_backfill_error: str | None
 
 
 @dataclass(frozen=True)
@@ -52,6 +55,9 @@ def _row_to_model(row: asyncpg.Record) -> ValorantInfoRow:
         last_checked_at=row["last_checked_at"],
         last_notification=row["last_notification"],
         deactivated_at=row["deactivated_at"],
+        mmr_history_backfilled_at=row["mmr_history_backfilled_at"],
+        mmr_history_backfill_attempted_at=row["mmr_history_backfill_attempted_at"],
+        mmr_history_backfill_error=row["mmr_history_backfill_error"],
     )
 
 
@@ -68,7 +74,10 @@ class ValorantInfoRepo:
             SELECT user_id, pseudo, tag, puuid, region, platform, rank, elo,
                    current_season, current_act, is_active, tracking_enabled,
                    error_count, last_error_at, last_checked_at,
-                   last_notification, deactivated_at
+                   last_notification, deactivated_at,
+                   mmr_history_backfilled_at,
+                   mmr_history_backfill_attempted_at,
+                   mmr_history_backfill_error
               FROM valorant_info
              WHERE user_id = $1;
             """,
@@ -85,7 +94,10 @@ class ValorantInfoRepo:
             SELECT user_id, pseudo, tag, puuid, region, platform, rank, elo,
                    current_season, current_act, is_active, tracking_enabled,
                    error_count, last_error_at, last_checked_at,
-                   last_notification, deactivated_at
+                   last_notification, deactivated_at,
+                   mmr_history_backfilled_at,
+                   mmr_history_backfill_attempted_at,
+                   mmr_history_backfill_error
               FROM valorant_info
              WHERE pseudo = $1
                AND tag = $2
@@ -120,7 +132,10 @@ class ValorantInfoRepo:
             SELECT user_id, pseudo, tag, puuid, region, platform, rank, elo,
                    current_season, current_act, is_active, tracking_enabled,
                    error_count, last_error_at, last_checked_at,
-                   last_notification, deactivated_at
+                   last_notification, deactivated_at,
+                   mmr_history_backfilled_at,
+                   mmr_history_backfill_attempted_at,
+                   mmr_history_backfill_error
               FROM valorant_info
              WHERE is_active = TRUE
                AND pseudo IS NOT NULL
@@ -145,7 +160,10 @@ class ValorantInfoRepo:
             SELECT user_id, pseudo, tag, puuid, region, platform, rank, elo,
                    current_season, current_act, is_active, tracking_enabled,
                    error_count, last_error_at, last_checked_at,
-                   last_notification, deactivated_at
+                   last_notification, deactivated_at,
+                   mmr_history_backfilled_at,
+                   mmr_history_backfill_attempted_at,
+                   mmr_history_backfill_error
               FROM valorant_info
              WHERE pseudo IS NOT NULL
                AND tag    IS NOT NULL;
@@ -162,9 +180,13 @@ class ValorantInfoRepo:
             SELECT user_id, pseudo, tag, puuid, region, platform, rank, elo,
                    current_season, current_act, is_active, tracking_enabled,
                    error_count, last_error_at, last_checked_at,
-                   last_notification, deactivated_at
+                   last_notification, deactivated_at,
+                   mmr_history_backfilled_at,
+                   mmr_history_backfill_attempted_at,
+                   mmr_history_backfill_error
               FROM valorant_info
-             WHERE tracking_enabled = TRUE;
+             WHERE tracking_enabled = TRUE
+               AND is_active = TRUE;
             """
         )
         return [_row_to_model(r) for r in rows]
@@ -225,7 +247,10 @@ class ValorantInfoRepo:
                           error_count    = 0,
                           last_error_at  = NULL,
                           last_checked_at = NULL,
-                          last_notification = NULL;
+                          last_notification = NULL,
+                          mmr_history_backfilled_at = NULL,
+                          mmr_history_backfill_attempted_at = NULL,
+                          mmr_history_backfill_error = NULL;
             """,
             user_id, pseudo, tag,
         )
@@ -308,7 +333,10 @@ class ValorantInfoRepo:
                    error_count = 0,
                    last_error_at = NULL,
                    last_checked_at = NULL,
-                   last_notification = NULL
+                   last_notification = NULL,
+                   mmr_history_backfilled_at = NULL,
+                   mmr_history_backfill_attempted_at = NULL,
+                   mmr_history_backfill_error = NULL
              WHERE user_id = $3;
             """,
             pseudo, tag, user_id,
@@ -475,6 +503,36 @@ class ValorantInfoRepo:
         await conn.execute(
             "UPDATE valorant_info SET last_notification = $1 WHERE user_id = $2;",
             ts, user_id,
+        )
+
+    @staticmethod
+    async def mark_mmr_history_backfill_attempt(
+        conn: asyncpg.Connection, user_id: int, error: str | None = None
+    ) -> None:
+        await conn.execute(
+            """
+            UPDATE valorant_info
+               SET mmr_history_backfill_attempted_at = NOW(),
+                   mmr_history_backfill_error = $1
+             WHERE user_id = $2;
+            """,
+            error,
+            user_id,
+        )
+
+    @staticmethod
+    async def mark_mmr_history_backfilled(
+        conn: asyncpg.Connection, user_id: int
+    ) -> None:
+        await conn.execute(
+            """
+            UPDATE valorant_info
+               SET mmr_history_backfilled_at = NOW(),
+                   mmr_history_backfill_attempted_at = NOW(),
+                   mmr_history_backfill_error = NULL
+             WHERE user_id = $1;
+            """,
+            user_id,
         )
 
     @staticmethod

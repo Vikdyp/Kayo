@@ -439,9 +439,25 @@ EXPECTED_COLUMNS: Mapping[str, frozenset[str]] = {
             "last_checked_at",
             "last_notification",
             "deactivated_at",
+            "mmr_history_backfilled_at",
+            "mmr_history_backfill_attempted_at",
+            "mmr_history_backfill_error",
         }
     ),
-    "valorant_elo_history_parent": frozenset({"season", "act", "user_id", "recorded_at", "elo", "is_win"}),
+    "valorant_elo_history_parent": frozenset(
+        {
+            "season",
+            "act",
+            "user_id",
+            "recorded_at",
+            "elo",
+            "is_win",
+            "puuid",
+            "rr_delta",
+            "match_id",
+            "source",
+        }
+    ),
     "valorant_sent_bundles": frozenset({"guild_id", "bundle_uuid", "notified_at"}),
 }
 
@@ -734,6 +750,7 @@ EXPECTED_INDEXES = frozenset(
         "idx_valorant_info_tracking",
         "idx_valorant_info_pseudo_tag",
         "idx_valorant_info_puuid",
+        "idx_valorant_elo_history_user_puuid_recorded_at",
         "idx_valorant_sent_bundles_guild_id",
     }
 )

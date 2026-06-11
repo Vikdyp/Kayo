@@ -87,6 +87,18 @@ def test_simple_v2_backfill_migration_is_non_destructive() -> None:
     assert "INSERT INTO VALORANT_SENT_BUNDLES_V2" in migration
 
 
+def test_mmr_history_metadata_migration_is_additive() -> None:
+    migration = _migration_text("029_mmr_history_metadata.sql")
+
+    _assert_non_destructive(migration)
+    assert "ADD COLUMN IF NOT EXISTS PUUID" in migration
+    assert "ADD COLUMN IF NOT EXISTS RR_DELTA" in migration
+    assert "ADD COLUMN IF NOT EXISTS MATCH_ID" in migration
+    assert "ADD COLUMN IF NOT EXISTS SOURCE" in migration
+    assert "ADD COLUMN IF NOT EXISTS MMR_HISTORY_BACKFILLED_AT" in migration
+    assert "IDX_VALORANT_ELO_HISTORY_USER_PUUID_RECORDED_AT" in migration
+
+
 @pytest.mark.parametrize(
     ("name", "expected_fragments"),
     [

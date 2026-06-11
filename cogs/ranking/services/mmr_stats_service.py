@@ -57,29 +57,22 @@ def calculate_mmr_stats(
     *,
     start_date: date | None,
 ) -> MmrStats | None:
-    diffs: list[tuple[datetime, int]] = []
-    for index in range(1, len(history)):
-        recorded_at = history[index].recorded_at
-        if start_date and recorded_at.date() < start_date:
-            continue
-
-        diff = history[index].elo - history[index - 1].elo
-        diffs.append((recorded_at, diff))
-
-    if not diffs:
+    period_rows = [
+        row
+        for row in history
+        if not start_date or row.recorded_at.date() >= start_date
+    ]
+    if not period_rows:
         return None
 
-    dates_plot = [
-        row.recorded_at
-        for row in history
-        if not start_date or row.recorded_at.date() >= start_date
-    ]
-    elos_plot = [
-        row.elo
-        for row in history
-        if not start_date or row.recorded_at.date() >= start_date
-    ]
-    if len(dates_plot) < 2:
+    if any(_row_attr(row, "match_id") for row in period_rows):
+        diffs, plot_rows = _metadata_diffs(history, start_date, require_match_id=True)
+    elif any(_row_attr(row, "rr_delta") is not None for row in period_rows):
+        diffs, plot_rows = _metadata_diffs(history, start_date, require_match_id=False)
+    else:
+        diffs, plot_rows = _legacy_diffs(history, start_date), period_rows
+
+    if not diffs or len(plot_rows) < 2:
         return None
 
     wins = [diff for _, diff in diffs if diff > 0]
@@ -91,6 +84,62 @@ def calculate_mmr_stats(
         avg_win=round(sum(wins) / len(wins)) if wins else 0,
         avg_loss=round(sum(losses) / len(losses)) if losses else 0,
         last_diff=diffs[-1][1],
-        dates_plot=dates_plot,
-        elos_plot=elos_plot,
+        dates_plot=[row.recorded_at for row in plot_rows],
+        elos_plot=[row.elo for row in plot_rows],
     )
+
+
+def _legacy_diffs(
+    history: Sequence[MmrHistoryRow],
+    start_date: date | None,
+) -> list[tuple[datetime, int]]:
+    diffs: list[tuple[datetime, int]] = []
+    for index in range(1, len(history)):
+        recorded_at = history[index].recorded_at
+        if start_date and recorded_at.date() < start_date:
+            continue
+
+        diff = history[index].elo - history[index - 1].elo
+        diffs.append((recorded_at, diff))
+    return diffs
+
+
+def _metadata_diffs(
+    history: Sequence[MmrHistoryRow],
+    start_date: date | None,
+    *,
+    require_match_id: bool,
+) -> tuple[list[tuple[datetime, int]], list[MmrHistoryRow]]:
+    diffs: list[tuple[datetime, int]] = []
+    plot_rows: list[MmrHistoryRow] = []
+    previous: MmrHistoryRow | None = None
+
+    for row in history:
+        in_period = not start_date or row.recorded_at.date() >= start_date
+        if not in_period:
+            previous = row
+            continue
+
+        match_id = _row_attr(row, "match_id")
+        if require_match_id and not match_id:
+            previous = row
+            continue
+
+        rr_delta = _row_attr(row, "rr_delta")
+        if rr_delta is None and previous is not None:
+            rr_delta = row.elo - previous.elo
+        if rr_delta is None:
+            previous = row
+            continue
+
+        if require_match_id or rr_delta != 0:
+            diffs.append((row.recorded_at, rr_delta))
+            plot_rows.append(row)
+
+        previous = row
+
+    return diffs, plot_rows
+
+
+def _row_attr(row: MmrHistoryRow, name: str):
+    return getattr(row, name, None)

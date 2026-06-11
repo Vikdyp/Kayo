@@ -14,6 +14,10 @@ class EloHistoryRow:
     recorded_at: datetime
     elo: int
     is_win: bool
+    puuid: str | None
+    rr_delta: int | None
+    match_id: str | None
+    source: str
 
 
 def _row_to_model(row: asyncpg.Record) -> EloHistoryRow:
@@ -24,6 +28,10 @@ def _row_to_model(row: asyncpg.Record) -> EloHistoryRow:
         recorded_at=row["recorded_at"],
         elo=row["elo"],
         is_win=row["is_win"],
+        puuid=row["puuid"],
+        rr_delta=row["rr_delta"],
+        match_id=row["match_id"],
+        source=row["source"],
     )
 
 
@@ -44,17 +52,23 @@ class ValorantEloHistoryRepo:
         user_id: int,
         season: int | None = None,
         act: int | None = None,
+        puuid: str | None = None,
     ) -> list[EloHistoryRow]:
         sql = (
-            "SELECT season, act, user_id, recorded_at, elo, is_win "
+            "SELECT season, act, user_id, recorded_at, elo, is_win, "
+            "       puuid, rr_delta, match_id, source "
             "  FROM valorant_elo_history_parent "
             " WHERE user_id = $1"
         )
         params: list = [user_id]
 
         if season is not None and act is not None:
-            sql += " AND season = $2 AND act = $3"
+            sql += f" AND season = ${len(params) + 1} AND act = ${len(params) + 2}"
             params += [season, act]
+
+        if puuid is not None:
+            sql += f" AND puuid = ${len(params) + 1}"
+            params.append(puuid)
 
         sql += " ORDER BY recorded_at;"
         rows = await conn.fetch(sql, *params)
@@ -62,33 +76,37 @@ class ValorantEloHistoryRepo:
 
     @staticmethod
     async def get_last_row(
-        conn: asyncpg.Connection, user_id: int
+        conn: asyncpg.Connection, user_id: int, puuid: str | None = None
     ) -> Optional[EloHistoryRow]:
-        row = await conn.fetchrow(
-            """
-            SELECT season, act, user_id, recorded_at, elo, is_win
-              FROM valorant_elo_history_parent
-             WHERE user_id = $1
-             ORDER BY recorded_at DESC
-             LIMIT 1;
-            """,
-            user_id,
+        sql = (
+            "SELECT season, act, user_id, recorded_at, elo, is_win, "
+            "       puuid, rr_delta, match_id, source "
+            "  FROM valorant_elo_history_parent "
+            " WHERE user_id = $1"
         )
+        params: list = [user_id]
+        if puuid is not None:
+            sql += " AND puuid = $2"
+            params.append(puuid)
+        sql += " ORDER BY recorded_at DESC LIMIT 1;"
+        row = await conn.fetchrow(sql, *params)
         return _row_to_model(row) if row else None
 
     @staticmethod
     async def get_distinct_partitions(
-        conn: asyncpg.Connection, user_id: int
+        conn: asyncpg.Connection, user_id: int, puuid: str | None = None
     ) -> list[tuple[int, int]]:
-        rows = await conn.fetch(
-            """
-            SELECT DISTINCT season, act
-              FROM valorant_elo_history_parent
-             WHERE user_id = $1
-             ORDER BY season DESC, act DESC;
-            """,
-            user_id,
+        sql = (
+            "SELECT DISTINCT season, act "
+            "  FROM valorant_elo_history_parent "
+            " WHERE user_id = $1"
         )
+        params: list = [user_id]
+        if puuid is not None:
+            sql += " AND puuid = $2"
+            params.append(puuid)
+        sql += " ORDER BY season DESC, act DESC;"
+        rows = await conn.fetch(sql, *params)
         return [(r["season"], r["act"]) for r in rows]
 
     @staticmethod
@@ -139,13 +157,38 @@ class ValorantEloHistoryRepo:
         recorded_at: datetime,
         elo: int,
         is_win: bool,
-    ) -> None:
-        await conn.execute(
+        puuid: str | None = None,
+        rr_delta: int | None = None,
+        match_id: str | None = None,
+        source: str = "tracker_snapshot",
+    ) -> bool:
+        result = await conn.execute(
             """
             INSERT INTO valorant_elo_history_parent
-                   (season, act, user_id, recorded_at, elo, is_win)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT (season, act, user_id, recorded_at) DO NOTHING;
+                   (season, act, user_id, recorded_at, elo, is_win,
+                    puuid, rr_delta, match_id, source)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ON CONFLICT (season, act, user_id, recorded_at)
+            DO UPDATE SET
+                puuid = COALESCE(valorant_elo_history_parent.puuid, EXCLUDED.puuid),
+                rr_delta = COALESCE(valorant_elo_history_parent.rr_delta, EXCLUDED.rr_delta),
+                match_id = COALESCE(valorant_elo_history_parent.match_id, EXCLUDED.match_id),
+                source = CASE
+                    WHEN valorant_elo_history_parent.source = 'legacy'
+                         AND EXCLUDED.source <> 'legacy'
+                    THEN EXCLUDED.source
+                    ELSE valorant_elo_history_parent.source
+                END;
             """,
-            season, act, user_id, recorded_at, elo, is_win,
+            season,
+            act,
+            user_id,
+            recorded_at,
+            elo,
+            is_win,
+            puuid,
+            rr_delta,
+            match_id,
+            source,
         )
+        return result != "INSERT 0 0"
