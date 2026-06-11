@@ -406,6 +406,26 @@ async def test_fetch_full_history_returns_rate_limited():
 
 
 @pytest.mark.asyncio
+async def test_fetch_full_history_returns_error_on_stored_failure_without_live_fallback():
+    db = FakeValorantDb()
+    db.info = player_info()
+    service = MmrTrackerService(
+        db,
+        FakeHenrik(
+            stored_error=RuntimeError("stored page failed"),
+            live=ns(status=200, data=ns(history=[history_entry()])),
+        ),
+    )
+
+    result = await service.fetch_full_history(123)
+
+    assert result.status == "error"
+    assert result.error == "stored page failed"
+    assert db.backfill_attempts == [(10, None), (10, "stored page failed")]
+    assert db.backfilled == []
+
+
+@pytest.mark.asyncio
 async def test_fetch_full_history_returns_error_on_live_failure():
     db = FakeValorantDb()
     db.info = player_info()

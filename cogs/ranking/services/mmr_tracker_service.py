@@ -264,6 +264,9 @@ class MmrTrackerService:
             return MmrHistoryBackfillResult(status="rate_limited", error="rate_limited")
         except Exception as e:
             logger.error(f"[fetch_full_history] Erreur stored history: {e}")
+            error = self._short_error(e)
+            await self._valo_db.mark_mmr_history_backfill_attempt(user_id, error)
+            return MmrHistoryBackfillResult(status="error", error=error)
 
         # Fallback sur live history si vide
         if not history_entries:

@@ -89,7 +89,7 @@ class ValorantEloHistoryRepo:
         )
         params: list = [user_id]
         if puuid is not None:
-            sql += " AND puuid = $2"
+            sql += " AND (puuid = $2 OR (puuid IS NULL AND source = 'legacy'))"
             params.append(puuid)
         sql += " ORDER BY recorded_at DESC LIMIT 1;"
         row = await conn.fetchrow(sql, *params)

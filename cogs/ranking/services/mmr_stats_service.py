@@ -131,7 +131,7 @@ def _metadata_diffs(
             previous = row
             continue
 
-        if rr_delta != 0:
+        if rr_delta != 0 or _row_attr(row, "match_id"):
             diff_rows.append(_DiffRow(row, rr_delta))
 
         previous = row
