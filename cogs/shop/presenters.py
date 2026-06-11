@@ -10,28 +10,35 @@ from cogs.shop.services import ShopBundle, ShopBundleItem, ShopBundleMetadata
 def build_bundle_embed(bundle: ShopBundle, metadata: ShopBundleMetadata | None) -> discord.Embed:
     name = _bundle_display_name(metadata, bundle)
     embed = discord.Embed(
-        title=f"🛍️ {name}",
-        description="Un nouveau bundle est dispo ! 🎉",
+        title=f"🛍️ **{name}**",
+        description="**Un nouveau bundle est dispo !** 🎉",
         color=discord.Color.red(),
     )
-    embed.add_field(name="💰 Prix total", value=f"{bundle.bundle_price} VP", inline=True)
-    embed.add_field(name=f"🛍️ **{name}**", value=f"⏳ Jusqu’au {_format_expiration(bundle)}", inline=True)
+    embed.add_field(name="💰 Prix total", value=f"**{bundle.bundle_price} VP**", inline=True)
 
     image_url = _best_bundle_image(metadata)
     if image_url:
         embed.set_image(url=image_url)
 
+    embed.set_footer(text=f"⏳ Jusqu’au {_format_expiration(bundle)}")
     return embed
 
 
 def build_item_embed(item: ShopBundleItem, *, whole_sale_only: bool) -> discord.Embed:
     embed = discord.Embed(title=item.name, color=discord.Color.dark_gold())
 
-    if item.base_price is not None:
-        embed.add_field(name="💰 Prix", value=f"{item.base_price} VP", inline=True)
-    if item.discount_percent > 0:
-        discount = _format_discount(item.discount_percent)
-        embed.add_field(name="🏷 Réduction", value=discount, inline=True)
+    if whole_sale_only:
+        embed.add_field(
+            name="⚠️ Vente groupée",
+            value="Disponible uniquement en bundle complet",
+            inline=False,
+        )
+    else:
+        if item.base_price is not None:
+            embed.add_field(name="💰 Prix", value=f"**{item.base_price} VP**", inline=False)
+        if item.discount_percent > 0:
+            discount = _format_discount(item.discount_percent)
+            embed.add_field(name="🏷 Réduction", value=f"**{discount}**", inline=False)
 
     if item.image_url:
         embed.set_image(url=item.image_url)
@@ -40,7 +47,7 @@ def build_item_embed(item: ShopBundleItem, *, whole_sale_only: bool) -> discord.
 
 
 def thread_name_for_bundle(metadata: ShopBundleMetadata | None, bundle: ShopBundle) -> str:
-    return f"🛍️ {_bundle_display_name(metadata, bundle)}"[:100]
+    return f"Détails – {_bundle_display_name(metadata, bundle)}"[:100]
 
 
 def _bundle_display_name(metadata: ShopBundleMetadata | None, bundle: ShopBundle) -> str:
@@ -51,9 +58,9 @@ def _best_bundle_image(metadata: ShopBundleMetadata | None) -> str | None:
     if metadata is None:
         return None
     return (
-        metadata.vertical_promo_image_url
-        or metadata.display_icon_url
+        metadata.display_icon_url
         or metadata.display_icon_2_url
+        or metadata.vertical_promo_image_url
     )
 
 
@@ -79,4 +86,4 @@ def _format_discount(value: float) -> str:
     percent = value * 100 if 0 < value <= 1 else value
     if percent >= 100:
         return "Gratuit dans le bundle"
-    return f"-{int(percent)}%"
+    return f"-{int(percent)}% dans le bundle"

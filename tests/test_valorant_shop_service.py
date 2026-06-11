@@ -213,22 +213,22 @@ def test_valorant_shop_presenter_builds_bundle_embed() -> None:
     metadata = ShopBundleMetadata(
         uuid="bundle-1",
         display_name="Bundle Test",
-        display_icon_url=None,
+        display_icon_url="https://example.test/icon.png",
         display_icon_2_url=None,
         vertical_promo_image_url="https://example.test/vertical.png",
     )
 
     embed = build_bundle_embed(bundle, metadata)
 
-    assert embed.title == "🛍️ Bundle Test"
-    assert embed.description == "Un nouveau bundle est dispo ! 🎉"
+    assert embed.title == "🛍️ **Bundle Test**"
+    assert embed.description == "**Un nouveau bundle est dispo !** 🎉"
+    assert len(embed.fields) == 1
     assert embed.fields[0].name == "💰 Prix total"
-    assert embed.fields[0].value == "8700 VP"
-    assert embed.fields[1].name == "🛍️ **Bundle Test**"
-    assert embed.fields[1].value == "⏳ Jusqu’au 10/05/2026"
-    assert embed.image.url == "https://example.test/vertical.png"
-    assert embed.footer.text is None
-    assert thread_name_for_bundle(metadata, bundle) == "🛍️ Bundle Test"
+    assert embed.fields[0].value == "**8700 VP**"
+    assert embed.fields[0].inline is True
+    assert embed.image.url == "https://example.test/icon.png"
+    assert embed.footer.text == "⏳ Jusqu’au 10/05/2026"
+    assert thread_name_for_bundle(metadata, bundle) == "Détails – Bundle Test"
 
 
 def test_valorant_shop_presenter_builds_item_embed_like_legacy_message() -> None:
@@ -247,11 +247,33 @@ def test_valorant_shop_presenter_builds_item_embed_like_legacy_message() -> None
     embed = build_item_embed(item, whole_sale_only=True)
 
     assert embed.title == "Blackthorn Buddy"
-    assert [(field.name, field.value) for field in embed.fields] == [
-        ("💰 Prix", "475 VP"),
-        ("🏷 Réduction", "Gratuit dans le bundle"),
+    assert [(field.name, field.value, field.inline) for field in embed.fields] == [
+        ("⚠️ Vente groupée", "Disponible uniquement en bundle complet", False),
     ]
     assert embed.image.url == "https://example.test/item.png"
+
+
+def test_valorant_shop_presenter_builds_discounted_item_embed_like_legacy_message() -> None:
+    item = ShopBundleItem(
+        uuid="item-2",
+        name="Forsaken Operator",
+        image_url="https://example.test/operator.png",
+        item_type="skin",
+        amount=1,
+        discount_percent=0.42,
+        base_price=1775,
+        discounted_price=1030,
+        promo_item=False,
+    )
+
+    embed = build_item_embed(item, whole_sale_only=False)
+
+    assert embed.title == "Forsaken Operator"
+    assert [(field.name, field.value, field.inline) for field in embed.fields] == [
+        ("💰 Prix", "**1775 VP**", False),
+        ("🏷 Réduction", "**-42% dans le bundle**", False),
+    ]
+    assert embed.image.url == "https://example.test/operator.png"
 
 
 def test_shop_notifier_checks_shop_every_five_minutes() -> None:
@@ -290,8 +312,8 @@ async def test_shop_notifier_sends_bundle_thread_and_marks_sent() -> None:
     await notifier._notify_guild(FakeGuild(), bundles, {})
 
     assert len(channel.sent_embeds) == 1
-    assert channel.sent_embeds[0].title == "🛍️ Bundle Test"
-    assert channel.messages[0].thread_name == "🛍️ Bundle Test"
+    assert channel.sent_embeds[0].title == "🛍️ **Bundle Test**"
+    assert channel.messages[0].thread_name == "Détails – Bundle Test"
     assert channel.messages[0].auto_archive_duration == 1440
     assert [embed.title for embed in channel.messages[0].thread.embeds] == ["Vandal Test"]
     assert (1, "bundle-1") in db.sent
