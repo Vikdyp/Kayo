@@ -93,6 +93,22 @@ les commits et aide la personne suivante a comprendre l'etat reel du projet.
 - Logs recents : backfills MMR termines ; 3 entrees Henrik ignorees sans
   `season.short` ; un 502 Henrik boutique Valorant observe, sans lien avec MMR.
 
+## 2026-06-11 - Notifications boutique Valorant
+
+- Diagnostic production : les erreurs boutique etaient des `HTTP 502 Bad Gateway`
+  Henrik sur `/valorant/v2/store-featured`; Kayo restait up.
+- Verification Discord production : la notification `Give Back // V26` avait bien
+  un fil actif avec 8 messages d'items.
+- Correctif valide sur `Perfect Team Test` avec instance VPS temporaire :
+  polling boutique a 5 minutes, retry court `15s` puis `45s`, ancien style
+  d'embed restaure, footer source retire, fils crees avec 8 items par bundle.
+- Deploiement production effectue via `tools/vps/deploy-from-git.sh` sur le
+  commit `e88f13c`.
+- Verification runtime : `kayo-bot` up, `kayo-postgres` healthy, smoke runtime
+  OK avec 27 cogs charges, logs recents sans erreur critique.
+- Ressources test nettoyees : `kayo-bot-test`, images test, worktree
+  `/tmp/kayo-test-*` et base `kayo_test` supprimes.
+
 ## Suite recommandee
 
 1. Copier automatiquement les backups PostgreSQL hors VPS.
