@@ -72,7 +72,7 @@ def test_calculate_mmr_stats_prefers_henrik_matches_over_tracker_snapshots() -> 
     assert stats.avg_win == 17
     assert stats.avg_loss == -10
     assert stats.last_diff == 16
-    assert stats.elos_plot == [1010, 1000, 1025, 1041]
+    assert stats.elos_plot == [1000, 1010, 1000, 1025, 1041]
 
 
 def test_calculate_mmr_stats_keeps_tracker_snapshots_after_imports() -> None:
@@ -87,7 +87,7 @@ def test_calculate_mmr_stats_keeps_tracker_snapshots_after_imports() -> None:
     assert stats is not None
     assert stats.total_games == 2
     assert stats.total_change == 30
-    assert stats.elos_plot == [1010, 1030]
+    assert stats.elos_plot == [1000, 1010, 1030]
 
 
 def test_calculate_mmr_stats_dedupes_aggregated_tracker_snapshot_after_imports() -> None:
@@ -102,7 +102,7 @@ def test_calculate_mmr_stats_dedupes_aggregated_tracker_snapshot_after_imports()
     assert stats is not None
     assert stats.total_games == 2
     assert stats.total_change == 25
-    assert stats.elos_plot == [1010, 1025]
+    assert stats.elos_plot == [1000, 1010, 1025]
 
 
 def test_calculate_mmr_stats_counts_zero_rr_imported_matches() -> None:
@@ -118,7 +118,19 @@ def test_calculate_mmr_stats_counts_zero_rr_imported_matches() -> None:
     assert stats.total_games == 3
     assert stats.total_change == 5
     assert stats.last_diff == -5
-    assert stats.elos_plot == [1010, 1010, 1005]
+    assert stats.elos_plot == [1000, 1010, 1010, 1005]
+
+
+def test_calculate_mmr_stats_adds_baseline_for_single_imported_match() -> None:
+    stats = calculate_mmr_stats(
+        [_row_at(10, 0, 1010, match_id="m1", rr_delta=10, source="henrik_live")],
+        start_date=date(2026, 5, 8),
+    )
+
+    assert stats is not None
+    assert stats.total_games == 1
+    assert stats.total_change == 10
+    assert stats.elos_plot == [1000, 1010]
 
 
 def test_calculate_mmr_stats_ignores_first_filtered_legacy_delta() -> None:

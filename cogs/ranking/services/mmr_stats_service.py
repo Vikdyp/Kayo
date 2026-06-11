@@ -21,6 +21,12 @@ class _DiffRow:
 
 
 @dataclass(frozen=True)
+class _SyntheticPlotRow:
+    recorded_at: datetime
+    elo: int
+
+
+@dataclass(frozen=True)
 class MmrPeriodSelection:
     period: str
     season_num: int | None
@@ -174,6 +180,9 @@ def _metadata_plot_rows(
     baseline = _find_plot_baseline(history, start_date, first_change)
     if baseline is not None and baseline is not first_change:
         return [baseline, *selected_rows]
+    imported_baseline = _imported_plot_baseline(diff_rows[0])
+    if imported_baseline is not None:
+        return [imported_baseline, *selected_rows]
     return selected_rows
 
 
@@ -193,6 +202,15 @@ def _find_plot_baseline(
             previous = row
 
     return first_change
+
+
+def _imported_plot_baseline(diff_row: _DiffRow) -> _SyntheticPlotRow | None:
+    if not _row_attr(diff_row.row, "match_id"):
+        return None
+    return _SyntheticPlotRow(
+        recorded_at=diff_row.row.recorded_at - timedelta(seconds=1),
+        elo=diff_row.row.elo - diff_row.diff,
+    )
 
 
 def _row_attr(row: MmrHistoryRow, name: str):

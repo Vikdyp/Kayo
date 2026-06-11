@@ -53,6 +53,7 @@ class ValorantEloHistoryRepo:
         season: int | None = None,
         act: int | None = None,
         puuid: str | None = None,
+        legacy_only: bool = False,
     ) -> list[EloHistoryRow]:
         sql = (
             "SELECT season, act, user_id, recorded_at, elo, is_win, "
@@ -67,11 +68,10 @@ class ValorantEloHistoryRepo:
             params += [season, act]
 
         if puuid is not None:
-            sql += (
-                f" AND (puuid = ${len(params) + 1} "
-                "OR (puuid IS NULL AND source = 'legacy'))"
-            )
+            sql += f" AND puuid = ${len(params) + 1}"
             params.append(puuid)
+        elif legacy_only:
+            sql += " AND puuid IS NULL AND source = 'legacy'"
 
         sql += " ORDER BY recorded_at;"
         rows = await conn.fetch(sql, *params)
@@ -79,7 +79,10 @@ class ValorantEloHistoryRepo:
 
     @staticmethod
     async def get_last_row(
-        conn: asyncpg.Connection, user_id: int, puuid: str | None = None
+        conn: asyncpg.Connection,
+        user_id: int,
+        puuid: str | None = None,
+        legacy_only: bool = False,
     ) -> Optional[EloHistoryRow]:
         sql = (
             "SELECT season, act, user_id, recorded_at, elo, is_win, "
@@ -89,15 +92,20 @@ class ValorantEloHistoryRepo:
         )
         params: list = [user_id]
         if puuid is not None:
-            sql += " AND (puuid = $2 OR (puuid IS NULL AND source = 'legacy'))"
+            sql += " AND puuid = $2"
             params.append(puuid)
+        elif legacy_only:
+            sql += " AND puuid IS NULL AND source = 'legacy'"
         sql += " ORDER BY recorded_at DESC LIMIT 1;"
         row = await conn.fetchrow(sql, *params)
         return _row_to_model(row) if row else None
 
     @staticmethod
     async def get_distinct_partitions(
-        conn: asyncpg.Connection, user_id: int, puuid: str | None = None
+        conn: asyncpg.Connection,
+        user_id: int,
+        puuid: str | None = None,
+        legacy_only: bool = False,
     ) -> list[tuple[int, int]]:
         sql = (
             "SELECT DISTINCT season, act "
@@ -106,8 +114,10 @@ class ValorantEloHistoryRepo:
         )
         params: list = [user_id]
         if puuid is not None:
-            sql += " AND (puuid = $2 OR (puuid IS NULL AND source = 'legacy'))"
+            sql += " AND puuid = $2"
             params.append(puuid)
+        elif legacy_only:
+            sql += " AND puuid IS NULL AND source = 'legacy'"
         sql += " ORDER BY season DESC, act DESC;"
         rows = await conn.fetch(sql, *params)
         return [(r["season"], r["act"]) for r in rows]

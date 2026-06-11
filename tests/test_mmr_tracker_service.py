@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from cogs.ranking.services.mmr_tracker_service import MmrTrackerService
-from integrations.exceptions import RateLimitError
+from integrations.exceptions import ApiError, RateLimitError
 
 
 def ns(**kwargs):
@@ -403,6 +403,26 @@ async def test_fetch_full_history_returns_rate_limited():
     assert result.status == "rate_limited"
     assert db.backfill_attempts == [(10, None), (10, "rate_limited")]
     assert db.backfilled == []
+
+
+@pytest.mark.asyncio
+async def test_fetch_full_history_falls_back_to_live_when_stored_is_missing():
+    db = FakeValorantDb()
+    db.info = player_info()
+    service = MmrTrackerService(
+        db,
+        FakeHenrik(
+            stored_error=ApiError("HTTP 404: not found"),
+            live=ns(status=200, data=ns(history=[history_entry(match_id="live-1")])),
+        ),
+    )
+
+    result = await service.fetch_full_history(123)
+
+    assert result.status == "imported"
+    assert result.source == "henrik_live"
+    assert db.backfill_attempts == [(10, None)]
+    assert db.backfilled == [10]
 
 
 @pytest.mark.asyncio

@@ -249,8 +249,12 @@ class ValorantDbService:
             if user_id is None:
                 return []
             info = await ValorantInfoRepo.get_by_user_id(conn, user_id)
-            if info is None or not info.puuid:
+            if info is None:
                 return []
+            if not info.puuid:
+                return await ValorantEloHistoryRepo.get_history(
+                    conn, user_id, season, act, legacy_only=True
+                )
             return await ValorantEloHistoryRepo.get_history(
                 conn, user_id, season, act, info.puuid
             )
@@ -261,8 +265,12 @@ class ValorantDbService:
             if user_id is None:
                 return []
             info = await ValorantInfoRepo.get_by_user_id(conn, user_id)
-            if info is None or not info.puuid:
+            if info is None:
                 return []
+            if not info.puuid:
+                return await ValorantEloHistoryRepo.get_distinct_partitions(
+                    conn, user_id, legacy_only=True
+                )
             return await ValorantEloHistoryRepo.get_distinct_partitions(
                 conn, user_id, info.puuid
             )

@@ -13,7 +13,7 @@ from typing import Any, Optional
 
 from database.services.valorant_db_service import EloHistoryRow, ValorantDbService
 from integrations.henrikdev.service import HenrikDevService
-from integrations.exceptions import RateLimitError
+from integrations.exceptions import ApiError, RateLimitError
 
 logger = logging.getLogger(__name__)
 
@@ -328,13 +328,19 @@ class MmrTrackerService:
 
         while page not in seen_pages:
             seen_pages.add(page)
-            stored_resp, _ = await self._henrik.get_stored_mmr_history_by_puuid(
-                region,
-                platform,
-                puuid,
-                page=page,
-                size=size,
-            )
+            try:
+                stored_resp, _ = await self._henrik.get_stored_mmr_history_by_puuid(
+                    region,
+                    platform,
+                    puuid,
+                    page=page,
+                    size=size,
+                )
+            except ApiError as exc:
+                if not entries and page is None and self._is_missing_stored_history(exc):
+                    logger.info("[fetch_full_history] Historique stocke absent")
+                    return []
+                raise
             if stored_resp.status != 200:
                 if entries:
                     raise RuntimeError(
@@ -390,3 +396,7 @@ class MmrTrackerService:
     def _short_error(exc: Exception) -> str:
         message = str(exc) or exc.__class__.__name__
         return message[:500]
+
+    @staticmethod
+    def _is_missing_stored_history(exc: Exception) -> bool:
+        return isinstance(exc, ApiError) and str(exc).startswith("HTTP 404:")
