@@ -80,6 +80,19 @@ les commits et aide la personne suivante a comprendre l'etat reel du projet.
 - Deploiement production effectue via `tools/vps/deploy-from-git.sh` apres
   checks locaux et nettoyage des ressources temporaires de test.
 
+## 2026-06-11 - Correctif historique MMR Valorant
+
+- PR #27 mergee sur `master` puis deploiement production du commit `36ce7fb`
+  via `tools/vps/deploy-from-git.sh`.
+- Migration `029_mmr_history_metadata.sql` appliquee en production.
+- Verification DB : 8 comptes suivis complets backfilles, 538 lignes Henrik
+  avec `match_id`, 0 groupe `match_id` duplique, 0 historique orphelin, 0
+  erreur backfill.
+- Verification runtime : `kayo-bot` up, `kayo-postgres` healthy, smoke runtime
+  OK avec 27 cogs charges.
+- Logs recents : backfills MMR termines ; 3 entrees Henrik ignorees sans
+  `season.short` ; un 502 Henrik boutique Valorant observe, sans lien avec MMR.
+
 ## Suite recommandee
 
 1. Copier automatiquement les backups PostgreSQL hors VPS.
