@@ -75,6 +75,51 @@ def test_calculate_mmr_stats_prefers_henrik_matches_over_tracker_snapshots() -> 
     assert stats.elos_plot == [1010, 1000, 1025, 1041]
 
 
+def test_calculate_mmr_stats_keeps_tracker_snapshots_after_imports() -> None:
+    history = [
+        _row_at(10, 0, 1010, match_id="m1", rr_delta=10, source="henrik_live"),
+        _row_at(10, 5, 1010, rr_delta=10, source="tracker_snapshot"),
+        _row_at(11, 0, 1030, rr_delta=20, source="tracker_snapshot"),
+    ]
+
+    stats = calculate_mmr_stats(history, start_date=date(2026, 5, 8))
+
+    assert stats is not None
+    assert stats.total_games == 2
+    assert stats.total_change == 30
+    assert stats.elos_plot == [1010, 1030]
+
+
+def test_calculate_mmr_stats_ignores_first_filtered_legacy_delta() -> None:
+    stats = calculate_mmr_stats(
+        [
+            _row(7, 1000, rr_delta=35, source="legacy"),
+            _row(8, 1015, rr_delta=15, source="legacy"),
+        ],
+        start_date=None,
+    )
+
+    assert stats is not None
+    assert stats.total_games == 1
+    assert stats.total_change == 15
+    assert stats.elos_plot == [1000, 1015]
+
+
+def test_calculate_mmr_stats_keeps_baseline_for_single_metadata_change() -> None:
+    stats = calculate_mmr_stats(
+        [
+            _row(7, 1000, rr_delta=None, source="legacy"),
+            _row(8, 1020, rr_delta=20, source="legacy"),
+        ],
+        start_date=None,
+    )
+
+    assert stats is not None
+    assert stats.total_games == 1
+    assert stats.total_change == 20
+    assert stats.elos_plot == [1000, 1020]
+
+
 def test_calculate_mmr_stats_returns_none_without_enough_filtered_points() -> None:
     stats = calculate_mmr_stats(
         [_row(6, 100), _row(7, 120)],

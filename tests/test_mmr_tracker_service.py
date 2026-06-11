@@ -18,12 +18,17 @@ class FakeValorantDb:
         self.calls: list[tuple[str, tuple[object, ...]]] = []
         self.last_history_row = None
         self.info = None
+        self.latest_partition = None
         self.backfill_attempts: list[tuple[int, str | None]] = []
         self.backfilled: list[int] = []
 
     async def get_last_history_row(self, user_id: int, puuid: str | None = None):
         self.calls.append(("get_last_history_row", (user_id, puuid)))
         return self.last_history_row
+
+    async def get_latest_partition(self):
+        self.calls.append(("get_latest_partition", ()))
+        return self.latest_partition
 
     async def ensure_partitions(self, season: int, act: int) -> None:
         self.calls.append(("ensure_partitions", (season, act)))
@@ -212,6 +217,32 @@ async def test_record_current_mmr_snapshot_skips_unchanged_elo():
 
     assert inserted is False
     assert db.calls == [("get_last_history_row", (10, "puuid-1"))]
+
+
+@pytest.mark.asyncio
+async def test_record_current_mmr_snapshot_falls_back_to_latest_partition():
+    db = FakeValorantDb()
+    db.latest_partition = (8, 2)
+    db.last_history_row = ns(elo=520)
+    service = MmrTrackerService(db, object())
+
+    inserted = await service.record_current_mmr_snapshot(
+        {
+            "user_id": 10,
+            "puuid": "puuid-1",
+            "region": "eu",
+            "platform": "pc",
+            "elo": 542,
+            "current_season": None,
+            "current_act": None,
+            "mmr_history_backfilled_at": datetime.now(timezone.utc),
+        },
+    )
+
+    assert inserted is True
+    assert db.calls[0] == ("get_latest_partition", ())
+    assert db.calls[1] == ("get_last_history_row", (10, "puuid-1"))
+    assert db.calls[2] == ("ensure_partitions", (8, 2))
 
 
 @pytest.mark.asyncio

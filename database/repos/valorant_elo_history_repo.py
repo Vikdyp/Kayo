@@ -67,7 +67,10 @@ class ValorantEloHistoryRepo:
             params += [season, act]
 
         if puuid is not None:
-            sql += f" AND puuid = ${len(params) + 1}"
+            sql += (
+                f" AND (puuid = ${len(params) + 1} "
+                "OR (puuid IS NULL AND source = 'legacy'))"
+            )
             params.append(puuid)
 
         sql += " ORDER BY recorded_at;"
@@ -103,7 +106,7 @@ class ValorantEloHistoryRepo:
         )
         params: list = [user_id]
         if puuid is not None:
-            sql += " AND puuid = $2"
+            sql += " AND (puuid = $2 OR (puuid IS NULL AND source = 'legacy'))"
             params.append(puuid)
         sql += " ORDER BY season DESC, act DESC;"
         rows = await conn.fetch(sql, *params)

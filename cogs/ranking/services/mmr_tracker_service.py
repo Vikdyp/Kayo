@@ -89,10 +89,13 @@ class MmrTrackerService:
         season = row.get("current_season")
         act = row.get("current_act")
         if season is None or act is None:
-            logger.warning(
-                f"[record_current_mmr_snapshot] Donnees saison/acte incompletes pour user_id={user_id}, skip"
-            )
-            return False
+            latest_partition = await self.get_latest_partition()
+            if latest_partition is None:
+                logger.warning(
+                    f"[record_current_mmr_snapshot] Donnees saison/acte incompletes pour user_id={user_id}, skip"
+                )
+                return False
+            season, act = latest_partition
 
         last = await self.get_last_history_row(user_id, puuid)
         prev_elo = last.elo if last else None
