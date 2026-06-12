@@ -126,7 +126,11 @@ class MMRTracker(commands.Cog):
         if len(history) < 2:
             return await interaction.followup.send("Aucun historique disponible.")
 
-        stats = calculate_mmr_stats(history, start_date=selection.start_date)
+        stats = calculate_mmr_stats(
+            history,
+            start_date=selection.start_date,
+            start_at=selection.start_at,
+        )
         if not stats:
             return await interaction.followup.send(
                 f"Aucune partie enregistrée pour la période '{selection.period}'."

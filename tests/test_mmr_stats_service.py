@@ -1,5 +1,6 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 from cogs.ranking.services.mmr_stats_service import calculate_mmr_stats, parse_mmr_period
 
@@ -20,12 +21,25 @@ def _row_at(hour: int, minute: int, elo: int, **metadata) -> SimpleNamespace:
     )
 
 
+def _row_dt(recorded_at: datetime, elo: int, **metadata) -> SimpleNamespace:
+    return SimpleNamespace(recorded_at=recorded_at, elo=elo, **metadata)
+
+
 def test_parse_mmr_period_standard_values() -> None:
     today = date(2026, 5, 8)
 
     assert parse_mmr_period(None, today=today).start_date == today
     assert parse_mmr_period("week", today=today).start_date == date(2026, 5, 1)
     assert parse_mmr_period("all", today=today).start_date is None
+
+
+def test_parse_mmr_period_week_uses_rolling_paris_window() -> None:
+    now = datetime(2026, 6, 12, 1, 48, tzinfo=ZoneInfo("Europe/Paris"))
+
+    selection = parse_mmr_period("week", now=now)
+
+    assert selection.start_date is None
+    assert selection.start_at == now - timedelta(days=7)
 
 
 def test_parse_mmr_period_episode_act() -> None:
@@ -131,6 +145,38 @@ def test_calculate_mmr_stats_adds_baseline_for_single_imported_match() -> None:
     assert stats.total_games == 1
     assert stats.total_change == 10
     assert stats.elos_plot == [1000, 1010]
+
+
+def test_calculate_mmr_stats_week_excludes_games_before_rolling_start_and_keeps_baseline() -> None:
+    now = datetime(2026, 6, 12, 1, 48, tzinfo=ZoneInfo("Europe/Paris"))
+    start_at = now - timedelta(days=7)
+    history = [
+        _row_dt(
+            datetime(2026, 6, 4, 9, 28, 24, tzinfo=timezone.utc),
+            1800,
+            rr_delta=-29,
+            match_id="match-jun-4",
+            source="henrik_stored",
+        ),
+        _row_dt(
+            datetime(2026, 6, 11, 14, 43, 57, tzinfo=timezone.utc),
+            1819,
+            rr_delta=19,
+            match_id=None,
+            source="tracker_snapshot",
+        ),
+    ]
+
+    stats = calculate_mmr_stats(history, start_at=start_at)
+
+    assert stats is not None
+    assert stats.total_games == 1
+    assert stats.total_change == 19
+    assert stats.avg_win == 19
+    assert stats.avg_loss == 0
+    assert stats.last_diff == 19
+    assert stats.dates_plot == [start_at, history[1].recorded_at]
+    assert stats.elos_plot == [1800, 1819]
 
 
 def test_calculate_mmr_stats_ignores_first_filtered_legacy_delta() -> None:
