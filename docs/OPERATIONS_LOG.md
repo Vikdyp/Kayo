@@ -129,6 +129,25 @@ les commits et aide la personne suivante a comprendre l'etat reel du projet.
   champ prix total, footer date, image presente et 8 embeds d'items par fil.
 - Verification runtime : `kayo-bot` up, `kayo-postgres` healthy.
 
+## 2026-06-12 - Correctif fenetre MMR 7 jours
+
+- Diagnostic production read-only : la game `TRG Max#7641` du
+  `2026-06-04 11:28 Europe/Paris` etait correctement stockee en DB avec
+  `rr_delta=-29`, `match_id` present et source `henrik_stored`.
+- Cause : `mmr_track` utilisait `date.today()` cote VPS/UTC et un filtre par
+  date calendaire, ce qui incluait tout le `04/06` a `01:48` heure France.
+- Correctif deploye sur le commit `548a70e` : fenetre rolling `now - 7 jours`
+  en timezone `Europe/Paris`, transmise au calcul MMR, avec baseline graphique
+  quand une seule game reste dans la periode.
+- Verification locale : tests MMR cibles `33 passed`, `compileall` OK,
+  suite pytest complete `242 passed`.
+- Verification production apres deploiement : smoke runtime OK avec 27 cogs,
+  `kayo-bot` up, `kayo-postgres` healthy, logs recents filtres sans erreur
+  critique.
+- Reproduction prod apres patch pour `TRG Max#7641` : `7 derniers jours`
+  calcule `1` game, total `+19`, moyenne win `+19`, moyenne loss `0`, baseline
+  `1800 -> 1819`.
+
 ## Suite recommandee
 
 1. Copier automatiquement les backups PostgreSQL hors VPS.
